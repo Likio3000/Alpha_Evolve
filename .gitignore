@@ -11,6 +11,8 @@ wheels/
 
 # Data
 /data
+/pipeline_runs/
+*.pkl
 
 # ruff cache
 /.ruff_cache

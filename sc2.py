@@ -74,6 +74,7 @@ ALLOWED_FILENAMES = {
 
 EXCLUDED_DIRS = {
     ".git",
+    ".ruff_cache",
     ".svn",
     ".hg",
     "__pycache__",

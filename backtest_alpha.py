@@ -367,3 +367,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# TO run the project use the following command:
+# # 1) evolve & save programs  (only once per run)
+# uv run evolve_alphas.py 3          # or however many generations
+#     ↳ produces evolved_top20.pkl
+
+# 2) test them
+# uv run backtest_evolved_alphas.py --top 20 --fee 1.0
