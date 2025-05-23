@@ -11,7 +11,9 @@ wheels/
 
 # Data
 /data
-/pipeline_runs/
+/pipeline_runs_cs/
+/evolved_bt_cs_results/
+/backtest_csvs/
 *.pkl
 
 # ruff cache
