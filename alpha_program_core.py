@@ -20,6 +20,8 @@ The numerical operator registry now better supports cross-sectional operations.
         from an existing vector variable to ensure program validity.
 *   Removed `const_0` from `SCALAR_FEATURE_NAMES` to avoid `0 ** x` issues and
     force GP to combine real values.
+*   A3: Decreased probability of selecting `const_1` and `const_neg_1` as inputs
+    during random program generation and mutation if other scalar variables are available.
 """
 
 from dataclasses import dataclass, field, replace
@@ -131,44 +133,34 @@ def _power(a, b):
         if b_val == 0.5: return np.sqrt(np.maximum(a_arr, 0.0)) 
         if b_val == -1: return _div(1.0, a_arr) 
         
-        # Handle a_arr being effectively zero
-        # This check should be performed carefully if a_arr can be an array
         is_a_zero = np.all(np.abs(a_arr) < 1e-9) if isinstance(a_arr, np.ndarray) else (abs(a_arr) < 1e-9)
 
         if is_a_zero:
             if b_val > 0: return np.zeros_like(a_arr, dtype=float) 
             if b_val == 0: return np.ones_like(a_arr, dtype=float) 
-            # For 0^negative, result is inf. Sign depends on a_arr if it's an array of zeros.
-            # If a_arr is scalar 0, sign is typically positive.
-            # Let's return positive infinity for scalar 0, and element-wise for array a_arr
             if isinstance(a_arr, np.ndarray):
                 return np.copysign(np.full_like(a_arr, np.inf, dtype=float), a_arr)
-            else: # a_arr is scalar zero
-                return np.inf # Or np.copysign(np.inf, a_arr) if -0.0 matters
+            else: 
+                return np.inf 
 
         is_b_integer = (isinstance(b_val, (int, float)) and b_val == round(b_val))
-        # If a_arr is an array and any element is negative with fractional b_val
         if isinstance(a_arr, np.ndarray) and np.any(a_arr < 0) and not is_b_integer:
-             return np.sign(a_arr) * np.power(np.abs(a_arr), b_val) # Signed power for array a
-        elif not isinstance(a_arr, np.ndarray) and a_arr < 0 and not is_b_integer: # scalar a is negative
+             return np.sign(a_arr) * np.power(np.abs(a_arr), b_val) 
+        elif not isinstance(a_arr, np.ndarray) and a_arr < 0 and not is_b_integer: 
              return np.sign(a_arr) * np.power(np.abs(a_arr), b_val)
         else: 
             return np.power(a_arr, b_val)
 
-    else: # b is an array (b_val is array here)
+    else: 
         b_arr_exponent = b_val 
         result = np.full_like(a_arr, np.nan, dtype=float) 
 
         mask_a_zero = np.abs(a_arr) < 1e-9
-        # Must use b_arr_exponent here as b is an array
         result[mask_a_zero & (b_arr_exponent > 0)] = 0.0
         result[mask_a_zero & (b_arr_exponent == 0)] = 1.0
-        # For 0^negative with array b, we need to handle signs carefully.
-        # np.copysign is useful.
         zero_neg_exp_mask = mask_a_zero & (b_arr_exponent < 0)
-        if np.any(zero_neg_exp_mask): # ensure indices are valid before assignment
+        if np.any(zero_neg_exp_mask): 
              result[zero_neg_exp_mask] = np.copysign(np.inf, a_arr[zero_neg_exp_mask])
-
 
         mask_safe_power = (~mask_a_zero) & ((a_arr > 0) | (np.isclose(b_arr_exponent, np.round(b_arr_exponent))))
         if np.any(mask_safe_power):
@@ -401,13 +393,37 @@ class AlphaProgram:
                     potential_input_sources_for_spec = []
                     formable = True
                     for req_type in spec.in_types:
-                        candidates = [v_name for v_name, v_type in current_block_vars.items() if v_type == req_type]
-                        if not candidates and req_type == "scalar" and spec.is_elementwise:
-                            vec_candidates = [v_name for v_name, v_type in current_block_vars.items() if v_type == "vector"]
-                            if vec_candidates: candidates.extend(vec_candidates)
-                        if not candidates:
+                        current_type_candidates = []
+                        if req_type == "scalar":
+                            const_scalars_options = []
+                            other_scalars_options = []
+                            for v_name, v_type in current_block_vars.items():
+                                if v_type == "scalar":
+                                    if v_name in SCALAR_FEATURE_NAMES: # e.g. ["const_1", "const_neg_1"]
+                                        const_scalars_options.append(v_name)
+                                    else:
+                                        other_scalars_options.append(v_name)
+                            
+                            if other_scalars_options: # If non-constant scalars exist
+                                current_type_candidates.extend(other_scalars_options * 3) # Weight non-constants higher
+                                current_type_candidates.extend(const_scalars_options)     # Add constants with lower weight
+                            elif const_scalars_options: # Only constants available
+                                current_type_candidates.extend(const_scalars_options)
+                            
+                            # Elementwise vector promotion (if applicable and no scalars found yet)
+                            if not current_type_candidates and spec.is_elementwise:
+                                vec_candidates_for_scalar_slot = [
+                                    v_name for v_name, v_type in current_block_vars.items() if v_type == "vector"
+                                ]
+                                if vec_candidates_for_scalar_slot:
+                                    current_type_candidates.extend(vec_candidates_for_scalar_slot)
+                        else: # For "vector" or "matrix" types
+                            current_type_candidates = [
+                                v_name for v_name, v_type in current_block_vars.items() if v_type == req_type
+                            ]
+                        if not current_type_candidates:
                             formable = False; break
-                        potential_input_sources_for_spec.append(candidates)
+                        potential_input_sources_for_spec.append(current_type_candidates)
                     
                     if formable:
                         possible_ops_specs.append((op_name, spec, potential_input_sources_for_spec))
@@ -476,6 +492,8 @@ class AlphaProgram:
                 if is_last_predict_op: 
                     out_var_name = FINAL_PREDICTION_VECTOR_NAME
                     if actual_out_type != "vector":
+                        # This case should be rare now with the improved final op selection,
+                        # but kept as a fallback.
                         out_var_name = FINAL_PREDICTION_VECTOR_NAME
                         selected_op_name = "assign_vector"
                         selected_spec = OP_REGISTRY["assign_vector"]
@@ -558,11 +576,28 @@ class AlphaProgram:
                 formable = True
                 temp_inputs_sources = []
                 for req_t in op_s.in_types:
-                    sources = [vn for vn, vt in temp_current_vars.items() if vt == req_t]
-                    if not sources and req_t == "scalar" and op_s.is_elementwise:
-                        sources = [vn for vn, vt in temp_current_vars.items() if vt == "vector"]
-                    if not sources: formable=False; break
-                    temp_inputs_sources.append(sources)
+                    current_type_candidates_add = []
+                    if req_t == "scalar":
+                        const_scalars_add = []
+                        other_scalars_add = []
+                        for vn_add, vt_add in temp_current_vars.items():
+                            if vt_add == "scalar":
+                                if vn_add in SCALAR_FEATURE_NAMES: const_scalars_add.append(vn_add)
+                                else: other_scalars_add.append(vn_add)
+                        if other_scalars_add:
+                            current_type_candidates_add.extend(other_scalars_add * 3)
+                            current_type_candidates_add.extend(const_scalars_add)
+                        elif const_scalars_add:
+                            current_type_candidates_add.extend(const_scalars_add)
+                        
+                        if not current_type_candidates_add and op_s.is_elementwise:
+                            vec_opts_add = [vn_add for vn_add, vt_add in temp_current_vars.items() if vt_add == "vector"]
+                            if vec_opts_add: current_type_candidates_add.extend(vec_opts_add)
+                    else: # vector or matrix
+                        current_type_candidates_add = [vn_add for vn_add, vt_add in temp_current_vars.items() if vt_add == req_t]
+
+                    if not current_type_candidates_add: formable=False; break
+                    temp_inputs_sources.append(current_type_candidates_add)
                 if formable: candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
             
             if candidate_ops_for_add:
@@ -582,19 +617,26 @@ class AlphaProgram:
                     tmp_idx_mut = rng.integers(10000, 20000) 
                     out_n = f"m{tmp_idx_mut}_{actual_out_t[0]}"
 
-
                 new_op_to_insert = Op(out_n, sel_op_n, chosen_ins)
                 chosen_block_ops_list.insert(insertion_idx, new_op_to_insert)
 
         elif mutation_type == "remove":
             if chosen_block_ops_list: 
                 idx_to_remove = rng.integers(0, len(chosen_block_ops_list))
-                if chosen_block_name == "predict" and \
-                   chosen_block_ops_list[idx_to_remove].out == FINAL_PREDICTION_VECTOR_NAME and \
-                   idx_to_remove == len(chosen_block_ops_list) -1 :
-                    pass 
-                else:
+                # Prevent removing the final prediction op if it's the only one or named as such
+                is_final_pred_op_targeted = chosen_block_name == "predict" and \
+                                           chosen_block_ops_list[idx_to_remove].out == FINAL_PREDICTION_VECTOR_NAME and \
+                                           idx_to_remove == len(chosen_block_ops_list) - 1
+                
+                can_remove = True
+                if is_final_pred_op_targeted and len(chosen_block_ops_list) == 1:
+                    can_remove = False # Don't remove if it's the only op in predict block and is the final output
+
+                if can_remove and not is_final_pred_op_targeted : # Prefer not to remove the specifically named final op unless it's not the last
                     chosen_block_ops_list.pop(idx_to_remove)
+                elif can_remove and is_final_pred_op_targeted and len(chosen_block_ops_list)>1: # If it is the last, but not only one
+                     chosen_block_ops_list.pop(idx_to_remove)
+
 
         elif mutation_type == "change_op" and chosen_block_ops_list:
             op_idx_to_change = rng.integers(0, len(chosen_block_ops_list))
@@ -608,6 +650,9 @@ class AlphaProgram:
             for op_n, op_s in OP_REGISTRY.items():
                  if len(op_s.in_types) == len(original_op.inputs) and op_n != original_op.opcode:
                     if is_final_predict_op:
+                        # Determine if this new op_s can produce a vector (directly or via elementwise promotion)
+                        # This requires knowing the input types, which is tricky without full re-trace here.
+                        # For simplicity, we allow ops that output vector, or elementwise scalar ops (as they *could* become vector)
                         if op_s.out_type == "vector" or (op_s.is_elementwise and op_s.out_type == "scalar"):
                              compatible_ops.append(op_n)
                     else:
@@ -629,20 +674,43 @@ class AlphaProgram:
             spec_of_op_to_mutate = OP_REGISTRY[op_to_mutate.opcode] 
             required_type = spec_of_op_to_mutate.in_types[input_idx_to_change]
 
-            candidates = [vn for vn, vt in vars_at_op.items() if vt == required_type and vn != original_input_name]
-            if not candidates and required_type == "scalar" and spec_of_op_to_mutate.is_elementwise:
-                candidates.extend([vn for vn, vt in vars_at_op.items() if vt == "vector" and vn != original_input_name])
+            eligible_candidates = [] 
+            if required_type == "scalar":
+                const_scalars_options = []
+                other_scalars_options = []
+                for vn, vt in vars_at_op.items():
+                    if vn == original_input_name: continue 
+                    if vt == "scalar":
+                        if vn in SCALAR_FEATURE_NAMES: 
+                            const_scalars_options.append(vn)
+                        else:
+                            other_scalars_options.append(vn)
+                
+                if other_scalars_options: 
+                    eligible_candidates.extend(other_scalars_options * 3) 
+                    eligible_candidates.extend(const_scalars_options)     
+                elif const_scalars_options: 
+                    eligible_candidates.extend(const_scalars_options)
+                
+                if not eligible_candidates and spec_of_op_to_mutate.is_elementwise:
+                    vec_options_for_scalar_slot = [vn for vn, vt in vars_at_op.items() if vt == "vector" and vn != original_input_name]
+                    if vec_options_for_scalar_slot:
+                        eligible_candidates.extend(vec_options_for_scalar_slot)
+            else: # For "vector" or "matrix"
+                eligible_candidates = [vn for vn, vt in vars_at_op.items() if vt == required_type and vn != original_input_name]
             
-            if candidates:
-                new_input_name = rng.choice(candidates)
+            if eligible_candidates:
+                new_input_name = rng.choice(eligible_candidates) # Corrected: use eligible_candidates
                 new_inputs_tuple = list(op_to_mutate.inputs)
                 new_inputs_tuple[input_idx_to_change] = new_input_name
                 chosen_block_ops_list[op_idx_to_change] = Op(op_to_mutate.out, op_to_mutate.opcode, tuple(new_inputs_tuple))
 
+        # Ensure predict block ends with a vector named FINAL_PREDICTION_VECTOR_NAME
         if new_prog.predict_ops:
             last_op = new_prog.predict_ops[-1]
             last_op_spec = OP_REGISTRY[last_op.opcode]
             
+            # Get variables available *before* the last op executes
             vars_before_last = new_prog.get_vars_at_point("predict", len(new_prog.predict_ops)-1, feature_vars, state_vars)
             actual_last_op_out_type = last_op_spec.out_type
             if last_op_spec.is_elementwise and last_op_spec.out_type == "scalar":
@@ -651,24 +719,35 @@ class AlphaProgram:
 
             if last_op.out != FINAL_PREDICTION_VECTOR_NAME or actual_last_op_out_type != "vector":
                 if actual_last_op_out_type == "vector": 
+                     # Rename the output of the current last op
                      new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, last_op.opcode, last_op.inputs)
                 else: 
+                    # The current last op doesn't produce a vector. Add an assign_vector.
+                    # Vars available for this new assign_vector include the output of the current (non-vector) last op
                     vars_for_final_fix = {**vars_before_last, last_op.out: actual_last_op_out_type}
                     available_vectors = [vn for vn, vt in vars_for_final_fix.items() if vt == "vector"]
                      
-                    if not available_vectors: available_vectors = [fn for fn,ft in feature_vars.items() if ft == "vector"] 
+                    if not available_vectors: # Fallback to feature vectors if no runtime vectors available
+                        available_vectors = [fn for fn,ft in feature_vars.items() if ft == "vector"]
+                        if not available_vectors and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES: # Further fallback
+                             available_vectors = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
                     
                     if available_vectors:
                         source_for_final_fix = rng.choice(available_vectors)
                         new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_final_fix,)))
-        elif not new_prog.predict_ops : 
+                    else: # Absolute fallback: use a default feature if nothing else works
+                        default_feat_vec_fallback = "opens_t" if "opens_t" in feature_vars else \
+                                                  (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "fallback_undefined_vector")
+                        new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec_fallback,)))
+
+        elif not new_prog.predict_ops : # Predict block became empty
             default_feat_vec = next((vn for vn, vt in feature_vars.items() if vt == "vector"), None)
             if not default_feat_vec and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
                 default_feat_vec = rng.choice(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
-            elif not default_feat_vec: 
+            elif not default_feat_vec: # Absolute fallback
                 default_feat_vec = "opens_t" 
 
-            if default_feat_vec: # Ensure default_feat_vec is not None before using
+            if default_feat_vec: 
                  new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec,)))
 
 
@@ -698,41 +777,69 @@ class AlphaProgram:
             elif len2 > 0 : 
                 child.predict_ops = other_predict_internal_ops[rng.integers(0, len2+1):]
             
+            # After crossover, ensure the predict block ends correctly
             temp_feature_vars = AlphaProgram._get_default_feature_vars() 
             temp_state_vars = {} 
-            vars_for_final_op = child.get_vars_at_point("predict", len(child.predict_ops), temp_feature_vars, temp_state_vars)
-
-            available_vectors = [vn for vn, vt in vars_for_final_op.items() if vt == "vector"]
-            if not available_vectors: 
-                available_vectors = [fn for fn,ft in temp_feature_vars.items() if ft == "vector"]
             
-            final_op_to_add = None
-            if child_final_op_obj: 
-                original_final_opcode_str = child_final_op_obj.opcode # Get the string name
-                final_op_spec = OP_REGISTRY[original_final_opcode_str] # Get spec
+            # Check if predict_ops is empty *after* crossover but before adding final op
+            if not child.predict_ops:
+                default_vec_src = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t"
+                child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_vec_src,)))
+            else: # Predict_ops is not empty, check its last op
+                vars_before_final_op_in_child = child.get_vars_at_point("predict", len(child.predict_ops)-1, temp_feature_vars, temp_state_vars)
+                last_op_in_child = child.predict_ops[-1]
+                last_op_spec_in_child = OP_REGISTRY[last_op_in_child.opcode]
                 
-                can_produce_vector = final_op_spec.out_type == "vector" or \
-                                     (final_op_spec.is_elementwise and final_op_spec.out_type == "scalar") 
+                actual_last_op_out_type_child = last_op_spec_in_child.out_type
+                if last_op_spec_in_child.is_elementwise and last_op_spec_in_child.out_type == "scalar":
+                    if any(vars_before_final_op_in_child.get(inp_n) == "vector" for inp_n in last_op_in_child.inputs):
+                        actual_last_op_out_type_child = "vector"
 
-                if can_produce_vector:
-                    # CORRECTED: Compare the string opcode with "assign_vector"
-                    if original_final_opcode_str == "assign_vector": 
-                        if available_vectors:
-                            final_op_to_add = Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (rng.choice(available_vectors),))
+                if actual_last_op_out_type_child == "vector":
+                    child.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, last_op_in_child.opcode, last_op_in_child.inputs)
+                else: # Last op doesn't produce vector, need to add assign_vector
+                    vars_for_final_assign = {**vars_before_final_op_in_child, last_op_in_child.out: actual_last_op_out_type_child}
+                    available_vectors = [vn for vn, vt in vars_for_final_assign.items() if vt == "vector"]
+                    if not available_vectors:
+                        available_vectors = [fn for fn,ft in temp_feature_vars.items() if ft == "vector"]
+                        if not available_vectors and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
+                            available_vectors = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
 
+                    source_for_assign = rng.choice(available_vectors) if available_vectors else (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t")
+                    child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_assign,)))
 
-            if not final_op_to_add: 
-                if available_vectors:
-                    source_for_final = rng.choice(available_vectors)
-                    final_op_to_add = Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_final,))
-                else: 
-                    default_cs_vec_name = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t" 
-                    final_op_to_add = Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_cs_vec_name,))
-            
-            child.predict_ops.append(final_op_to_add)
-
-        elif other.predict_ops: 
+        elif other.predict_ops: # Child's predict_ops was empty, other's was not. Deepcopy other's predict_ops.
             child.predict_ops = copy.deepcopy(other.predict_ops) 
+            # And ensure it's valid
+            if child.predict_ops: # Should be true if other.predict_ops was true
+                temp_feature_vars = AlphaProgram._get_default_feature_vars()
+                temp_state_vars = {}
+                vars_before_final_op_in_child = child.get_vars_at_point("predict", len(child.predict_ops)-1, temp_feature_vars, temp_state_vars)
+                last_op_in_child = child.predict_ops[-1]
+                last_op_spec_in_child = OP_REGISTRY[last_op_in_child.opcode]
+                actual_last_op_out_type_child = last_op_spec_in_child.out_type
+                if last_op_spec_in_child.is_elementwise and last_op_spec_in_child.out_type == "scalar":
+                    if any(vars_before_final_op_in_child.get(inp_n) == "vector" for inp_n in last_op_in_child.inputs):
+                        actual_last_op_out_type_child = "vector"
+                
+                if actual_last_op_out_type_child == "vector":
+                    child.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, last_op_in_child.opcode, last_op_in_child.inputs)
+                else:
+                    vars_for_final_assign = {**vars_before_final_op_in_child, last_op_in_child.out: actual_last_op_out_type_child}
+                    available_vectors = [vn for vn, vt in vars_for_final_assign.items() if vt == "vector"]
+                    if not available_vectors: available_vectors = [fn for fn,ft in temp_feature_vars.items() if ft == "vector"]
+                    source_for_assign = rng.choice(available_vectors) if available_vectors else (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t")
+                    child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_assign,)))
+            else: # This case implies other.predict_ops was also empty, or became empty after popping.
+                  # Ensure child.predict_ops is not empty.
+                default_vec_src = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t"
+                child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_vec_src,)))
+        
+        # If predict_ops ended up empty for any reason, add a default final op
+        if not child.predict_ops:
+            default_vec_src = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t"
+            child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_vec_src,)))
+
 
         child._vars_info_cache = None
         return child
@@ -758,17 +865,23 @@ class AlphaProgram:
         for op_instance in self.setup:
             op_instance.execute(buf, n_stocks)
         
-        if not self.predict_ops:
+        if not self.predict_ops: # Should not happen due to fixes in random_program, mutate, crossover
+            # print("Warning: predict_ops is empty during eval. This should be fixed by generation/mutation logic.")
             return np.full(n_stocks, np.nan) 
             
         for op_instance in self.predict_ops:
             try:
                 op_instance.execute(buf, n_stocks)
             except Exception: 
+                # This might indicate an issue with an op or invalid inputs.
+                # For robustness, return NaNs, but ideally, this should be rare with type checking.
                 return np.full(n_stocks, np.nan)
 
 
         if FINAL_PREDICTION_VECTOR_NAME not in buf:
+            # This implies the predict block did not correctly produce the final named vector.
+            # Should be caught by generation/mutation logic.
+            # print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} not in buffer after predict_ops. Program: {self.to_string()}")
             return np.full(n_stocks, np.nan)
 
         s1_predictions_val = buf[FINAL_PREDICTION_VECTOR_NAME]
@@ -776,8 +889,22 @@ class AlphaProgram:
         if np.isscalar(s1_predictions_val): 
             s1_predictions_val = np.full(n_stocks, float(s1_predictions_val))
         
-        if not isinstance(s1_predictions_val, np.ndarray) or s1_predictions_val.ndim != 1 or s1_predictions_val.shape[0] != n_stocks:
+        if not isinstance(s1_predictions_val, np.ndarray) or s1_predictions_val.ndim != 1:
+            # Output is not a 1D array as expected for a vector.
+            # print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} is not a 1D ndarray. Type: {type(s1_predictions_val)}")
             return np.full(n_stocks, np.nan) 
+
+        if s1_predictions_val.shape[0] != n_stocks:
+            # Output vector length does not match n_stocks.
+            # This could happen if a cross-sectional aggregator was misused or if resizing logic failed.
+            # For now, returning NaN; might need more robust handling or ensuring ops always respect n_stocks for vector out.
+            # print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} shape {s1_predictions_val.shape} does not match n_stocks {n_stocks}")
+            # Let's try to resize/broadcast if it's a single value, otherwise NaN.
+            if s1_predictions_val.size == 1:
+                 s1_predictions_val = np.full(n_stocks, s1_predictions_val.item())
+            else:
+                 return np.full(n_stocks, np.nan)
+
 
         initial_state_keys = set(state.keys())
         vars_defined_in_update = set()
@@ -789,12 +916,14 @@ class AlphaProgram:
             except Exception: 
                 return np.full(n_stocks, np.nan) 
 
-        for key in list(state.keys()): 
-            if key in buf and key not in features_at_t:
+        # Persist relevant state variables
+        for key in list(state.keys()): # Iterate over original keys to update
+            if key in buf and key not in features_at_t: # Ensure it's a state var, not an input feature
                 state[key] = buf[key]
 
+        # Add newly defined state variables from update block
         for key in vars_defined_in_update:
-            if key not in features_at_t: 
+            if key not in features_at_t: # Ensure it's not an input feature name
                  state[key] = buf[key]
 
         return np.nan_to_num(s1_predictions_val.astype(float), nan=0.0, posinf=0.0, neginf=0.0)

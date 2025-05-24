@@ -8,13 +8,18 @@ folder of 4‑hour OHLC crypto CSVs, now with cross-sectional evaluation.
 Changes vs v5.2 (Consultant-driven May 2024) ──────────────────────────
 * **Tighter Flat Signal Penalty**: The threshold for the "flat-over-time"
   signal guard in `evaluate()` has been increased from `1e-5` to `1e-2`.
-  This makes the penalty more sensitive to signals that have low
-  time-variance, aiming to discard them more aggressively.
 * **Removed `const_0`**: `const_0` is no longer part of the default scalar
   features available to the AlphaProgram (change made in alpha_program_core.py).
-  This should prevent the generation of `0 ** x` operations and associated
-  runtime warnings / numerical issues. `FEATURE_VARS` in this module now
-  reflects this change for consistency.
+* **A1 (Lag Alignment)**: Added `--eval_lag` CLI arg. `evaluate()` uses this lag
+  for fetching forward returns.
+* **A2 (Cross-Sectional Flatness Guard)**: Penalizes programs if mean
+  cross-sectional signal standard deviation is too low.
+* **A3 (Reduce Constant Scalar Weight)**: Probability of `const_1`/`const_neg_1`
+  reduced in program generation/mutation (implemented in alpha_program_core.py).
+* **B1 (Early Abort)**: Checks for flat signals (cross-sectionally or temporally)
+  after `EARLY_ABORT_BARS` and penalizes/aborts.
+* **C1 (Tqdm Visibility)**: Progress bar default changed to visible.
+* **C2 (ETA in Log)**: Per-generation log includes ETA.
 """
 
 from pathlib import Path
@@ -74,18 +79,22 @@ def _parse_cli() -> argparse.Namespace:
     ap.add_argument("--hof_size", type=int, default=20)
     ap.add_argument("--scale", default="zscore", choices=["zscore","rank","sign"], 
                     help="Signal scaling method for IC calculation (should match backtest)")
+    ap.add_argument("--eval_lag", type=int, default=1, 
+                    help="Lag (in bars) for fetching forward returns during IC calculation in evaluation. Default 1.")
     return ap.parse_args()
 
 if __name__ == "__main__" or "pytest" in sys.modules:
     args = _parse_cli()
 else: 
     class _DefaultArgs:
-        generations = 5; seed = 42; quiet = True
+        # C1: Default quiet to False
+        generations = 5; seed = 42; quiet = False
         max_lookback_data_option = 'common_1200'; min_common_points = 1200
         data_dir = "./data"; pop_size = 32; tournament_k = 3
         p_mut = 0.4; p_cross = 0.6; elite_keep = 2; max_ops = 20
         parsimony_penalty = 0.01; corr_penalty_w = 0.15
         corr_cutoff = 0.20; hof_size = 10; scale = "zscore" 
+        eval_lag = 1 # Ensure eval_lag exists for _DefaultArgs (Fix #6)
     args = _DefaultArgs()
 
 DATA_DIR = args.data_dir
@@ -101,6 +110,13 @@ CORR_PENALTY_W = args.corr_penalty_w
 CORR_CUTOFF = args.corr_cutoff
 DUPLICATE_HOF_SZ = args.hof_size
 SEED = args.seed
+EVAL_LAG = args.eval_lag # A1
+
+# A2 & B1 constants
+XS_FLATNESS_GUARD_THRESHOLD = 1e-2
+EARLY_ABORT_BARS = 20
+EARLY_ABORT_XS_THRESHOLD = 1e-2 
+EARLY_ABORT_T_THRESHOLD = 1e-2 # Can be same as existing flat_signal_threshold
 # Consultant suggestion: Configurable HOF uniqueness. Default to False (ensure unique).
 # This could be promoted to a CLI argument later if needed.
 KEEP_DUPES_IN_HOF_CONFIG = False
@@ -131,8 +147,8 @@ _N_STOCKS: Optional[int] = None
 
 def _sync_constants_from_args():
     global DATA_DIR, POP_SIZE, N_GENERATIONS, TOURNAMENT_K, P_MUT, P_CROSS, ELITE_KEEP
-    global MAX_OPS, PARSIMONY_PENALTY, CORR_PENALTY_W, CORR_CUTOFF, DUPLICATE_HOF_SZ, SEED
-    # Note: KEEP_DUPES_IN_HOF_CONFIG is not currently synced from args, it's a global toggle.
+    global MAX_OPS, PARSIMONY_PENALTY, CORR_PENALTY_W, CORR_CUTOFF, DUPLICATE_HOF_SZ, SEED, EVAL_LAG
+    # Note: KEEP_DUPES_IN_HOF_CONFIG and other new constants are not currently synced from args, they're global toggles or derived.
 
     DATA_DIR = args.data_dir
     POP_SIZE = args.pop_size
@@ -146,6 +162,7 @@ def _sync_constants_from_args():
     CORR_PENALTY_W = args.corr_penalty_w
     CORR_CUTOFF = args.corr_cutoff
     DUPLICATE_HOF_SZ = args.hof_size
+    EVAL_LAG = args.eval_lag # A1
     if SEED != args.seed: 
         SEED = args.seed
         random.seed(SEED)
@@ -169,7 +186,7 @@ def _ensure_data_loaded():
     _N_STOCKS = len(_STOCK_SYMBOLS)
 
     print(f"evolve_alphas: Using {_N_STOCKS} symbols for evolution: {', '.join(_STOCK_SYMBOLS)}")
-    print(f"Data spans {_COMMON_TIME_INDEX.min()} to {_COMMON_TIME_INDEX.max()} with {_COMMON_TIME_INDEX.size} steps.")
+    print(f"Data spans {_COMMON_TIME_INDEX.min()} to {_COMMON_TIME_INDEX.max()} with {_COMMON_TIME_INDEX.size} steps. Eval Lag: {EVAL_LAG}")
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -177,7 +194,9 @@ def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
         df[f"ma{w}"] = df["close"].rolling(w, min_periods=1).mean()
         df[f"vol{w}"] = df["close"].rolling(w, min_periods=1).std(ddof=0)
     df["range"] = df["high"] - df["low"]
-    df["ret_fwd"] = df["close"].pct_change().shift(-1) 
+    # Calculate ret_fwd based on the actual next available close, not shifted by a fixed number
+    # The shift for EVAL_LAG happens during its usage in evaluate(), not here.
+    df["ret_fwd"] = df["close"].pct_change(periods=1).shift(-1) 
     return df
 
 def load_and_align_data(data_dir_param: str, strategy_param: str, min_common_points_param: int) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
@@ -186,42 +205,44 @@ def load_and_align_data(data_dir_param: str, strategy_param: str, min_common_poi
         try:
             df = pd.read_csv(csv_file)
             if 'time' not in df.columns:
-                # print(f"Skipping {csv_file}: 'time' column missing.")
                 continue
             df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
             df = df.dropna(subset=['time']).sort_values("time").set_index("time")
             if df.empty: continue
             df_with_features = _rolling_features_individual_df(df)
+            # For ret_fwd, we need to ensure it doesn't have NaNs due to shift at the very end.
+            # Dropna here will handle it if features + ret_fwd cause NaNs.
             raw_dfs[Path(csv_file).stem] = df_with_features.dropna() 
-        except Exception as e:
-            # print(f"Error loading {csv_file}: {e}")
+        except Exception:
             continue
     
     if not raw_dfs:
         sys.exit(f"No valid CSV data loaded from {data_dir_param}.")
-    # print(f"Loaded {len(raw_dfs)} symbols initially.") # Already printed by run_pipeline
 
     if strategy_param == 'specific_long_10k':
         min_len_for_long = min_common_points_param 
         raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_len_for_long}
         if len(raw_dfs) < 2:
              sys.exit(f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}")
-        # print(f"Using {len(raw_dfs)} symbols with >={min_len_for_long} data points.")
 
     common_index: Optional[pd.DatetimeIndex] = None
     for df_sym in raw_dfs.values(): 
         if common_index is None: common_index = df_sym.index
         else: common_index = common_index.intersection(df_sym.index)
 
-    if common_index is None or len(common_index) < min_common_points_param: 
-        sys.exit(f"Not enough common history (need {min_common_points_param}, got {len(common_index if common_index is not None else [])}). Consider a different strategy or more data overlap.")
+    # Ensure enough data points *considering the EVAL_LAG for forward returns*
+    # If EVAL_LAG is 1, we need at least `min_common_points_param + 1` total points in common_index
+    # to have `min_common_points_param` evaluation steps.
+    required_length_for_eval = min_common_points_param + EVAL_LAG 
+    if common_index is None or len(common_index) < required_length_for_eval: 
+        sys.exit(f"Not enough common history (need {required_length_for_eval} for {min_common_points_param} eval steps + lag {EVAL_LAG}, got {len(common_index if common_index is not None else [])}).")
 
     if strategy_param == 'common_1200' or strategy_param == 'specific_long_10k': 
-        if len(common_index) > min_common_points_param:
-            common_index = common_index[-min_common_points_param:] 
+        # Slice to get `min_common_points_param` *plus* the `EVAL_LAG` lookahead for returns
+        num_points_to_keep = min_common_points_param + EVAL_LAG
+        if len(common_index) > num_points_to_keep:
+            common_index = common_index[-num_points_to_keep:] 
     
-    # print(f"Aligned data to {len(common_index)} common time steps from {common_index.min()} to {common_index.max()}.") # Already printed by run_pipeline
-
     aligned_dfs_ordered = OrderedDict()
     for sym in sorted(raw_dfs.keys()): 
         df_sym = raw_dfs[sym]
@@ -239,18 +260,15 @@ def load_and_align_data(data_dir_param: str, strategy_param: str, min_common_poi
 # 2. SAFE CORRELATION + CACHES + GUARDS #######################################
 ###############################################################################
 def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
-    # Check for NaNs or Infs early, as they can cause std to be NaN
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))): return 0.0
-    # Check for constant series (stddev = 0)
     if a.std(ddof=0) < 1e-9 or b.std(ddof=0) < 1e-9: return 0.0
-    # Ensure correct length for correlation
     if len(a) != len(b) or len(a) < 2: return 0.0
     return float(np.corrcoef(a, b)[0, 1])
 
 
 _HOF_fingerprints: List[str] = []
 _HOF_prediction_timeseries: List[np.ndarray] = [] 
-_eval_cache: Dict[str, Tuple[float, float, np.ndarray]] = {}
+_eval_cache: Dict[str, Tuple[float, float, Optional[np.ndarray]]] = {} # Added Optional[np.ndarray] for raw_preds
 
 
 def _uses_feature_vector(prog: AlphaProgram) -> bool:
@@ -325,14 +343,37 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
     for s_name, s_type in INITIAL_STATE_VARS.items():
         if s_name not in program_state:
             if s_type == "vector": program_state[s_name] = np.zeros(_N_STOCKS)
-            elif s_type == "matrix": program_state[s_name] = np.zeros((_N_STOCKS, _N_STOCKS))
+            elif s_type == "matrix": program_state[s_name] = np.zeros((_N_STOCKS, _N_STOCKS)) # Should be _N_FEATURES or similar if for feature matrix
             else: program_state[s_name] = 0.0
 
     raw_predictions_for_hof_correlation: List[np.ndarray] = [] 
     daily_ic_values: List[float] = [] 
 
-    for t_idx, timestamp in enumerate(_COMMON_TIME_INDEX):
-        if t_idx == len(_COMMON_TIME_INDEX) - 1: break 
+    # A1: Adjust loop end for eval_lag. Loop up to `len - EVAL_LAG` to allow fetching future returns.
+    # The number of evaluation steps will be `len(_COMMON_TIME_INDEX) - EVAL_LAG`.
+    # If EVAL_LAG is 0, it means predicting next bar's return (t+1 from t).
+    # If EVAL_LAG is 1, it means predicting t+2's return from t.
+    # Predictions are made at `_COMMON_TIME_INDEX[t_idx]`.
+    # Forward returns are from `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]`.
+    # The `ret_fwd` column itself is already `close.pct_change().shift(-1)`, so it's the next bar's return.
+    # So, if EVAL_LAG = 0, we use `ret_fwd` at `_COMMON_TIME_INDEX[t_idx]` which is effectively `(Close[t+1]/Close[t])-1`.
+    # If EVAL_LAG = 1, we use `ret_fwd` at `_COMMON_TIME_INDEX[t_idx + 1]` which is `(Close[t+2]/Close[t+1])-1`. This is NOT `(Close[t+EVAL_LAG+1]/Close[t+EVAL_LAG])-1`.
+    # The current `ret_fwd` definition seems to be for 1-bar forward return.
+    # For a true `EVAL_LAG`, `ret_fwd` should be `df["close"].pct_change(periods=EVAL_LAG).shift(-EVAL_LAG)`
+    # OR, we adjust how we access `ret_fwd` here.
+    # Let's assume `ret_fwd` is always 1-bar fwd. We need to get the return from `t_idx + EVAL_LAG`'s perspective.
+    # This means we need the 1-bar return *after* `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]`.
+    # So, the actual return time index will be `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]`. The `ret_fwd` at this time point is the return from `t_idx+EVAL_LAG` to `t_idx+EVAL_LAG+1`.
+    # The loop should go from 0 up to `len(_COMMON_TIME_INDEX) - 1 - EVAL_LAG`.
+    # This ensures that `t_idx + EVAL_LAG` is a valid index for `_COMMON_TIME_INDEX`.
+    loop_end_idx = len(_COMMON_TIME_INDEX) - EVAL_LAG -1 # -1 because ret_fwd is shifted by -1
+    if loop_end_idx < 0: # Not enough data for any evaluation with this lag
+        _eval_cache[fp] = (-float('inf'), 0.0, None)
+        return _eval_cache[fp]
+
+
+    for t_idx in range(loop_end_idx +1): # +1 because range is exclusive at end
+        timestamp = _COMMON_TIME_INDEX[t_idx]
         
         features_at_t: Dict[str, Any] = {}
         for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
@@ -340,14 +381,12 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
             try:
                 feat_vec = np.array([_ALIGNED_DFS[sym].loc[timestamp, col_name] for sym in _STOCK_SYMBOLS], dtype=float)
                 features_at_t[feat_name_template] = np.nan_to_num(feat_vec, nan=0.0)
-            except KeyError:
+            except KeyError: # Should be rare with ffill/bfill
                 features_at_t[feat_name_template] = np.zeros(_N_STOCKS, dtype=float) 
 
-        # Add available scalar constants (const_0 is now removed from SCALAR_FEATURE_NAMES in alpha_program_core)
-        for sc_name in SCALAR_FEATURE_NAMES: # e.g. ["const_1", "const_neg_1"]
+        for sc_name in SCALAR_FEATURE_NAMES: 
             if sc_name == "const_1": features_at_t[sc_name] = 1.0
             elif sc_name == "const_neg_1": features_at_t[sc_name] = -1.0
-            # Add other named scalar constants here if defined
 
         try:
             raw_predictions_t = prog.eval(features_at_t, program_state, _N_STOCKS)
@@ -356,18 +395,45 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
                 return _eval_cache[fp]
             raw_predictions_for_hof_correlation.append(raw_predictions_t.copy())
 
+            # B1: Early abort checks (Fix #1 - moved up)
+            # Check if we have *at least* EARLY_ABORT_BARS predictions accumulated.
+            if len(raw_predictions_for_hof_correlation) >= EARLY_ABORT_BARS:
+                # Perform the check only once when we hit EARLY_ABORT_BARS
+                if len(raw_predictions_for_hof_correlation) == EARLY_ABORT_BARS: 
+                    partial_preds_matrix = np.array(raw_predictions_for_hof_correlation) # No slice needed if check is at ==
+                    
+                    # Check cross-sectional flatness on partial data
+                    mean_xs_std_partial = 0.0
+                    if partial_preds_matrix.ndim == 2 and partial_preds_matrix.shape[1] > 0:
+                        mean_xs_std_partial = np.mean(partial_preds_matrix.std(axis=1, ddof=0))
+                    
+                    # Check temporal flatness on partial data
+                    mean_t_std_partial = 0.0
+                    if partial_preds_matrix.ndim == 2 and partial_preds_matrix.shape[0] > 1:
+                        mean_t_std_partial = np.mean(partial_preds_matrix.std(axis=0, ddof=0))
+                    elif partial_preds_matrix.ndim == 1 and partial_preds_matrix.shape[0] > 1:
+                        mean_t_std_partial = partial_preds_matrix.std(ddof=0)
+
+                    if mean_xs_std_partial < EARLY_ABORT_XS_THRESHOLD or \
+                       mean_t_std_partial < EARLY_ABORT_T_THRESHOLD:
+                        _eval_cache[fp] = (-float('inf'), 0.0, None)
+                        return _eval_cache[fp]
+
             scaled_predictions_t = _scale_signal_cross_sectionally_for_ic(raw_predictions_t, args.scale)
             mean_scaled_t = np.mean(scaled_predictions_t)
             centered_scaled_t = scaled_predictions_t - mean_scaled_t
             processed_for_ic_t = centered_scaled_t
 
-            actual_returns_t = np.array([_ALIGNED_DFS[sym].loc[timestamp, "ret_fwd"] for sym in _STOCK_SYMBOLS], dtype=float)
-            if np.any(np.isnan(actual_returns_t)): 
-                daily_ic_values.append(0.0)
-                continue
+            # A1: Fetch returns from `t_idx + EVAL_LAG` using the `ret_fwd` column.
+            # `ret_fwd` at `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]` gives the return from that time to the next.
+            return_timestamp_for_ic = _COMMON_TIME_INDEX[t_idx + EVAL_LAG]
+            actual_returns_t = np.array([_ALIGNED_DFS[sym].loc[return_timestamp_for_ic, "ret_fwd"] for sym in _STOCK_SYMBOLS], dtype=float)
             
-            ic_t = _safe_corr(processed_for_ic_t, actual_returns_t)
-            daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
+            if np.any(np.isnan(actual_returns_t)): 
+                daily_ic_values.append(0.0) 
+            else:
+                ic_t = _safe_corr(processed_for_ic_t, actual_returns_t)
+                daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
 
         except Exception: 
             _eval_cache[fp] = (-float('inf'), 0.0, None)
@@ -382,24 +448,26 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
     
     full_raw_predictions_matrix = np.array(raw_predictions_for_hof_correlation)
 
-    # MODIFICATION: Tighten the "flat-over-time" guard threshold
-    flat_signal_threshold = 1e-2 # Changed from 1e-5 (or 1e-4 previously)
+    # A2: Cross-sectional flatness guard (on full predictions)
+    if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[1] > 0:
+        cross_sectional_stds = full_raw_predictions_matrix.std(axis=1, ddof=0)
+        if np.mean(cross_sectional_stds) < XS_FLATNESS_GUARD_THRESHOLD:
+            score = -float('inf') 
+            _eval_cache[fp] = (score, mean_daily_ic_on_processed, full_raw_predictions_matrix)
+            return score, mean_daily_ic_on_processed, full_raw_predictions_matrix
+            
+    # Existing temporal flatness guard (MODIFICATION: Tighten the "flat-over-time" guard threshold)
+    flat_signal_threshold = 1e-2 
     if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[0] > 1: 
         time_std_per_stock = full_raw_predictions_matrix.std(axis=0, ddof=0) 
         if np.mean(time_std_per_stock) < flat_signal_threshold: 
             score = -float('inf') 
-            _eval_cache[fp] = (score, mean_daily_ic_on_processed, full_raw_predictions_matrix)
-            return score, mean_daily_ic_on_processed, full_raw_predictions_matrix
     elif full_raw_predictions_matrix.ndim == 1 and full_raw_predictions_matrix.shape[0] > 1: 
         if full_raw_predictions_matrix.std(ddof=0) < flat_signal_threshold:
             score = -float('inf')
-            _eval_cache[fp] = (score, mean_daily_ic_on_processed, full_raw_predictions_matrix)
-            return score, mean_daily_ic_on_processed, full_raw_predictions_matrix
-    elif full_raw_predictions_matrix.shape[0] <=1: 
-        pass
+    # No need to cache and return here if score became -inf, it will be done after HOF corr penalty.
 
-
-    if _HOF_prediction_timeseries: 
+    if _HOF_prediction_timeseries and score > -float('inf'): # Only apply HOF penalty if score is not already -inf
         current_prog_avg_raw_signal_ts = np.mean(full_raw_predictions_matrix, axis=1) if full_raw_predictions_matrix.ndim > 1 and full_raw_predictions_matrix.shape[1] > 0 else full_raw_predictions_matrix.flatten()
         
         high_corrs = []
@@ -413,7 +481,7 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
 
             if len(current_prog_avg_raw_signal_ts_1d) != len(hof_avg_raw_signal_ts_1d): continue
 
-            if current_prog_avg_raw_signal_ts_1d.std(ddof=0) < 1e-9 or hof_avg_raw_signal_ts_1d.std(ddof=0) < 1e-9: continue # Check std before corr
+            if current_prog_avg_raw_signal_ts_1d.std(ddof=0) < 1e-9 or hof_avg_raw_signal_ts_1d.std(ddof=0) < 1e-9: continue
             
             corr_with_hof = abs(_safe_corr(current_prog_avg_raw_signal_ts_1d, hof_avg_raw_signal_ts_1d))
             if not np.isnan(corr_with_hof) and corr_with_hof > CORR_CUTOFF:
@@ -463,6 +531,7 @@ def evolve() -> List[Tuple[AlphaProgram, float]]:
     _HOF_prediction_timeseries = []
     _HOF_fingerprints = [] 
     _eval_cache = {} 
+    gen_eval_times_history: List[float] = [] # C2: For ETA calculation
 
     try:
         for gen in range(N_GENERATIONS): 
@@ -482,28 +551,41 @@ def evolve() -> List[Tuple[AlphaProgram, float]]:
                         bar.set_postfix_str(f"BestFit: {np.max(valid_scores):.4f}")
                     else:
                         bar.set_postfix_str(f"BestFit: N/A")
-
+            
             gen_eval_time = time.perf_counter() - t_start_gen
+            if gen_eval_time > 0: # Avoid division by zero if gen time is somehow 0
+                gen_eval_times_history.append(gen_eval_time) # C2
             eval_results.sort(key=lambda x: x[1], reverse=True) 
             
-            if not eval_results or eval_results[0][1] <= -float('inf'): # Check strictly less than or equal to -inf
+            if not eval_results or eval_results[0][1] <= -float('inf'):
                 print(f"Gen {gen+1:3d} | No valid programs found (all scores -inf). Restarting population.")
                 pop = [_random_prog() for _ in range(POP_SIZE)] 
                 _eval_cache.clear() 
                 _HOF_fingerprints.clear()
                 _HOF_prediction_timeseries.clear()
+                gen_eval_times_history.clear() # C2: Reset history
                 continue
+
+            # C2: Calculate ETA
+            eta_str = ""
+            if gen_eval_times_history: # Guard against empty list (Fix #5 - already good)
+                avg_gen_time = np.mean(gen_eval_times_history)
+                remaining_gens = N_GENERATIONS - (gen + 1)
+                if avg_gen_time > 0 and remaining_gens > 0: # Ensure positive time and remaining gens
+                    eta_seconds = remaining_gens * avg_gen_time
+                    eta_str = f" | ETA {time.strftime('%Hh%Mm%Ss', time.gmtime(eta_seconds))}"
 
             best_prog_idx_in_pop, best_fit, best_ic_processed, best_raw_preds_matrix = eval_results[0]
             best_program_this_gen = pop[best_prog_idx_in_pop]
 
             print(
                 f"Gen {gen+1:3d} | BestFit {best_fit:+.4f} | MeanIC {best_ic_processed:+.4f} | Ops {best_program_this_gen.size:2d} | "
-                f"EvalTime {gen_eval_time:.1f}s | "
-                + textwrap.shorten(best_program_this_gen.to_string(), width=80)
+                f"EvalTime {gen_eval_time:.1f}s" 
+                + eta_str # C2: Added ETA
+                + " | " + textwrap.shorten(best_program_this_gen.to_string(), width=50) # Shortened for ETA
             )
 
-            if best_raw_preds_matrix is not None: 
+            if best_raw_preds_matrix is not None and best_fit > -float('inf'): # Only add to HOF if valid
                 fp_best = best_program_this_gen.fingerprint
                 if fp_best not in _HOF_fingerprints:
                     _HOF_fingerprints.append(fp_best)
@@ -537,7 +619,7 @@ def evolve() -> List[Tuple[AlphaProgram, float]]:
                     break 
 
                 num_to_sample = TOURNAMENT_K * 2
-                if len(valid_indices) < num_to_sample :
+                if len(valid_indices) < num_to_sample : # Allow sampling with replacement if not enough unique options
                     tournament_indices_pool = random.choices(valid_indices, k=num_to_sample)
                 else:
                     tournament_indices_pool = random.sample(valid_indices, num_to_sample)
@@ -563,7 +645,7 @@ def evolve() -> List[Tuple[AlphaProgram, float]]:
     for prog_final in bar:
         fp_final = prog_final.fingerprint
         if fp_final in processed_fps: continue
-        score_final, ic_final_processed, _ = evaluate(prog_final)
+        score_final, ic_final_processed, _ = evaluate(prog_final) # Re-evaluate for consistent metrics if needed
         if score_final > -float('inf'): 
             final_eval_results.append((prog_final, score_final, ic_final_processed))
         processed_fps.add(fp_final)
@@ -571,26 +653,24 @@ def evolve() -> List[Tuple[AlphaProgram, float]]:
     final_eval_results.sort(key=lambda x: x[1], reverse=True)
 
     if KEEP_DUPES_IN_HOF_CONFIG:
-        # Old behavior: keep top N, potentially with duplicates, ensuring valid scores
         top_programs_with_ic_temp = []
         for prog_cand, score_cand, ic_proc_cand in final_eval_results:
-            if score_cand > -float('inf'): # Only consider valid programs
+            if score_cand > -float('inf'): 
                 top_programs_with_ic_temp.append((prog_cand, ic_proc_cand))
             if len(top_programs_with_ic_temp) >= DUPLICATE_HOF_SZ:
                 break
         top_programs_with_ic = top_programs_with_ic_temp
     else:
-        # New behavior: ensure unique programs in HOF
         unique_progs_dict: Dict[str, Tuple[AlphaProgram, float]] = {}
         for prog_candidate, score_candidate, ic_proc_candidate in final_eval_results:
-            if score_candidate <= -float('inf'): # Skip invalid programs
+            if score_candidate <= -float('inf'): 
                 continue
             
             fp_candidate = prog_candidate.fingerprint
             if fp_candidate not in unique_progs_dict:
                 unique_progs_dict[fp_candidate] = (prog_candidate, ic_proc_candidate)
             
-            if len(unique_progs_dict) >= DUPLICATE_HOF_SZ: # Stop once HOF is full of unique programs
+            if len(unique_progs_dict) >= DUPLICATE_HOF_SZ: 
                 break
         top_programs_with_ic = list(unique_progs_dict.values())
 

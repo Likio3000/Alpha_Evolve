@@ -77,13 +77,14 @@ def main() -> None:
     ap.add_argument("--corr_penalty_w", type=float, default=getattr(ae.args, 'corr_penalty_w', 0.15) if hasattr(ae, 'args') else 0.15)
     ap.add_argument("--corr_cutoff", type=float, default=getattr(ae.args, 'corr_cutoff', 0.20) if hasattr(ae, 'args') else 0.20)
     ap.add_argument("--hof_size", type=int, default=getattr(ae.args, 'hof_size', 20) if hasattr(ae, 'args') else 20, help="Size of Hall of Fame / Num top programs to save for backtest.")
+    ap.add_argument("--eval_lag", type=int, default=getattr(ae.args, 'eval_lag', 1) if hasattr(ae, 'args') else 1, help="Lag for IC calculation during evolution.")
 
     # Backtesting specific arguments
     ap.add_argument("--top_to_backtest", type=int, default=10, help="# best programs from evolution to backtest")
     ap.add_argument("--fee", type=float, default=1.0, help="Round-trip commission in bps for backtest (e.g. 1.0 for 0.01%)")
     ap.add_argument("--hold", type=int, default=1, help="Holding period in bars for backtest")
     ap.add_argument("--scale", default="zscore", choices=["zscore","rank","sign"], help="Signal scaling for backtest")
-    ap.add_argument("--lag", type=int, default=1, help="Signal lag for backtest")
+    # --lag for backtester will be derived from pipeline_args.eval_lag
     
     pipeline_args = ap.parse_args() # Renamed to avoid confusion with ae.args
     
@@ -111,7 +112,7 @@ def main() -> None:
         "--fee", str(pipeline_args.fee),
         "--hold", str(pipeline_args.hold),
         "--scale", pipeline_args.scale,
-        "--lag", str(pipeline_args.lag),
+        "--lag", str(pipeline_args.eval_lag), # Fix #3: Pass eval_lag from pipeline_args as --lag to backtester
         "--data", str(pipeline_args.data_dir),
         "--outdir", str(backtest_csv_outdir),
         # Pass the correct attribute from pipeline_args for the backtester's expected arg name
