@@ -692,6 +692,6 @@ if __name__ == "__main__":
     for i, (prog, ic_processed) in enumerate(top_evolved_alphas, 1):
         print(
             f"#{i:02d} | MeanIC (proc) {ic_processed:+.4f} | Ops {prog.size:3d}\n   " 
-            + textwrap.shorten(prog.to_string(), width=140)
+            + textwrap.shorten(prog.to_string(), width=1000)
             + "\n"
         )

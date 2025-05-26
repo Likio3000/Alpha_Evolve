@@ -63,6 +63,34 @@ class OpSpec:
 
 OP_REGISTRY: Dict[str, OpSpec] = {}
 
+###############################################################################
+# 2 -- Primitive operators
+###############################################################################
+
+SAFE_MAX = 1e6         # single knob: absolute value clamp for *all* ops
+
+def _clean_num(x):
+    """
+    Convert NaN → 0,  +inf → +SAFE_MAX,  -inf → -SAFE_MAX,
+    then hard-clip to ±SAFE_MAX.  Works on scalars & nd-arrays.
+    """
+    return np.clip(
+        np.nan_to_num(x, nan=0.0, posinf=SAFE_MAX, neginf=-SAFE_MAX),
+        -SAFE_MAX, SAFE_MAX
+    )
+
+def safe_op(fn):
+    """
+    Decorator: sanitise inputs **and** output of an element-wise numpy op.
+      * No RuntimeWarnings leak out.
+      * Result is always finite & within ±SAFE_MAX.
+    """
+    def wrapped(*args):
+        clean_args = [_clean_num(a) for a in args]
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            res = fn(*clean_args)
+        return _clean_num(res)
+    return wrapped
 
 def register_op(name: str, *, in_types: Tuple[TypeId, ...], out: TypeId,
                 is_cross_sectional_aggregator: bool = False,
@@ -75,10 +103,6 @@ def register_op(name: str, *, in_types: Tuple[TypeId, ...], out: TypeId,
     return _wrapper
 
 
-# ---------------------------------------------------------------------------
-# 2 ‑‑ Primitive operators
-# ---------------------------------------------------------------------------
-
 @register_op("add", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
 def _add(a, b): return a + b
 
@@ -86,6 +110,7 @@ def _add(a, b): return a + b
 def _sub(a, b): return a - b
 
 @register_op("mul", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
+@safe_op
 def _mul(a, b): return a * b
 
 @register_op("div", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
@@ -122,56 +147,74 @@ def _sqrt(a): return np.sqrt(np.maximum(np.asarray(a), 0))
 
 @register_op("power", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
 def _power(a, b):
+    """
+    Safe element-wise exponentiation.
+
+    * Silences overflow / invalid / divide warnings from NumPy.
+    * Cleans NaN/±inf → finite.
+    * Hard-clips result to ±MAX_ABS so numbers never explode downstream.
+    """
+    MAX_ABS = 1e9
     a_arr = np.asarray(a, dtype=float)
     b_is_scalar = np.isscalar(b)
-    b_val = b if b_is_scalar else np.asarray(b, dtype=float) # Keep b as scalar if it is for specific checks
+    b_val = b if b_is_scalar else np.asarray(b, dtype=float)
 
+    # ------------------------------------------------------------------ #
+    def _clip(x):
+        return np.clip(x, -MAX_ABS, MAX_ABS)
+
+    # ------------------------- scalar exponent ------------------------ #
     if b_is_scalar:
-        if b_val == 2: return np.square(a_arr)
-        if b_val == 1: return a_arr
-        if b_val == 0: return np.ones_like(a_arr, dtype=float) 
-        if b_val == 0.5: return np.sqrt(np.maximum(a_arr, 0.0)) 
-        if b_val == -1: return _div(1.0, a_arr) 
-        
-        is_a_zero = np.all(np.abs(a_arr) < 1e-9) if isinstance(a_arr, np.ndarray) else (abs(a_arr) < 1e-9)
+        if b_val == 2:   return _clip(np.square(a_arr))
+        if b_val == 1:   return _clip(a_arr)
+        if b_val == 0:   return np.ones_like(a_arr, dtype=float)
+        if b_val == 0.5: return _clip(np.sqrt(np.maximum(a_arr, 0.0)))
+        if b_val == -1:  return _clip(_div(1.0, a_arr))
 
+        is_a_zero = np.all(np.abs(a_arr) < 1e-9) if isinstance(a_arr, np.ndarray) \
+                    else abs(a_arr) < 1e-9
         if is_a_zero:
-            if b_val > 0: return np.zeros_like(a_arr, dtype=float) 
-            if b_val == 0: return np.ones_like(a_arr, dtype=float) 
-            if isinstance(a_arr, np.ndarray):
-                return np.copysign(np.full_like(a_arr, np.inf, dtype=float), a_arr)
-            else: 
-                return np.inf 
+            if b_val > 0:  return np.zeros_like(a_arr, dtype=float)
+            if b_val == 0: return np.ones_like(a_arr, dtype=float)
+            return np.copysign(np.full_like(a_arr, np.inf, dtype=float), a_arr)
 
-        is_b_integer = (isinstance(b_val, (int, float)) and b_val == round(b_val))
-        if isinstance(a_arr, np.ndarray) and np.any(a_arr < 0) and not is_b_integer:
-             return np.sign(a_arr) * np.power(np.abs(a_arr), b_val) 
-        elif not isinstance(a_arr, np.ndarray) and a_arr < 0 and not is_b_integer: 
-             return np.sign(a_arr) * np.power(np.abs(a_arr), b_val)
-        else: 
-            return np.power(a_arr, b_val)
+        is_b_int = isinstance(b_val, (int, float)) and b_val == round(b_val)
 
-    else: 
-        b_arr_exponent = b_val 
-        result = np.full_like(a_arr, np.nan, dtype=float) 
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            if (np.any(a_arr < 0) and not is_b_int):
+                result = np.sign(a_arr) * np.power(np.abs(a_arr), b_val)
+            else:
+                result = np.power(a_arr, b_val)
 
-        mask_a_zero = np.abs(a_arr) < 1e-9
-        result[mask_a_zero & (b_arr_exponent > 0)] = 0.0
-        result[mask_a_zero & (b_arr_exponent == 0)] = 1.0
-        zero_neg_exp_mask = mask_a_zero & (b_arr_exponent < 0)
-        if np.any(zero_neg_exp_mask): 
-             result[zero_neg_exp_mask] = np.copysign(np.inf, a_arr[zero_neg_exp_mask])
+    # ------------------------- array exponent ------------------------- #
+    else:
+        b_arr = b_val
+        result = np.full_like(a_arr, np.nan, dtype=float)
 
-        mask_safe_power = (~mask_a_zero) & ((a_arr > 0) | (np.isclose(b_arr_exponent, np.round(b_arr_exponent))))
-        if np.any(mask_safe_power):
-            result[mask_safe_power] = np.power(a_arr[mask_safe_power], b_arr_exponent[mask_safe_power])
+        mask0 = np.abs(a_arr) < 1e-9
+        result[mask0 & (b_arr > 0)]  = 0.0
+        result[mask0 & (b_arr == 0)] = 1.0
+        zneg = mask0 & (b_arr < 0)
+        if np.any(zneg):
+            result[zneg] = np.copysign(np.inf, a_arr[zneg])
 
-        mask_signed_power = (~mask_a_zero) & (a_arr < 0) & (~np.isclose(b_arr_exponent, np.round(b_arr_exponent)))
-        if np.any(mask_signed_power):
-            result[mask_signed_power] = np.sign(a_arr[mask_signed_power]) * \
-                                        np.power(np.abs(a_arr[mask_signed_power]), b_arr_exponent[mask_signed_power])
-        
-        return np.nan_to_num(result, nan=0.0, posinf=np.finfo(float).max/2, neginf=np.finfo(float).min/2)
+        mask_safe = (~mask0) & ((a_arr > 0) | (np.isclose(b_arr, np.round(b_arr))))
+        mask_signed = (~mask0) & (a_arr < 0) & (~np.isclose(b_arr, np.round(b_arr)))
+
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            if np.any(mask_safe):
+                result[mask_safe] = np.power(a_arr[mask_safe], b_arr[mask_safe])
+            if np.any(mask_signed):
+                result[mask_signed] = np.sign(a_arr[mask_signed]) * \
+                                      np.power(np.abs(a_arr[mask_signed]),
+                                               b_arr[mask_signed])
+
+    # ------------------------- clean-up + clamp ----------------------- #
+    result = np.nan_to_num(result,
+                           nan=0.0,
+                           posinf=np.finfo(float).max/2,
+                           neginf=-np.finfo(float).max/2)
+    return _clip(result)
 
 
 @register_op("min_val", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
@@ -203,9 +246,11 @@ def _cs_demean(v): return v - (_cs_mean(v) if v.size > 0 else 0.0)
 def _vec_add_scalar(v, s): return v + s
 
 @register_op("vec_mul_scalar", in_types=("vector", "scalar"), out="vector")
+@safe_op
 def _vec_mul_scalar(v, s): return v * s
 
 @register_op("vec_div_scalar", in_types=("vector", "scalar"), out="vector")
+@safe_op
 def _vec_div_scalar(v, s): return v / (s if np.abs(s) > 1e-9 else np.copysign(1e-9, s)) 
 
 
@@ -933,7 +978,7 @@ class AlphaProgram:
     def size(self) -> int:
         return len(self.setup) + len(self.predict_ops) + len(self.update_ops)
 
-    def to_string(self, max_len: int = 120) -> str:
+    def to_string(self, max_len: int = 1000) -> str:
         txt_parts = []
         if self.setup: txt_parts.append(f"S[{';'.join(map(str, self.setup))}]")
         if self.predict_ops: txt_parts.append(f"P[{';'.join(map(str, self.predict_ops))}]")

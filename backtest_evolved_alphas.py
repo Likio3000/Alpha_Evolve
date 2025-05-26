@@ -301,7 +301,7 @@ def main() -> None:
     all_results = []
     for idx, (prog, original_metric) in enumerate(programs_to_backtest, 1):
         print(f"\nBacktesting Alpha #{idx:02d} (Original Metric: {original_metric:+.4f})")
-        print(f"   {textwrap.shorten(prog.to_string(), 100)}")
+        print(f"   {textwrap.shorten(prog.to_string(), 1000)}")
 
         metrics = backtest_cross_sectional_alpha(
             prog,
@@ -318,7 +318,7 @@ def main() -> None:
         
         metrics["AlphaID"] = f"Alpha_{idx:02d}"
         metrics["OriginalMetric"] = original_metric
-        metrics["Program"] = prog.to_string(max_len=200)
+        metrics["Program"] = prog.to_string(max_len=1000)
         all_results.append(metrics)
 
         print(f"  └─ Sharpe: {metrics.get('Sharpe', 0.0):.3f}, AnnReturn: {metrics.get('AnnReturn', 0.0)*100:.2f}%, "
