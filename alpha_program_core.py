@@ -1,36 +1,11 @@
 from __future__ import annotations
 
-"""alpha_program_core.py
-========================================
-Fully‑featured *instruction‑list* representation of an alpha program that
-matches the usage expected by **evolve_alphas.py**:
+"""alpha_program_core.py"""
 
-* `AlphaProgram.random_program()` – class‑method seed generator
-* `mutate()` / `crossover()` / `copy()` – evolutionary operators
-* Cheap `size`, `depth` (≈ longest dependency chain), `to_string()` helpers
-* Robust `fingerprint` for duplicate filtering cache
 
-The numerical operator registry now better supports cross-sectional operations.
-
-**Consultant-driven Changes (May 2024):**
-*   In `AlphaProgram.random_program()`:
-    *   The final operation in the 'predict' block is no longer forced to be `assign_vector`.
-    *   It now attempts to select any operation that results in a 'vector' type.
-    *   If no such suitable operation can be formed, it falls back to `assign_vector`
-        from an existing vector variable to ensure program validity.
-*   Removed `const_0` from `SCALAR_FEATURE_NAMES` to avoid `0 ** x` issues and
-    force GP to combine real values.
-*   A3: Decreased probability of selecting `const_1` and `const_neg_1` as inputs
-    during random program generation and mutation if other scalar variables are available.
-"""
-
-from dataclasses import dataclass, field, replace
-import copy
-import hashlib
-import json
-import random
-import textwrap 
-from typing import Callable, Dict, List, Tuple, Literal, Sequence, Optional, Union
+from dataclasses import dataclass, field
+import copy, hashlib, json, textwrap
+from typing import Callable, Dict, List, Tuple, Literal, Optional, Union
 
 import numpy as np
 
@@ -43,11 +18,9 @@ TypeId = Literal["scalar", "vector", "matrix"]
 CROSS_SECTIONAL_FEATURE_VECTOR_NAMES = [
     "opens_t", "highs_t", "lows_t", "closes_t", "volumes_t", "ranges_t",
     "ma5_t", "ma10_t", "ma20_t", "ma30_t",
-    "vol5_t", "vol10_t", "vol20_t", "vol30_t"
+    "vol5_t", "vol10_t", "vol20_t", "vol30_t",
 ]
-# MODIFICATION: Removed const_0
 SCALAR_FEATURE_NAMES = ["const_1", "const_neg_1"]
-
 
 FINAL_PREDICTION_VECTOR_NAME = "s1_predictions_vector"
 
@@ -285,8 +258,9 @@ def _assign_scalar(s): return s
 @register_op("assign_matrix", in_types=("matrix",), out="matrix")
 def _assign_matrix(m): return np.array(m, copy=True)
 
+
 # ---------------------------------------------------------------------------
-# 3 ‑‑ Instruction & program container
+# 3 – Instruction container
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -405,170 +379,121 @@ class AlphaProgram:
 
 
     @classmethod
-    def random_program(cls, feature_vars: Dict[str, TypeId], state_vars: Dict[str, TypeId],
-                       max_total_ops: int = 32, rng: Optional[np.random.Generator] = None) -> "AlphaProgram":
+    def random_program(
+        cls,
+        feature_vars: Dict[str, TypeId],
+        state_vars: Dict[str, TypeId],
+        max_total_ops: int = 32,
+        rng: Optional[np.random.Generator] = None
+    ) -> "AlphaProgram":
+        """
+        Build a random but type-correct AlphaProgram.
+
+        May-2025 change
+        ─────────────────
+        * If we cannot construct a **vector-typed** final operation for the
+          predict block we now **raise RuntimeError** instead of falling back
+          to the old «assign_vector(<one feature vector>)» shortcut.  The
+          caller (evolution loop) just retries and eventually gets a real one.
+        """
         rng = rng or np.random.default_rng()
         prog = cls()
-        
-        n_predict_ops = max(1, int(max_total_ops * 0.7)) 
-        n_setup_ops = int(max_total_ops * 0.15)
-        n_update_ops = max(0, max_total_ops - n_predict_ops - n_setup_ops)
+
+        # — split total op budget into three blocks —
+        n_predict_ops = max(1, int(max_total_ops * 0.70))
+        n_setup_ops   = int(max_total_ops * 0.15)
+        n_update_ops  = max_total_ops - n_predict_ops - n_setup_ops
 
         tmp_idx = 0
-        def new_tmp_name(type_hint: TypeId):
-            prefix = "s" if type_hint == "scalar" else ("v" if type_hint == "vector" else "m")
+        def _new_tmp(t: TypeId) -> str:
             nonlocal tmp_idx
             tmp_idx += 1
-            return f"{prefix}{tmp_idx}"
+            return f"{'s' if t=='scalar' else 'v' if t=='vector' else 'm'}{tmp_idx}"
 
-        def add_random_op_to_block(ops_block: List[Op], initial_vars_for_block: Dict[str, TypeId], 
-                                   num_ops_to_add: int, is_predict_block: bool):
-            
-            current_block_vars = initial_vars_for_block.copy()
+        # ────────────────── helper to append ops ──────────────────
+        def _add_ops(block: List[Op],
+                     in_vars: Dict[str, TypeId],
+                     how_many: int,
+                     is_predict: bool) -> None:
 
-            for op_count in range(num_ops_to_add):
-                possible_ops_specs = [] 
+            current = in_vars.copy()
+
+            for k in range(how_many):
+                # 1. gather candidates whose input types we can satisfy
+                candidates = []
                 for op_name, spec in OP_REGISTRY.items():
-                    is_last_predict_op_iteration = is_predict_block and op_count == num_ops_to_add - 1
-                    
-                    if op_name == "assign_vector" and spec.out_type == "vector":
-                        if not is_last_predict_op_iteration: 
-                            continue 
-                    
-                    potential_input_sources_for_spec = []
-                    formable = True
-                    for req_type in spec.in_types:
-                        current_type_candidates = []
-                        if req_type == "scalar":
-                            const_scalars_options = []
-                            other_scalars_options = []
-                            for v_name, v_type in current_block_vars.items():
-                                if v_type == "scalar":
-                                    if v_name in SCALAR_FEATURE_NAMES: # e.g. ["const_1", "const_neg_1"]
-                                        const_scalars_options.append(v_name)
-                                    else:
-                                        other_scalars_options.append(v_name)
-                            
-                            if other_scalars_options: # If non-constant scalars exist
-                                current_type_candidates.extend(other_scalars_options * 3) # Weight non-constants higher
-                                current_type_candidates.extend(const_scalars_options)     # Add constants with lower weight
-                            elif const_scalars_options: # Only constants available
-                                current_type_candidates.extend(const_scalars_options)
-                            
-                            # Elementwise vector promotion (if applicable and no scalars found yet)
-                            if not current_type_candidates and spec.is_elementwise:
-                                vec_candidates_for_scalar_slot = [
-                                    v_name for v_name, v_type in current_block_vars.items() if v_type == "vector"
-                                ]
-                                if vec_candidates_for_scalar_slot:
-                                    current_type_candidates.extend(vec_candidates_for_scalar_slot)
-                        else: # For "vector" or "matrix" types
-                            current_type_candidates = [
-                                v_name for v_name, v_type in current_block_vars.items() if v_type == req_type
-                            ]
-                        if not current_type_candidates:
-                            formable = False; break
-                        potential_input_sources_for_spec.append(current_type_candidates)
-                    
-                    if formable:
-                        possible_ops_specs.append((op_name, spec, potential_input_sources_for_spec))
+                    if op_name == "assign_vector" and is_predict and k != how_many - 1:
+                        continue          # reserve assign_vector for emergency only
 
-                if not possible_ops_specs: break 
+                    inputs_for_spec: List[List[str]] = []
+                    ok = True
+                    for need_t in spec.in_types:
+                        pool = [v for v, t in current.items() if t == need_t]
 
-                selected_op_name, selected_spec, chosen_inputs, actual_out_type = None, None, None, None
-                is_last_predict_op = is_predict_block and op_count == num_ops_to_add - 1
+                        # allow scalar-slot promotion of a vector for element-wise ops
+                        if not pool and need_t == "scalar" and spec.is_elementwise:
+                            pool = [v for v, t in current.items() if t == "vector"]
 
-                if is_last_predict_op:
-                    found_suitable_final_op = False
-                    shuffled_possible_ops = list(possible_ops_specs) 
-                    rng.shuffle(shuffled_possible_ops)
+                        if not pool:
+                            ok = False
+                            break
+                        inputs_for_spec.append(pool)
 
-                    for op_n_cand, spec_cand, sources_list_cand in shuffled_possible_ops:
-                        inputs_cand = tuple(rng.choice(s) for s in sources_list_cand) 
-                        
-                        current_actual_out_type_cand = spec_cand.out_type
-                        if spec_cand.is_elementwise and spec_cand.out_type == "scalar":
-                            if any(current_block_vars.get(inp_n) == "vector" for inp_n in inputs_cand):
-                                current_actual_out_type_cand = "vector"
-                        
-                        if current_actual_out_type_cand == "vector": 
-                            selected_op_name, selected_spec, chosen_inputs, actual_out_type = \
-                                op_n_cand, spec_cand, inputs_cand, current_actual_out_type_cand
-                            found_suitable_final_op = True
-                            break 
-                    
-                    if not found_suitable_final_op:
-                        available_true_vectors = [vn for vn, vt in current_block_vars.items() if vt == "vector"]
-                        source_for_final_assign = None
-                        if available_true_vectors:
-                            source_for_final_assign = rng.choice(available_true_vectors)
-                        else:
-                            candidate_feature_vectors = [
-                                fn for fn, ft in feature_vars.items() 
-                                if ft == "vector" and fn in current_block_vars 
-                            ]
-                            if not candidate_feature_vectors:
-                                 candidate_feature_vectors = [fn for fn, ft in feature_vars.items() if ft == "vector"]
-                            if not candidate_feature_vectors:
-                                if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES: 
-                                    source_for_final_assign = rng.choice(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
-                                else:
-                                    raise ValueError("CRITICAL: No vector features available for final assign_vector fallback.")
-                            else:
-                                source_for_final_assign = rng.choice(candidate_feature_vectors)
-                        
-                        selected_op_name = "assign_vector" 
-                        selected_spec = OP_REGISTRY["assign_vector"]
-                        chosen_inputs = (source_for_final_assign,)
-                        actual_out_type = "vector"
-                else: 
-                    choice_index = rng.integers(len(possible_ops_specs))
-                    op_n_cand, spec_cand, sources_list_cand = possible_ops_specs[choice_index]
-                    
-                    chosen_inputs_cand = tuple(rng.choice(s) for s in sources_list_cand)
-                    actual_out_type_cand = spec_cand.out_type
-                    if spec_cand.is_elementwise and spec_cand.out_type == "scalar":
-                        if any(current_block_vars.get(inp_n) == "vector" for inp_n in chosen_inputs_cand):
-                            actual_out_type_cand = "vector"
-                    
-                    selected_op_name, selected_spec, chosen_inputs, actual_out_type = \
-                        op_n_cand, spec_cand, chosen_inputs_cand, actual_out_type_cand
-                
-                if is_last_predict_op: 
-                    out_var_name = FINAL_PREDICTION_VECTOR_NAME
-                    if actual_out_type != "vector":
-                        # This case should be rare now with the improved final op selection,
-                        # but kept as a fallback.
-                        out_var_name = FINAL_PREDICTION_VECTOR_NAME
-                        selected_op_name = "assign_vector"
-                        selected_spec = OP_REGISTRY["assign_vector"]
-                        
-                        cs_vec_names = [fn for fn, ft in feature_vars.items() if ft == "vector"]
-                        if not cs_vec_names: cs_vec_names = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES 
-                        if not cs_vec_names: 
-                            if "opens_t" in initial_vars_for_block : cs_vec_names.append("opens_t") 
-                            else: raise ValueError("Cannot find any vector source for emergency final assignment.")
-                        
-                        source_for_emergency_assign = rng.choice(cs_vec_names)
-                        chosen_inputs = (source_for_emergency_assign,)
-                        actual_out_type = "vector"
+                    if ok:
+                        candidates.append((op_name, spec, inputs_for_spec))
+
+                # no viable op → give up for this position
+                if not candidates:
+                    break
+
+                last_predict_slot = is_predict and k == how_many - 1
+                chosen_name = chosen_spec = chosen_ins = out_t = None
+
+                # ─── we treat the final predict op specially ───
+                if last_predict_slot:
+                    rng.shuffle(candidates)
+                    for op_name, spec, pools in candidates:
+                        ins = tuple(rng.choice(p) for p in pools)
+                        out_t = spec.out_type
+                        if spec.is_elementwise and out_t == "scalar":
+                            if any(current[i] == "vector" for i in ins):
+                                out_t = "vector"
+                        if out_t == "vector":
+                            chosen_name, chosen_spec, chosen_ins = op_name, spec, ins
+                            break
+
+                    if chosen_name is None:
+                        # <-- this is the NEW behaviour
+                        raise RuntimeError(
+                            "random_program(): could not find a vector-typed "
+                            "operation for the final predict slot"
+                        )
                 else:
-                    out_var_name = new_tmp_name(actual_out_type)
-                
-                ops_block.append(Op(out_var_name, selected_op_name, chosen_inputs))
-                current_block_vars[out_var_name] = actual_out_type
-        
-        setup_initial = {**feature_vars, **state_vars}
-        add_random_op_to_block(prog.setup, setup_initial, n_setup_ops, False)
-        
-        vars_after_setup = prog._trace_vars_for_block(prog.setup, setup_initial)
-        predict_initial = {**vars_after_setup} 
-        add_random_op_to_block(prog.predict_ops, predict_initial, n_predict_ops, True)
+                    idx = rng.integers(len(candidates))      # ← pick index
+                    chosen_name, chosen_spec, pools = candidates[idx]
+                    chosen_ins = tuple(rng.choice(p) for p in pools)
+                    out_t = chosen_spec.out_type
+                    if chosen_spec.is_elementwise and out_t == "scalar":
+                        if any(current[i] == "vector" for i in chosen_ins):
+                            out_t = "vector"
 
-        vars_after_predict = prog._trace_vars_for_block(prog.predict_ops, predict_initial)
-        update_initial = {**vars_after_predict}
-        add_random_op_to_block(prog.update_ops, update_initial, n_update_ops, False)
-        
+                # 3. emit op
+                out_name = (FINAL_PREDICTION_VECTOR_NAME
+                            if last_predict_slot
+                            else _new_tmp(out_t))
+                block.append(Op(out_name, chosen_name, chosen_ins))
+                current[out_name] = out_t
+
+        # ────────────────── actually build the three blocks ──────────────────
+        _add_ops(prog.setup,   {**feature_vars, **state_vars},           n_setup_ops,   False)
+        after_setup = prog._trace_vars_for_block(prog.setup,
+                                                 {**feature_vars, **state_vars})
+
+        _add_ops(prog.predict_ops, after_setup,                          n_predict_ops, True)
+        after_predict = prog._trace_vars_for_block(prog.predict_ops,
+                                                   after_setup)
+
+        _add_ops(prog.update_ops, after_predict,                         n_update_ops,  False)
         return prog
 
     def copy(self) -> "AlphaProgram":

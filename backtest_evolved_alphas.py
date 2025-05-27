@@ -13,26 +13,19 @@ import sys
 import textwrap
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, OrderedDict as OrderedDictType
-from collections import OrderedDict
-import math
 import random
-
 import numpy as np
 import pandas as pd
+
 
 # --- Safe import of evolve_alphas and alpha_program_core ---
 try:
     from evolve_alphas import (
         load_and_align_data,
-        _ALIGNED_DFS as EvoAlignedDfs,
-        _COMMON_TIME_INDEX as EvoCommonTimeIndex,
-        _STOCK_SYMBOLS as EvoStockSymbols,
-        _N_STOCKS as EvoNStocks,
-        FEATURE_VARS,
         INITIAL_STATE_VARS,
         args as evo_args
     )
-    from alpha_program_core import AlphaProgram, FINAL_PREDICTION_VECTOR_NAME, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES, SCALAR_FEATURE_NAMES
+    from alpha_program_core import AlphaProgram, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES, SCALAR_FEATURE_NAMES
     ALPHAEVOLVE_LOADED = True
 except ImportError as e:
     print(f"Could not import from evolve_alphas or alpha_program_core: {e}")
@@ -46,6 +39,8 @@ except ImportError as e:
 
 DEFAULT_PICKLE_FILE = "evolved_top_alphas.pkl"
 DEFAULT_DATA_DIR = "./data"
+
+bt_args: argparse.Namespace | None = None       # Make bt_args a true module-level global so helper functions can use it.
 
 # ──────────────────────────────────────────────────────────────────────────
 # Backtesting Core Logic (Cross-Sectional)
@@ -145,7 +140,8 @@ def backtest_cross_sectional_alpha(
     signal_matrix = np.array(raw_signals_over_time)
 
     # CONSULTANT STEP 3 (Partial): Print cross-sectional std-dev of the raw signal
-    print(f"Debug: Raw signal_matrix σ_cross_sectional per bar (first 5): {signal_matrix.std(axis=1)[:5]}")
+    if bt_args.debug_prints:
+        print(f"Debug: Raw signal_matrix σ_cross_sectional per bar (first 5): {signal_matrix.std(axis=1)[:5]}")
 
 
     target_positions_matrix = np.zeros_like(signal_matrix)
@@ -153,10 +149,7 @@ def backtest_cross_sectional_alpha(
         # Scale first
         scaled_signal_t = _scale_signal_cross_sectionally(signal_matrix[t, :], scale_method)
         
-        # CONSULTANT STEP 2: Dollar-neutral re-centering
-        # Ensure sum of weights is zero, and sum of absolute weights is 1 (or close to it)
-        # scaled_signal_t is already clipped to [-1, 1] by _scale_signal_cross_sectionally
-        
+        # CONSULTANT STEP 2: Dollar-neutral re-centering        
         # Re-center (make sum of weights zero)
         mean_signal_t = np.mean(scaled_signal_t)
         centered_signal_t = scaled_signal_t - mean_signal_t
@@ -174,7 +167,8 @@ def backtest_cross_sectional_alpha(
         # target_positions_matrix[t, :] = scaled_signal_t # Original line before consultant's step 2
 
     # CONSULTANT STEP 3 (Partial): Print cross-sectional std-dev of the *target positions*
-    print(f"Debug: Target_positions_matrix σ_cross_sectional per bar (first 5): {target_positions_matrix.std(axis=1)[:5]}")
+    if bt_args.debug_prints:
+        print(f"Debug: Target_positions_matrix σ_cross_sectional per bar (first 5): {target_positions_matrix.std(axis=1)[:5]}")
 
 
     if hold > 1:
@@ -208,10 +202,11 @@ def backtest_cross_sectional_alpha(
     if len(daily_portfolio_returns_net) > 0:
         mean_ret_calc = np.mean(daily_portfolio_returns_net)
         std_ret_calc = np.std(daily_portfolio_returns_net, ddof=0) # Use ddof=0 for population std
-        print(f"DEBUG: first 20 daily PnL   : {daily_portfolio_returns_net[:20]}")
-        equity_curve_debug = np.cumprod(1 + daily_portfolio_returns_net) # Calculate for debug
-        print(f"DEBUG: first 20 eq. curve   : {equity_curve_debug[:20]}")
-        print(f"DEBUG: mean {mean_ret_calc:.6e}  std {std_ret_calc:.6e}")
+        if bt_args.debug_prints:
+            print(f"DEBUG: first 20 daily PnL   : {daily_portfolio_returns_net[:20]}")
+            equity_curve_debug = np.cumprod(1 + daily_portfolio_returns_net) # Calculate for debug
+            print(f"DEBUG: first 20 eq. curve   : {equity_curve_debug[:20]}")
+            print(f"DEBUG: mean {mean_ret_calc:.6e}  std {std_ret_calc:.6e}")
     # End CONSULTANT STEP 1
 
     if len(daily_portfolio_returns_net) < 2:
@@ -255,6 +250,7 @@ def load_programs_from_pickle(n_to_load: int, pickle_filepath: str) \
 
 # ──────────────────────────────────────────────────────────────────────────
 def main() -> None:
+    global bt_args
     bt_ap = argparse.ArgumentParser(description="Back-test evolved cross-sectional alphas")
     bt_ap.add_argument("--input", default=DEFAULT_PICKLE_FILE, help="Pickle file with evolved AlphaPrograms")
     bt_ap.add_argument("--top", type=int, default=10, help="Number of top programs to backtest from the pickle file")
@@ -270,7 +266,7 @@ def main() -> None:
     bt_ap.add_argument("--debug_prints", action="store_true", help="Enable consultant's debug prints")
 
 
-    bt_args = bt_ap.parse_args()
+    bt_args = bt_ap.parse_args() # ← now shared everywhere
 
     if not ALPHAEVOLVE_LOADED and AlphaProgram is None:
         sys.exit("AlphaProgram class not available. Cannot proceed with backtesting.")
@@ -301,7 +297,7 @@ def main() -> None:
     all_results = []
     for idx, (prog, original_metric) in enumerate(programs_to_backtest, 1):
         print(f"\nBacktesting Alpha #{idx:02d} (Original Metric: {original_metric:+.4f})")
-        print(f"   {textwrap.shorten(prog.to_string(), 1000)}")
+        print(f"   {textwrap.shorten(prog.to_string(), 100)}")
 
         metrics = backtest_cross_sectional_alpha(
             prog,
@@ -318,7 +314,7 @@ def main() -> None:
         
         metrics["AlphaID"] = f"Alpha_{idx:02d}"
         metrics["OriginalMetric"] = original_metric
-        metrics["Program"] = prog.to_string(max_len=1000)
+        metrics["Program"] = prog.to_string(max_len=1000000000)
         all_results.append(metrics)
 
         print(f"  └─ Sharpe: {metrics.get('Sharpe', 0.0):.3f}, AnnReturn: {metrics.get('AnnReturn', 0.0)*100:.2f}%, "
@@ -333,7 +329,7 @@ def main() -> None:
 
         summary_csv_path = Path(bt_args.outdir) / f"backtest_summary_top{bt_args.top}.csv"
         results_df.to_csv(summary_csv_path, index=False, float_format='%.4f')
-        print(f"\n 종합 Backtest summary saved to: {summary_csv_path}")
+        print(f"\n Backtest summary saved to: {summary_csv_path}")
         print(results_df.drop(columns=["Program", "Error"], errors='ignore').to_string(index=False))
 
 if __name__ == "__main__":

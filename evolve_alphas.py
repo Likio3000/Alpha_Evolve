@@ -1,40 +1,17 @@
 from __future__ import annotations
-
-"""evolve_alphas.py  ·  v5.3 – Cross-Sectional Evolution with Tighter Guards
-======================================================================
-Evolutionary search for weakly‑correlated alphas **à la AlphaEvolve** on a
-folder of 4‑hour OHLC crypto CSVs, now with cross-sectional evaluation.
-
-Changes vs v5.2 (Consultant-driven May 2024) ──────────────────────────
-* **Tighter Flat Signal Penalty**: The threshold for the "flat-over-time"
-  signal guard in `evaluate()` has been increased from `1e-5` to `1e-2`.
-* **Removed `const_0`**: `const_0` is no longer part of the default scalar
-  features available to the AlphaProgram (change made in alpha_program_core.py).
-* **A1 (Lag Alignment)**: Added `--eval_lag` CLI arg. `evaluate()` uses this lag
-  for fetching forward returns.
-* **A2 (Cross-Sectional Flatness Guard)**: Penalizes programs if mean
-  cross-sectional signal standard deviation is too low.
-* **A3 (Reduce Constant Scalar Weight)**: Probability of `const_1`/`const_neg_1`
-  reduced in program generation/mutation (implemented in alpha_program_core.py).
-* **B1 (Early Abort)**: Checks for flat signals (cross-sectionally or temporally)
-  after `EARLY_ABORT_BARS` and penalizes/aborts.
-* **C1 (Tqdm Visibility)**: Progress bar default changed to visible.
-* **C2 (ETA in Log)**: Per-generation log includes ETA.
+"""
+evolve_alphas.py – evolution driver
 """
 
 from pathlib import Path
 import argparse
 import os
 import glob
-import math
 import random
 import sys
-import textwrap
 import time
 from typing import Dict, List, Tuple, Optional, Any, OrderedDict as OrderedDictType, Set
-from collections import OrderedDict, deque
-
-
+from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
@@ -51,6 +28,18 @@ from alpha_program_core import (
     OP_REGISTRY 
 )
 import pickle
+
+# ─── utils ──────────────────────────────────────────────────────────────
+def tail_shorten(text: str, width: int, placeholder: str = "...") -> str:
+    """
+    Return the *last* `width` characters of `text`, prefixed with `placeholder`
+    if it had to be truncated.  Keeps the total length ≤ `width`.
+    """
+    if len(text) <= width:
+        return text
+    keep = width - len(placeholder)
+    return f"{placeholder}{text[-keep:]}"
+
 
 ###############################################################################
 # CLI & CONFIG ################################################################
@@ -113,10 +102,10 @@ SEED = args.seed
 EVAL_LAG = args.eval_lag # A1
 
 # A2 & B1 constants
-XS_FLATNESS_GUARD_THRESHOLD = 1e-2
+XS_FLATNESS_GUARD_THRESHOLD = 5e-2 
 EARLY_ABORT_BARS = 20
-EARLY_ABORT_XS_THRESHOLD = 1e-2 
-EARLY_ABORT_T_THRESHOLD = 1e-2 # Can be same as existing flat_signal_threshold
+EARLY_ABORT_XS_THRESHOLD = 5e-2 
+EARLY_ABORT_T_THRESHOLD = 5e-2 # Can be same as existing flat_signal_threshold
 # Consultant suggestion: Configurable HOF uniqueness. Default to False (ensure unique).
 # This could be promoted to a CLI argument later if needed.
 KEEP_DUPES_IN_HOF_CONFIG = False
@@ -185,8 +174,8 @@ def _ensure_data_loaded():
     _STOCK_SYMBOLS = symbols_data
     _N_STOCKS = len(_STOCK_SYMBOLS)
 
-    print(f"evolve_alphas: Using {_N_STOCKS} symbols for evolution: {', '.join(_STOCK_SYMBOLS)}")
-    print(f"Data spans {_COMMON_TIME_INDEX.min()} to {_COMMON_TIME_INDEX.max()} with {_COMMON_TIME_INDEX.size} steps. Eval Lag: {EVAL_LAG}")
+    print(f"evolve_alphas: Using {_N_STOCKS} symbols for evolution ")
+    print(f"Data spans {_COMMON_TIME_INDEX.min()} to {_COMMON_TIME_INDEX.max()} with {_COMMON_TIME_INDEX.size} steps. Eval added to the +1 Lag: {EVAL_LAG}\n")
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -349,23 +338,6 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
     raw_predictions_for_hof_correlation: List[np.ndarray] = [] 
     daily_ic_values: List[float] = [] 
 
-    # A1: Adjust loop end for eval_lag. Loop up to `len - EVAL_LAG` to allow fetching future returns.
-    # The number of evaluation steps will be `len(_COMMON_TIME_INDEX) - EVAL_LAG`.
-    # If EVAL_LAG is 0, it means predicting next bar's return (t+1 from t).
-    # If EVAL_LAG is 1, it means predicting t+2's return from t.
-    # Predictions are made at `_COMMON_TIME_INDEX[t_idx]`.
-    # Forward returns are from `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]`.
-    # The `ret_fwd` column itself is already `close.pct_change().shift(-1)`, so it's the next bar's return.
-    # So, if EVAL_LAG = 0, we use `ret_fwd` at `_COMMON_TIME_INDEX[t_idx]` which is effectively `(Close[t+1]/Close[t])-1`.
-    # If EVAL_LAG = 1, we use `ret_fwd` at `_COMMON_TIME_INDEX[t_idx + 1]` which is `(Close[t+2]/Close[t+1])-1`. This is NOT `(Close[t+EVAL_LAG+1]/Close[t+EVAL_LAG])-1`.
-    # The current `ret_fwd` definition seems to be for 1-bar forward return.
-    # For a true `EVAL_LAG`, `ret_fwd` should be `df["close"].pct_change(periods=EVAL_LAG).shift(-EVAL_LAG)`
-    # OR, we adjust how we access `ret_fwd` here.
-    # Let's assume `ret_fwd` is always 1-bar fwd. We need to get the return from `t_idx + EVAL_LAG`'s perspective.
-    # This means we need the 1-bar return *after* `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]`.
-    # So, the actual return time index will be `_COMMON_TIME_INDEX[t_idx + EVAL_LAG]`. The `ret_fwd` at this time point is the return from `t_idx+EVAL_LAG` to `t_idx+EVAL_LAG+1`.
-    # The loop should go from 0 up to `len(_COMMON_TIME_INDEX) - 1 - EVAL_LAG`.
-    # This ensures that `t_idx + EVAL_LAG` is a valid index for `_COMMON_TIME_INDEX`.
     loop_end_idx = len(_COMMON_TIME_INDEX) - EVAL_LAG -1 # -1 because ret_fwd is shifted by -1
     if loop_end_idx < 0: # Not enough data for any evaluation with this lag
         _eval_cache[fp] = (-float('inf'), 0.0, None)
@@ -457,7 +429,7 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
             return score, mean_daily_ic_on_processed, full_raw_predictions_matrix
             
     # Existing temporal flatness guard (MODIFICATION: Tighten the "flat-over-time" guard threshold)
-    flat_signal_threshold = 1e-2 
+    flat_signal_threshold = 5e-2 
     if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[0] > 1: 
         time_std_per_stock = full_raw_predictions_matrix.std(axis=0, ddof=0) 
         if np.mean(time_std_per_stock) < flat_signal_threshold: 
@@ -488,6 +460,27 @@ def evaluate(prog: AlphaProgram) -> Tuple[float, float, Optional[np.ndarray]]:
                 high_corrs.append(corr_with_hof)
         if high_corrs:
             score -= CORR_PENALTY_W * float(np.mean(high_corrs))
+
+        # ---------- correlation penalty against Hall-of-Fame ----------
+    if _HOF_prediction_timeseries and score > -float('inf'):
+        current_flat_ts = full_raw_predictions_matrix.flatten()
+
+        high_corrs = []
+        for hof_raw in _HOF_prediction_timeseries:
+            hof_flat_ts = hof_raw.flatten()
+            if hof_flat_ts.shape[0] != current_flat_ts.shape[0]:
+                continue
+            if np.std(hof_flat_ts, ddof=0) < 1e-9 or np.std(current_flat_ts, ddof=0) < 1e-9:
+                continue
+            corr = abs(_safe_corr(current_flat_ts, hof_flat_ts))
+            if not np.isnan(corr) and corr > CORR_CUTOFF:
+                high_corrs.append(corr)
+
+        if high_corrs:
+            score -= CORR_PENALTY_W * float(np.mean(high_corrs))
+
+    _eval_cache[fp] = (score, mean_daily_ic_on_processed, full_raw_predictions_matrix)
+    return _eval_cache[fp]
             
     _eval_cache[fp] = (score, mean_daily_ic_on_processed, full_raw_predictions_matrix) 
     return score, mean_daily_ic_on_processed, full_raw_predictions_matrix
@@ -579,10 +572,12 @@ def evolve() -> List[Tuple[AlphaProgram, float]]:
             best_program_this_gen = pop[best_prog_idx_in_pop]
 
             print(
-                f"Gen {gen+1:3d} | BestFit {best_fit:+.4f} | MeanIC {best_ic_processed:+.4f} | Ops {best_program_this_gen.size:2d} | "
-                f"EvalTime {gen_eval_time:.1f}s" 
-                + eta_str # C2: Added ETA
-                + " | " + textwrap.shorten(best_program_this_gen.to_string(), width=50) # Shortened for ETA
+                f"Gen {gen+1:3d} \n"
+                f"BestFit {best_fit:+.4f} \n"
+                f"MeanIC {best_ic_processed:+.4f} \n"
+                f"Ops {best_program_this_gen.size:2d} \n"
+                f"EvalTime {gen_eval_time:.1f}s{eta_str} \n"
+                f"{tail_shorten(best_program_this_gen.to_string(max_len=100), 100)}"
             )
 
             if best_raw_preds_matrix is not None and best_fit > -float('inf'): # Only add to HOF if valid
@@ -692,6 +687,5 @@ if __name__ == "__main__":
     for i, (prog, ic_processed) in enumerate(top_evolved_alphas, 1):
         print(
             f"#{i:02d} | MeanIC (proc) {ic_processed:+.4f} | Ops {prog.size:3d}\n   " 
-            + textwrap.shorten(prog.to_string(), width=1000)
-            + "\n"
+            f"{tail_shorten(prog.to_string(max_len=100), 100)}\n"
         )

@@ -27,7 +27,7 @@ def _evolve_and_save(
     # `evolve_alphas.py` will use `ae.args` to configure itself internally,
     # especially its constants, via `_sync_constants_from_args()` called by `_ensure_data_loaded()`.
 
-    print(f"--- Starting Evolution ({pipeline_args.generations} gens, seed {pipeline_args.seed}) ---")
+    print(f"\n--- Starting Evolution ({pipeline_args.generations} gens, seed {pipeline_args.seed}) ---")
     
     top_evolved_programs_with_ic = ae.evolve()
     
@@ -95,7 +95,6 @@ def main() -> None:
     run_timestamp = time.strftime("%Y%m%d_%H%M%S")
     current_run_output_dir = BASE_OUTPUT_DIR / f"run_g{pipeline_args.generations}_seed{pipeline_args.seed}_{pipeline_args.max_lookback_data_option}_{run_timestamp}"
     current_run_output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Pipeline outputs will be saved in: {current_run_output_dir}")
     
     evolved_pickle_filepath = _evolve_and_save(
         pipeline_args=pipeline_args,
@@ -120,7 +119,7 @@ def main() -> None:
         "--min_common_data_points", str(pipeline_args.min_common_points)
     ]
     
-    print(f"\n--- Running Backtest with args: {' '.join(bt_sys_argv)} ---")
+    print(f"\n--- Running Backtests ---")
     sys.argv = bt_sys_argv
     
     try:
