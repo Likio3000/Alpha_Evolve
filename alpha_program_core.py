@@ -844,14 +844,12 @@ class AlphaProgram:
                 op_instance.execute(buf, n_stocks)
             except Exception: 
                 # This might indicate an issue with an op or invalid inputs.
-                # For robustness, return NaNs, but ideally, this should be rare with type checking.
                 return np.full(n_stocks, np.nan)
 
 
         if FINAL_PREDICTION_VECTOR_NAME not in buf:
             # This implies the predict block did not correctly produce the final named vector.
-            # Should be caught by generation/mutation logic.
-            # print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} not in buffer after predict_ops. Program: {self.to_string()}")
+            print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} not in buffer after predict_ops. Program: {self.to_string()}")
             return np.full(n_stocks, np.nan)
 
         s1_predictions_val = buf[FINAL_PREDICTION_VECTOR_NAME]
@@ -861,14 +859,12 @@ class AlphaProgram:
         
         if not isinstance(s1_predictions_val, np.ndarray) or s1_predictions_val.ndim != 1:
             # Output is not a 1D array as expected for a vector.
-            # print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} is not a 1D ndarray. Type: {type(s1_predictions_val)}")
+            print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} is not a 1D ndarray. Type: {type(s1_predictions_val)}")
             return np.full(n_stocks, np.nan) 
 
         if s1_predictions_val.shape[0] != n_stocks:
             # Output vector length does not match n_stocks.
-            # This could happen if a cross-sectional aggregator was misused or if resizing logic failed.
-            # For now, returning NaN; might need more robust handling or ensuring ops always respect n_stocks for vector out.
-            # print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} shape {s1_predictions_val.shape} does not match n_stocks {n_stocks}")
+            print(f"Warning: {FINAL_PREDICTION_VECTOR_NAME} shape {s1_predictions_val.shape} does not match n_stocks {n_stocks}")
             # Let's try to resize/broadcast if it's a single value, otherwise NaN.
             if s1_predictions_val.size == 1:
                  s1_predictions_val = np.full(n_stocks, s1_predictions_val.item())

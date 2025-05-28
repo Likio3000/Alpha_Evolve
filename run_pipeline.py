@@ -84,6 +84,7 @@ def main() -> None:
     ap.add_argument("--fee", type=float, default=1.0, help="Round-trip commission in bps for backtest (e.g. 1.0 for 0.01%)")
     ap.add_argument("--hold", type=int, default=1, help="Holding period in bars for backtest")
     ap.add_argument("--scale", default="zscore", choices=["zscore","rank","sign"], help="Signal scaling for backtest")
+    ap.add_argument("--fresh_rate", type=float, default=0.05, help="Probability that a slot in the new population is filled by a completely random program (novelty injection). Set to 0 to disable.")
     # --lag for backtester will be derived from pipeline_args.eval_lag
     
     pipeline_args = ap.parse_args() # Renamed to avoid confusion with ae.args

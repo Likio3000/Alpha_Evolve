@@ -293,11 +293,13 @@ def main() -> None:
 
 
     programs_to_backtest = load_programs_from_pickle(bt_args.top, bt_args.input)
-
     all_results = []
+    alpha_tail = ""
+    
     for idx, (prog, original_metric) in enumerate(programs_to_backtest, 1):
+        alpha_tail = prog.to_string(max_len=1000000)
         print(f"\nBacktesting Alpha #{idx:02d} (Original Metric: {original_metric:+.4f})")
-        print(f"   {textwrap.shorten(prog.to_string(), 100)}")
+        print(f"   {alpha_tail[-100:]}")
 
         metrics = backtest_cross_sectional_alpha(
             prog,
