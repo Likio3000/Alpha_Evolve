@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AlphaGen Pipeline Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Custom scrollbar for webkit browsers */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #2d3748; /* dark-700 */
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #4a5568; /* dark-500 */
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #718096; /* dark-400 */
+      }
+
+      /* Styles for rendered Markdown content */
+      .markdown-content p {
+        margin-bottom: 0.75rem; /* More space for paragraphs */
+        line-height: 1.625; /* leading-relaxed */
+      }
+      .markdown-content ul,
+      .markdown-content ol {
+        margin-left: 1.25rem; /* pl-5 */
+        margin-bottom: 0.75rem;
+        list-style-position: outside;
+      }
+      .markdown-content ul {
+        list-style-type: disc;
+      }
+      .markdown-content ol {
+        list-style-type: decimal;
+      }
+      .markdown-content li {
+        margin-bottom: 0.25rem;
+      }
+      .markdown-content strong {
+        font-weight: 600; /* semibold */
+        color: #e5e7eb; /* gray-200 for better contrast */
+      }
+      .markdown-content em {
+        font-style: italic;
+        color: #d1d5db; /* gray-300 */
+      }
+      .markdown-content code {
+        background-color: #374151; /* gray-700 */
+        color: #93c5fd; /* blue-300 for code, distinct from sky */
+        padding: 0.125rem 0.375rem; /* Adjusted padding */
+        border-radius: 0.25rem; /* Slightly more rounded */
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.875em; /* Slightly smaller to fit better */
+        border: 1px solid #4b5563; /* gray-600 border */
+      }
+      .markdown-content pre {
+        background-color: #1f2937; /* gray-800, slightly lighter than absolute darkest */
+        border: 1px solid #374151; /* gray-700 border */
+        padding: 0.75rem; /* p-3 */
+        border-radius: 0.375rem; /* rounded-md */
+        overflow-x: auto;
+        margin-bottom: 0.75rem;
+        margin-top: 0.5rem;
+      }
+      .markdown-content pre code {
+        background-color: transparent;
+        padding: 0;
+        border: none;
+        color: #e5e7eb; /* gray-200 for text within pre */
+        font-size: 0.875rem; /* text-sm for pre content */
+      }
+      .markdown-content blockquote {
+        border-left: 4px solid #4b5563; /* gray-600 */
+        padding-left: 1rem; /* pl-4 */
+        font-style: italic;
+        color: #9ca3af; /* gray-400 */
+        margin-bottom: 0.75rem;
+        margin-top: 0.5rem;
+      }
+      .markdown-content a {
+        color: #60a5fa; /* blue-400 for links */
+        text-decoration: underline;
+      }
+      .markdown-content a:hover {
+        color: #3b82f6; /* blue-500 */
+      }
+      .markdown-content h1,
+      .markdown-content h2,
+      .markdown-content h3,
+      .markdown-content h4,
+      .markdown-content h5,
+      .markdown-content h6 {
+        font-weight: 600; /* semibold */
+        color: #e5e7eb; /* gray-200 */
+        margin-top: 1.25rem; /* More top margin for headings */
+        margin-bottom: 0.75rem;
+      }
+      .markdown-content h1 { font-size: 1.875rem; /* text-3xl */ }
+      .markdown-content h2 { font-size: 1.5rem; /* text-2xl */ }
+      .markdown-content h3 { font-size: 1.25rem; /* text-xl */ }
+      .markdown-content h4 { font-size: 1.125rem; /* text-lg */ }
+      .markdown-content hr {
+        border-top: 1px solid #4b5563; /* gray-600 */
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "react": "https://esm.sh/react@^19.1.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.0.1",
+    "marked": "https://esm.sh/marked@^12.0.2"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-900 text-gray-100">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html><link rel="stylesheet" href="index.css">
+<script src="index.tsx" type="module"></script>

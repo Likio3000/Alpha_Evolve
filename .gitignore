@@ -18,3 +18,31 @@ wheels/
 
 # ruff cache
 /.ruff_cache
+
+# Logs
+UI_alphas_lab/logs
+UI_alphas_lab/*.log
+UI_alphas_lab/npm-debug.log*
+UI_alphas_lab/yarn-debug.log*
+UI_alphas_lab/yarn-error.log*
+UI_alphas_lab/pnpm-debug.log*
+UI_alphas_lab/lerna-debug.log*
+
+UI_alphas_lab/node_modules
+UI_alphas_lab/dist
+UI_alphas_lab/dist-ssr
+UI_alphas_lab/*.local
+
+# Editor directories and files
+UI_alphas_lab/.vscode/*
+UI_alphas_lab/.vscode/extensions.json
+UI_alphas_lab/.idea
+UI_alphas_lab/.DS_Store
+UI_alphas_lab/*.suo
+UI_alphas_lab/*.ntvs*
+UI_alphas_lab/*.njsproj
+UI_alphas_lab/*.sln
+UI_alphas_lab/*.sw?
+
+## Copied files
+UI_alphas_lab/pythonCode.ts

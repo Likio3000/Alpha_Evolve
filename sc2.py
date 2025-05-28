@@ -104,6 +104,7 @@ EXCLUDED_FILES = {
     "package-lock.json",
     "yarn.lock",
     "composer.lock",
+    "pythonCode.ts",
 }
 EXCLUDED_FILES = {f.lower() for f in EXCLUDED_FILES}
 
