@@ -104,45 +104,44 @@ def main() -> None:
     )
     
     backtest_csv_outdir = current_run_output_dir / "backtest_portfolio_csvs"
-    original_sys_argv = sys.argv[:]
+    # original_sys_argv = sys.argv[:] # Removed: No longer manipulating sys.argv
     
-    bt_sys_argv = [
-        "backtest_evolved_alphas.py", 
-        "--input", str(evolved_pickle_filepath),
-        "--top", str(cfg.top_to_backtest),
-        "--fee", str(cfg.fee),
-        "--hold", str(cfg.hold),
-        "--scale", cfg.scale,
-        "--lag", str(cfg.eval_lag), 
-        "--data", str(cfg.data_dir),
-        "--outdir", str(backtest_csv_outdir),
-        "--data_alignment_strategy", cfg.max_lookback_data_option, 
-        "--min_common_data_points", str(cfg.min_common_points),
-        "--seed", str(cfg.seed) 
-    ]
-    
-    if cfg.quiet: # For boolean flags, only add if True, as backtester might default to False
-        bt_sys_argv.append("--quiet") # Assuming backtester has a similar --quiet flag
+    # --- Prepare EvoConfig for backtesting ---
+    # The cfg object from parse_args() should have most attributes needed by backtest_evolved_alphas.
+    # We just need to update the specific paths determined dynamically in this script.
+    # It's assumed that EvoConfig (from config.py) has attributes like:
+    # input_pickle_file, output_dir, top_n_programs, fee_bps, holding_period, 
+    # scaling_method, signal_lag, data_alignment_strategy, min_common_data_points, 
+    # data_dir, seed, debug_prints, annualization_factor_override.
+    # And that parse_args() populates them correctly (e.g. cfg.top_to_backtest is assigned to cfg.top_n_programs by EvoConfig constructor or similar).
 
-    # For --keep_dupes_in_hof (BooleanOptionalAction)
-    # If backtester needs it and has a similar BooleanOptionalAction:
-    # if cfg.keep_dupes_in_hof is True:
-    #     bt_sys_argv.append("--keep-dupes-in-hof")
-    # elif cfg.keep_dupes_in_hof is False: # Explicitly pass if False
-    #     bt_sys_argv.append("--no-keep-dupes-in-hof")
-    # For now, assuming backtester handles absence of this flag by defaulting to its own False,
-    # or this flag isn't used by backtester directly.
+    cfg.input_pickle_file = str(evolved_pickle_filepath)
+    cfg.output_dir = str(backtest_csv_outdir)
+    
+    # The following attributes are assumed to be correctly named and populated on cfg 
+    # by EvoConfig's initialization using parameters from parse_args(), for example:
+    # cfg.top_n_programs = cfg.top_to_backtest (or EvoConfig uses top_to_backtest directly if that's the name)
+    # cfg.signal_lag = cfg.eval_lag
+    # cfg.holding_period = cfg.hold
+    # cfg.fee_bps = cfg.fee
+    # cfg.scaling_method = cfg.scale
+    # cfg.data_alignment_strategy = cfg.max_lookback_data_option
+    # cfg.min_common_data_points = cfg.min_common_points
+    # cfg.data_dir, cfg.seed, cfg.debug_prints should also be correctly set.
+
+    # bt_sys_argv list and sys.argv manipulation removed.
 
     print(f"\n--- Running Backtests ---")
-    sys.argv = bt_sys_argv
+    # sys.argv = bt_sys_argv # Removed
     
     try:
-        bt.main()
+        # Call bt.main directly with the cfg object
+        bt.main(cfg)
     except SystemExit as e:
         if e.code != 0 and e.code is not None: 
             print(f"Backtesting exited with code {e.code}")
-    finally:
-        sys.argv = original_sys_argv
+    # finally: # Removed
+        # sys.argv = original_sys_argv # Removed
 
     print(f"\n--- Pipeline run finished. Check outputs in: {current_run_output_dir} ---")
 
