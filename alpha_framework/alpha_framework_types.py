@@ -9,7 +9,7 @@ from typing import Callable, Dict, Tuple, Literal
 TypeId = Literal["scalar", "vector", "matrix"]
 
 CROSS_SECTIONAL_FEATURE_VECTOR_NAMES = [
-    "opens_t", "highs_t", "lows_t", "closes_t", "volumes_t", "ranges_t",
+    "opens_t", "highs_t", "lows_t", "closes_t", "ranges_t",
     "ma5_t", "ma10_t", "ma20_t", "ma30_t",
     "vol5_t", "vol10_t", "vol20_t", "vol30_t",
 ]

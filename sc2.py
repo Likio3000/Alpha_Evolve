@@ -94,6 +94,8 @@ EXCLUDED_DIRS = {
     "venv",
     ".env",
     "env",
+    "pipeline_runs_cs",
+    "UI_alphas_lab"
 }
 EXCLUDED_DIRS = {d.lower() for d in EXCLUDED_DIRS}
 
