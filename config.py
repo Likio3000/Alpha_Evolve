@@ -1,6 +1,5 @@
 # config.py
 from dataclasses import dataclass
-from typing import Optional
 
 @dataclass
 class EvoConfig:
@@ -45,9 +44,3 @@ class EvoConfig:
     top_to_backtest: int = 10 # Num best programs from evolution to backtest
     fee: float = 1.0          # Round-trip commission in bps for backtest
     hold: int = 1             # Holding period in bars for backtest
-
-    # New fields for pipeline/backtesting integration
-    input_pickle_file: Optional[str] = None
-    output_dir: Optional[str] = None # Specific output directory for backtest results
-    annualization_factor_override: Optional[float] = None
-    debug_prints: bool = False # For verbose debugging output in backtester
