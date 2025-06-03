@@ -1,7 +1,7 @@
 from __future__ import annotations
 import numpy as np
 import pandas as pd # For DataFrame rolling in hold period
-from typing import TYPE_CHECKING, Dict, List, Tuple, Any, Optional, OrderedDict as OrderedDictType
+from typing import TYPE_CHECKING, Dict, List, Any, OrderedDict as OrderedDictType
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram # Use the actual class from the framework
@@ -40,10 +40,18 @@ def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str) 
 
 # Helper function for max drawdown
 def _max_drawdown(equity_curve: np.ndarray) -> float:
-    if len(equity_curve) == 0: return 0.0
+    if len(equity_curve) == 0:
+        return 0.0
+
     peak = np.maximum.accumulate(equity_curve)
-    drawdown = (equity_curve - peak) / (peak + 1e-9) 
-    return np.min(drawdown) if len(drawdown) > 0 and np.any(drawdown) else 0.0
+    drawdown = (equity_curve - peak) / (peak + 1e-9)
+
+    if drawdown.size == 0 or not np.any(drawdown):
+        return 0.0
+
+    # Drawdowns are negative percentages.  Return the magnitude as a positive
+    # number so callers don't have to negate the value.
+    return float(-np.min(drawdown))
 
 # Main backtesting function
 def backtest_cross_sectional_alpha(
@@ -66,9 +74,12 @@ def backtest_cross_sectional_alpha(
     program_state: Dict[str, Any] = prog.new_state()
     for s_name, s_type in initial_state_vars_config.items():
         if s_name not in program_state:
-            if s_type == "vector": program_state[s_name] = np.zeros(n_stocks)
-            elif s_type == "matrix": program_state[s_name] = np.zeros((n_stocks, n_stocks))
-            else: program_state[s_name] = 0.0
+            if s_type == "vector":
+                program_state[s_name] = np.zeros(n_stocks)
+            elif s_type == "matrix":
+                program_state[s_name] = np.zeros((n_stocks, n_stocks))
+            else:
+                program_state[s_name] = 0.0
 
     raw_signals_over_time: List[np.ndarray] = []
 
@@ -91,8 +102,10 @@ def backtest_cross_sectional_alpha(
                 features_at_t[feat_template] = np.zeros(n_stocks, dtype=float)
 
         for scalar_feat_name in scalar_feature_names:
-            if scalar_feat_name == "const_1": features_at_t[scalar_feat_name] = 1.0
-            elif scalar_feat_name == "const_neg_1": features_at_t[scalar_feat_name] = -1.0
+            if scalar_feat_name == "const_1":
+                features_at_t[scalar_feat_name] = 1.0
+            elif scalar_feat_name == "const_neg_1":
+                features_at_t[scalar_feat_name] = -1.0
         
         try:
             signal_vector_t = prog.eval(features_at_t, program_state, n_stocks)
