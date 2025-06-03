@@ -16,6 +16,7 @@ from .alpha_framework_op import Op
 if TYPE_CHECKING:
     from .alpha_framework_program import AlphaProgram # For type hint of self and return type
 
+
 def mutate_program_logic(
     self_prog: AlphaProgram, # Instance of AlphaProgram
     feature_vars: Dict[str, TypeId],
@@ -53,7 +54,6 @@ def mutate_program_logic(
 
     if mutation_type == "add":
         insertion_idx = rng.integers(0, len(chosen_block_ops_list) + 1)
-        # `get_vars_at_point` is a method of AlphaProgram instance `new_prog`
         vars_at_insertion = new_prog.get_vars_at_point(chosen_block_name, insertion_idx, feature_vars, state_vars)
 
         temp_current_vars = vars_at_insertion.copy()
@@ -195,7 +195,6 @@ def mutate_program_logic(
             chosen_block_ops_list[op_idx_to_change] = Op(op_to_mutate.out, op_to_mutate.opcode, tuple(new_inputs_tuple))
 
     # Ensure predict block ends with a vector named FINAL_PREDICTION_VECTOR_NAME
-    # This uses new_prog.get_vars_at_point and AlphaProgram._get_default_feature_vars
     if new_prog.predict_ops:
         last_op = new_prog.predict_ops[-1]
         last_op_spec = OP_REGISTRY[last_op.opcode]
@@ -227,7 +226,6 @@ def mutate_program_logic(
                     new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec_fallback,)))
 
     elif not new_prog.predict_ops : # Predict block became empty
-        # AlphaProgram._get_default_feature_vars() isn't directly used here, but feature_vars is
         default_feat_vec = next((vn for vn, vt in feature_vars.items() if vt == "vector"), None)
         if not default_feat_vec and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
             default_feat_vec = rng.choice(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
@@ -237,6 +235,11 @@ def mutate_program_logic(
         if default_feat_vec:
              new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec,)))
 
+    # — enforce that predict_ops[-1] is not a pure scalar aggregator —
+    last = new_prog.predict_ops[-1]
+    spec = OP_REGISTRY[last.opcode]
+    if spec.is_cross_sectional_aggregator:
+        new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, "cs_rank", ("vol10_t",))
 
     new_prog._vars_info_cache = None
     return new_prog
@@ -254,7 +257,6 @@ def crossover_program_logic(
     child = self_prog.copy()
 
     if child.predict_ops and other_prog.predict_ops:
-        # child_final_op_obj = None # Not used
         if child.predict_ops[-1].out == FINAL_PREDICTION_VECTOR_NAME:
             child.predict_ops.pop()
 
@@ -270,7 +272,6 @@ def crossover_program_logic(
             child.predict_ops = new_predict_internal_ops
         elif len2 > 0 :
             child.predict_ops = other_predict_internal_ops[rng.integers(0, len2+1):]
-        # If len2 is 0, child.predict_ops (already potentially modified) remains.
 
     elif other_prog.predict_ops: # Child's predict_ops was empty, other's was not.
         child.predict_ops = copy.deepcopy(other_prog.predict_ops) # Deepcopy from other
@@ -278,8 +279,6 @@ def crossover_program_logic(
              child.predict_ops.pop() # Remove final op for generic fixup
 
     # Fixup logic for predict_ops
-    # It needs feature_vars and state_vars, typically obtained from AlphaProgram._get_default_feature_vars()
-    # and an empty dict for state_vars for this context.
     temp_feature_vars = child._get_default_feature_vars() # Calling static method via instance
     temp_state_vars = {}
 

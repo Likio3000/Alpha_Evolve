@@ -14,6 +14,9 @@ from alpha_framework.alpha_framework_types import ( # Ensure these are correct b
     FINAL_PREDICTION_VECTOR_NAME
 )
 
+from backtesting_components.core_logic import (
+    _scale_signal_cross_sectionally as _scale_signal_for_ic,
+)
 
 # Module-level cache
 _eval_cache: Dict[str, Tuple[float, float, Optional[np.ndarray]]] = {}
@@ -25,8 +28,8 @@ _eval_cache: Dict[str, Tuple[float, float, Optional[np.ndarray]]] = {}
 _EVAL_CONFIG = {
     "parsimony_penalty_factor": 0.002,
     "max_ops_for_parsimony": 32,
-    "xs_flatness_guard_threshold": 5e-2,
-    "temporal_flatness_guard_threshold": 5e-2, # Renamed from flat_signal_threshold
+    "xs_flatness_guard_threshold": 5e-3,
+    "temporal_flatness_guard_threshold": 5e-3, # Renamed from flat_signal_threshold
     "early_abort_bars": 20,
     "early_abort_xs_threshold": 5e-2,
     "early_abort_t_threshold": 5e-2,
@@ -238,7 +241,9 @@ def evaluate_program(
             
             all_raw_predictions_timeseries.append(raw_predictions_t.copy())
             
-            processed_predictions_t = _scale_signal_for_ic(raw_predictions_t, _EVAL_CONFIG["ic_scale_method"])
+            processed_predictions_t = _scale_signal_for_ic(
+                raw_predictions_t, _EVAL_CONFIG["ic_scale_method"]
+            )
             all_processed_predictions_timeseries.append(processed_predictions_t)
 
             # Early abort checks (on raw predictions)

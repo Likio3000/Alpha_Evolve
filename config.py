@@ -39,8 +39,8 @@ class EvolutionConfig(DataConfig):
     fresh_rate: float = 0.12
 
     # complexity / similarity guards
-    max_ops: int = 24
-    parsimony_penalty: float = 0.02
+    max_ops: int = 48
+    parsimony_penalty: float = 0.0001
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
     keep_dupes_in_hof: bool = False

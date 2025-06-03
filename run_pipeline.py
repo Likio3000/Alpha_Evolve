@@ -121,6 +121,7 @@ def main() -> None:
         "--data_alignment_strategy", bt_cfg.max_lookback_data_option,
         "--min_common_data_points",  str(bt_cfg.min_common_points),
         "--seed",  str(bt_cfg.seed),
+        "--debug_prints",
     ]
 
     print("\n— Back-testing …")

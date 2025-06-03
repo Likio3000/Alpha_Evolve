@@ -108,6 +108,8 @@ def backtest_cross_sectional_alpha(
 
     if debug_prints:
         print(f"Debug (core_logic): Raw signal_matrix σ_cross_sectional (first 5): {signal_matrix.std(axis=1)[:5]}")
+        print(">>> signal_matrix[:5,:5] std:", np.std(signal_matrix[:5,:], axis=1, ddof=0))
+        print(">>> first few rows of signal_matrix:", signal_matrix[:3,:4])
 
     target_positions_matrix = np.zeros_like(signal_matrix)
     for t in range(signal_matrix.shape[0]):
