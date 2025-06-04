@@ -1,6 +1,6 @@
 import pytest
 
-from evolution_components.data_handling import _load_and_align_data_internal
+from evolution_components.data_handling import _load_and_align_data_internal, get_data_splits, initialize_data
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
 
 DATA_DIR = "tests/data/good"
@@ -46,3 +46,15 @@ def test_backtest_missing_columns_raises():
 def test_backtest_insufficient_overlap_raises():
     with pytest.raises(SystemExit):
         load_and_align_data_for_backtest(BAD_OVERLAP_DIR, "common_1200", 4)
+
+
+def test_get_data_splits_returns_expected_lengths():
+    initialize_data(DATA_DIR, "common_1200", 3, 1)
+    train, val, test = get_data_splits(1, 1, 1)
+
+    for split in (train, val, test):
+        for df in split.values():
+            assert len(df) == 2  # 1 eval step + 1 lag
+
+    assert train["AAA"].index[-1] == val["AAA"].index[0]
+    assert val["AAA"].index[-1] == test["AAA"].index[0]

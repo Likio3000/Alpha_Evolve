@@ -35,3 +35,10 @@ Use `pytest` to run the unit tests after installing the dependencies:
 ```bash
 pytest
 ```
+
+## Data handling
+
+Aligned OHLCV data is loaded from a directory of CSV files. The
+`full_overlap` strategy is recommended as it keeps the maximum number of
+datapoints shared across all symbols.  After alignment you can obtain
+train/validation/test splits via `evolution_components.get_data_splits`.

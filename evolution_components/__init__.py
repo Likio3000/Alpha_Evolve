@@ -4,6 +4,7 @@ from .data_handling import (
     get_common_time_index,
     get_stock_symbols,
     get_n_stocks,
+    get_data_splits,
 )
 from .evaluation_logic import evaluate_program, initialize_evaluation_cache
 from .hall_of_fame_manager import (
@@ -22,6 +23,7 @@ __all__ = [
     "get_common_time_index",
     "get_stock_symbols",
     "get_n_stocks",
+    "get_data_splits",
     "evaluate_program",
     "initialize_evaluation_cache",
     "initialize_hof",

@@ -149,3 +149,36 @@ def get_n_stocks() -> int:
 def get_eval_lag() -> int:
     # _EVAL_LAG_CACHE is set during initialize_data
     return _EVAL_LAG_CACHE
+
+
+def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tuple[
+    OrderedDictType[str, pd.DataFrame],
+    OrderedDictType[str, pd.DataFrame],
+    OrderedDictType[str, pd.DataFrame],
+]:
+    """Return train/validation/test slices of the aligned data.
+
+    The number of *points* refers to evaluation steps. Because the common index
+    includes ``eval_lag`` extra rows to compute the forward returns, each split
+    will contain ``points + eval_lag`` rows from the underlying data.
+    """
+
+    if _ALIGNED_DFS is None or _COMMON_TIME_INDEX is None:
+        raise RuntimeError("Data not initialized. Call initialize_data() first.")
+
+    total_eval_steps = len(_COMMON_TIME_INDEX) - _EVAL_LAG_CACHE
+    required = train_points + val_points + test_points
+    if required > total_eval_steps:
+        raise ValueError(
+            f"Requested split of {required} eval steps exceeds available {total_eval_steps}."
+        )
+
+    slices = []
+    start = 0
+    for size in (train_points, val_points, test_points):
+        idx_slice = _COMMON_TIME_INDEX[start : start + size + _EVAL_LAG_CACHE]
+        split_dfs = OrderedDict({sym: df.loc[idx_slice] for sym, df in _ALIGNED_DFS.items()})
+        slices.append(split_dfs)
+        start += size
+
+    return tuple(slices)  # type: ignore[return-value]
