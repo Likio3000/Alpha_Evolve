@@ -59,6 +59,9 @@ class EvolutionConfig(DataConfig):
     # evaluation cache
     eval_cache_size: int = 128
 
+    # multiprocessing
+    workers: int = 1
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  cross-sectional back-test
