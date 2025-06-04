@@ -32,10 +32,13 @@ def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, 
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
     print(f"Hall of Fame initialized: max_size={max_size}, keep_dupes={keep_dupes}, corr_penalty_w={corr_penalty_weight}, corr_cutoff={corr_cutoff}")
 
-def _safe_corr(a: np.ndarray, b: np.ndarray) -> float: # Copied from evolve_alphas, will be used for HOF penalty
-    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))): return 0.0
-    if a.std(ddof=0) < 1e-9 or b.std(ddof=0) < 1e-9: return 0.0
-    if len(a) != len(b) or len(a) < 2: return 0.0
+def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Copied from evolve_alphas, will be used for HOF penalty
+    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
+        return 0.0
+    if a.std(ddof=0) < 1e-9 or b.std(ddof=0) < 1e-9:
+        return 0.0
+    if len(a) != len(b) or len(a) < 2:
+        return 0.0
     # np.corrcoef can still return NaNs if one array is constant, even if std > 1e-9 due to float precision
     with np.errstate(invalid='ignore'): # Suppress "invalid value encountered in true_divide"
         corr_matrix = np.corrcoef(a, b)
@@ -50,8 +53,10 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
 
     high_corrs = []
     for hof_flat_processed_ts in _hof_processed_prediction_timeseries_for_corr:
-        if len(current_prog_flat_processed_ts) != len(hof_flat_processed_ts): continue
-        if hof_flat_processed_ts.std(ddof=0) < 1e-9: continue
+        if len(current_prog_flat_processed_ts) != len(hof_flat_processed_ts):
+            continue
+        if hof_flat_processed_ts.std(ddof=0) < 1e-9:
+            continue
 
         corr_with_hof = abs(_safe_corr(current_prog_flat_processed_ts, hof_flat_processed_ts))
         if not np.isnan(corr_with_hof) and corr_with_hof > _corr_penalty_config["cutoff"]:
@@ -167,7 +172,8 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     # For each of the top N (e.g., _TOP_TO_SHOW_PRINT) from eval_results_sorted of current gen:
     temp_hof_candidates = []
     for pop_idx, fit, ic, preds_matrix_or_none in eval_results_sorted[:_TOP_TO_SHOW_PRINT]:
-        if fit <= -float('inf'): continue # Skip invalid programs
+        if fit <= -float('inf'):
+            continue  # Skip invalid programs
         prog = population[pop_idx]
         fp = prog.fingerprint
         # Add to a temporary list for consideration against the static HOF

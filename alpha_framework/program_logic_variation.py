@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Dict, List, Tuple, Literal, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 import numpy as np
 import copy # For crossover, specifically deepcopy of other's predict_ops
 
@@ -43,13 +43,15 @@ def mutate_program_logic(
     current_total_ops = sum(len(b) for b in block_ref_map.values())
 
     possible_mutations = []
-    if current_total_ops < max_total_ops: possible_mutations.append("add")
+    if current_total_ops < max_total_ops:
+        possible_mutations.append("add")
     if len(chosen_block_ops_list) > (1 if chosen_block_name == "predict" else 0) :
         possible_mutations.append("remove")
     if len(chosen_block_ops_list) > 0:
         possible_mutations.extend(["change_op", "change_inputs"])
 
-    if not possible_mutations: return new_prog # No mutation possible
+    if not possible_mutations:
+        return new_prog  # No mutation possible
     mutation_type = rng.choice(possible_mutations)
 
     if mutation_type == "add":
@@ -75,8 +77,10 @@ def mutate_program_logic(
                     other_scalars_add = []
                     for vn_add, vt_add in temp_current_vars.items():
                         if vt_add == "scalar":
-                            if vn_add in SCALAR_FEATURE_NAMES: const_scalars_add.append(vn_add)
-                            else: other_scalars_add.append(vn_add)
+                            if vn_add in SCALAR_FEATURE_NAMES:
+                                const_scalars_add.append(vn_add)
+                            else:
+                                other_scalars_add.append(vn_add)
                     if other_scalars_add:
                         current_type_candidates_add.extend(other_scalars_add * 3)
                         current_type_candidates_add.extend(const_scalars_add)
@@ -85,13 +89,17 @@ def mutate_program_logic(
 
                     if not current_type_candidates_add and op_s.is_elementwise:
                         vec_opts_add = [vn_add for vn_add, vt_add in temp_current_vars.items() if vt_add == "vector"]
-                        if vec_opts_add: current_type_candidates_add.extend(vec_opts_add)
+                        if vec_opts_add:
+                            current_type_candidates_add.extend(vec_opts_add)
                 else: # vector or matrix
                     current_type_candidates_add = [vn_add for vn_add, vt_add in temp_current_vars.items() if vt_add == req_t]
 
-                if not current_type_candidates_add: formable=False; break
+                if not current_type_candidates_add:
+                    formable = False
+                    break
                 temp_inputs_sources.append(current_type_candidates_add)
-            if formable: candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
+            if formable:
+                candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
 
         if candidate_ops_for_add:
             choice_index = rng.integers(len(candidate_ops_for_add))
@@ -154,7 +162,8 @@ def mutate_program_logic(
     elif mutation_type == "change_inputs" and chosen_block_ops_list:
         op_idx_to_change = rng.integers(0, len(chosen_block_ops_list))
         op_to_mutate = chosen_block_ops_list[op_idx_to_change]
-        if not op_to_mutate.inputs: return new_prog
+        if not op_to_mutate.inputs:
+            return new_prog
 
         vars_at_op = new_prog.get_vars_at_point(chosen_block_name, op_idx_to_change, feature_vars, state_vars)
         input_idx_to_change = rng.integers(0, len(op_to_mutate.inputs))
@@ -168,7 +177,8 @@ def mutate_program_logic(
             const_scalars_options = []
             other_scalars_options = []
             for vn, vt in vars_at_op.items():
-                if vn == original_input_name: continue
+                if vn == original_input_name:
+                    continue
                 if vt == "scalar":
                     if vn in SCALAR_FEATURE_NAMES:
                         const_scalars_options.append(vn)

@@ -4,7 +4,7 @@ import copy
 import hashlib
 import json
 import textwrap
-from typing import Callable, Dict, List, Tuple, Literal, Optional, Union # Added Callable for OpSpec
+from typing import Dict, List, Literal, Optional, Union
 import numpy as np
 
 # Imports from other framework modules
@@ -41,7 +41,8 @@ class AlphaProgram:
                     if input_var_type == "vector":
                         # Check if the op spec expects a scalar for this vector input
                         if spec.in_types[i] == "scalar":
-                            is_any_input_vector = True; break
+                            is_any_input_vector = True
+                            break
                 if is_any_input_vector:
                     actual_out_type = "vector"
             current_vars[op_instance.out] = actual_out_type
@@ -100,8 +101,10 @@ class AlphaProgram:
         default_vars = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
         default_vars.update({name: "scalar" for name in SCALAR_FEATURE_NAMES})
         # Ensure base constants are present, though SCALAR_FEATURE_NAMES should cover them
-        if "const_1" not in default_vars: default_vars["const_1"] = "scalar"
-        if "const_neg_1" not in default_vars: default_vars["const_neg_1"] = "scalar"
+        if "const_1" not in default_vars:
+            default_vars["const_1"] = "scalar"
+        if "const_neg_1" not in default_vars:
+            default_vars["const_neg_1"] = "scalar"
         return default_vars
 
     def new_state(self) -> Dict[str, Union[np.ndarray, float]]:
@@ -187,9 +190,12 @@ class AlphaProgram:
 
     def to_string(self, max_len: int = 1000) -> str:
         txt_parts = []
-        if self.setup: txt_parts.append(f"S[{';'.join(map(str, self.setup))}]")
-        if self.predict_ops: txt_parts.append(f"P[{';'.join(map(str, self.predict_ops))}]")
-        if self.update_ops: txt_parts.append(f"U[{';'.join(map(str, self.update_ops))}]")
+        if self.setup:
+            txt_parts.append(f"S[{';'.join(map(str, self.setup))}]")
+        if self.predict_ops:
+            txt_parts.append(f"P[{';'.join(map(str, self.predict_ops))}]")
+        if self.update_ops:
+            txt_parts.append(f"U[{';'.join(map(str, self.update_ops))}]")
 
         full_txt = " >> ".join(txt_parts)
         return textwrap.shorten(full_txt, width=max_len, placeholder="...")
