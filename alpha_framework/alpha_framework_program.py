@@ -208,3 +208,23 @@ class AlphaProgram:
             "update": [(o.out, o.opcode, o.inputs) for o in self.update_ops],
         }
         return hashlib.sha1(json.dumps(serial, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def prune(self) -> "AlphaProgram":
+        """Remove operations whose outputs are never used."""
+        useful = {FINAL_PREDICTION_VECTOR_NAME}
+
+        def _prune_block(block):
+            kept_rev = []
+            for op in reversed(block):
+                if op.out in useful:
+                    useful.update(op.inputs)
+                    kept_rev.append(op)
+            kept_rev.reverse()
+            return kept_rev
+
+        self.predict_ops = _prune_block(self.predict_ops)
+        self.setup = _prune_block(self.setup)
+        self.update_ops = _prune_block(self.update_ops)
+
+        self._vars_info_cache = None
+        return self

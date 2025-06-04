@@ -251,7 +251,7 @@ def mutate_program_logic(
     if spec.is_cross_sectional_aggregator:
         new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, "cs_rank", ("vol10_t",))
 
-    new_prog._vars_info_cache = None
+    new_prog.prune()
     return new_prog
 
 
@@ -319,5 +319,5 @@ def crossover_program_logic(
                                 (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t")
             child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_assign,)))
 
-    child._vars_info_cache = None
+    child.prune()
     return child
