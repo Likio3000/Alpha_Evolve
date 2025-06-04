@@ -1,5 +1,3 @@
-import pandas as pd
-import numpy as np
 import pytest
 
 from evolution_components.data_handling import _load_and_align_data_internal

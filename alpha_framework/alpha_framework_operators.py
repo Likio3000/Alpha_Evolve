@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Callable, Dict, Tuple
+from typing import Callable, Tuple
 import numpy as np
 
 # Imports from the types module
@@ -62,7 +62,8 @@ def _div(a, b):
     res = np.divide(a, b_arr,
                     out=np.zeros_like(out_shape_ref, dtype=float) if hasattr(out_shape_ref, 'shape') else 0.0,
                     where=np.abs(b_arr) > 1e-9)
-    if np.isscalar(a) and np.isscalar(b): return res.item() if isinstance(res, np.ndarray) else res
+    if np.isscalar(a) and np.isscalar(b):
+        return res.item() if isinstance(res, np.ndarray) else res
     return res
 
 
@@ -105,17 +106,24 @@ def _power(a, b):
 
     # ------------------------- scalar exponent ------------------------ #
     if b_is_scalar:
-        if b_val == 2:   return _clip(np.square(a_arr))
-        if b_val == 1:   return _clip(a_arr)
-        if b_val == 0:   return np.ones_like(a_arr, dtype=float)
-        if b_val == 0.5: return _clip(np.sqrt(np.maximum(a_arr, 0.0)))
-        if b_val == -1:  return _clip(_div(1.0, a_arr)) # Uses _div from this module
+        if b_val == 2:
+            return _clip(np.square(a_arr))
+        if b_val == 1:
+            return _clip(a_arr)
+        if b_val == 0:
+            return np.ones_like(a_arr, dtype=float)
+        if b_val == 0.5:
+            return _clip(np.sqrt(np.maximum(a_arr, 0.0)))
+        if b_val == -1:
+            return _clip(_div(1.0, a_arr))  # Uses _div from this module
 
         is_a_zero = np.all(np.abs(a_arr) < 1e-9) if isinstance(a_arr, np.ndarray) \
                     else abs(a_arr) < 1e-9
         if is_a_zero:
-            if b_val > 0:  return np.zeros_like(a_arr, dtype=float)
-            if b_val == 0: return np.ones_like(a_arr, dtype=float)
+            if b_val > 0:
+                return np.zeros_like(a_arr, dtype=float)
+            if b_val == 0:
+                return np.ones_like(a_arr, dtype=float)
             return np.copysign(np.full_like(a_arr, np.inf, dtype=float), a_arr)
 
         is_b_int = isinstance(b_val, (int, float)) and b_val == round(b_val)
@@ -173,7 +181,8 @@ def _cs_std(v): return float(np.std(v, ddof=0)) if v.size > 1 else 0.0
 
 @register_op("cs_rank", in_types=("vector",), out="vector")
 def _cs_rank(v):
-    if v.size <= 1: return np.zeros_like(v)
+    if v.size <= 1:
+        return np.zeros_like(v)
     temp = v.argsort()
     ranks = np.empty_like(temp, dtype=float)
     ranks[temp] = np.arange(len(v))

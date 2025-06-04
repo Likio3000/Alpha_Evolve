@@ -14,9 +14,6 @@ from alpha_framework.alpha_framework_types import ( # Ensure these are correct b
     FINAL_PREDICTION_VECTOR_NAME
 )
 
-from backtesting_components.core_logic import (
-    _scale_signal_cross_sectionally as _scale_signal_for_ic,
-)
 
 # Module-level cache
 _eval_cache: Dict[str, Tuple[float, float, Optional[np.ndarray]]] = {}
@@ -64,13 +61,16 @@ def initialize_evaluation_cache():
     _eval_cache = {}
     print("Evaluation cache cleared and initialized.")
 
-def _safe_corr_eval(a: np.ndarray, b: np.ndarray) -> float: # Specific to evaluation logic's needs
-    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))): return 0.0
+def _safe_corr_eval(a: np.ndarray, b: np.ndarray) -> float:  # Specific to evaluation logic's needs
+    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
+        return 0.0
     # Check for near-constant arrays robustly
     std_a = np.std(a, ddof=0)
     std_b = np.std(b, ddof=0)
-    if std_a < 1e-9 or std_b < 1e-9: return 0.0
-    if len(a) != len(b) or len(a) < 2: return 0.0
+    if std_a < 1e-9 or std_b < 1e-9:
+        return 0.0
+    if len(a) != len(b) or len(a) < 2:
+        return 0.0
     
     with np.errstate(invalid='ignore'): # Suppress "invalid value encountered in true_divide"
         corr_matrix = np.corrcoef(a, b)
@@ -116,7 +116,8 @@ def _uses_feature_vector_check(prog: AlphaProgram) -> bool:
 
     while q:
         current_var_name = q.pop(0) # BFS style
-        if current_var_name in visited_vars: continue
+        if current_var_name in visited_vars:
+            continue
         visited_vars.add(current_var_name)
 
         if current_var_name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
@@ -174,7 +175,8 @@ def evaluate_program(
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
     fp = prog.fingerprint
-    if fp in _eval_cache: return _eval_cache[fp]
+    if fp in _eval_cache:
+        return _eval_cache[fp]
 
     if not _uses_feature_vector_check(prog):
         _eval_cache[fp] = (-float('inf'), 0.0, None)
@@ -188,11 +190,14 @@ def evaluate_program(
     eval_lag = dh_module.get_eval_lag() # Get eval_lag from data_handling
 
     program_state: Dict[str, Any] = prog.new_state() # AlphaProgram's own new_state
-    for s_name, s_type in initial_prog_state_vars_config.items(): # Use passed config
-        if s_name not in program_state: # Allow AlphaProgram's new_state to pre-populate
-            if s_type == "vector": program_state[s_name] = np.zeros(n_stocks)
-            elif s_type == "matrix": program_state[s_name] = np.zeros((n_stocks, n_stocks)) # Assuming square for now
-            else: program_state[s_name] = 0.0
+    for s_name, s_type in initial_prog_state_vars_config.items():  # Use passed config
+        if s_name not in program_state:  # Allow AlphaProgram's new_state to pre-populate
+            if s_type == "vector":
+                program_state[s_name] = np.zeros(n_stocks)
+            elif s_type == "matrix":
+                program_state[s_name] = np.zeros((n_stocks, n_stocks))  # Assuming square for now
+            else:
+                program_state[s_name] = 0.0
 
 
     all_raw_predictions_timeseries: List[np.ndarray] = []
@@ -226,8 +231,10 @@ def evaluate_program(
 
 
         for sc_name in SCALAR_FEATURE_NAMES:
-            if sc_name == "const_1": features_at_t[sc_name] = 1.0
-            elif sc_name == "const_neg_1": features_at_t[sc_name] = -1.0
+            if sc_name == "const_1":
+                features_at_t[sc_name] = 1.0
+            elif sc_name == "const_neg_1":
+                features_at_t[sc_name] = -1.0
             # Add other scalar features if any
 
         try:
