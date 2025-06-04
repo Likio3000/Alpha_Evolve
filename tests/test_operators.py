@@ -1,0 +1,47 @@
+import numpy as np
+
+from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+
+
+def build_simple_program():
+    ops = [
+        Op("twos", "add", ("const_1", "const_1")),
+        Op("scaled", "vec_mul_scalar", ("opens_t", "twos")),
+        Op(FINAL_PREDICTION_VECTOR_NAME, "vec_add_scalar", ("scaled", "const_neg_1")),
+    ]
+    return AlphaProgram(setup=[], predict_ops=ops, update_ops=[])
+
+
+def test_eval_returns_correct_vector():
+    n_stocks = 5
+    features = {
+        "opens_t": np.arange(1, n_stocks + 1, dtype=float),
+        "const_1": 1.0,
+        "const_neg_1": -1.0,
+    }
+    state = {}
+    prog = build_simple_program()
+
+    result = prog.eval(features, state, n_stocks)
+
+    expected = features["opens_t"] * 2 - 1
+    assert isinstance(result, np.ndarray)
+    assert result.shape == (n_stocks,)
+    assert np.allclose(result, expected)
+
+
+def test_scalar_vector_handling():
+    """Ensure operations work with scalar/vector combinations."""
+    n_stocks = 3
+    features = {
+        "opens_t": np.array([10.0, -2.0, 3.5], dtype=float),
+        "const_1": 1.0,
+        "const_neg_1": -1.0,
+    }
+    state = {}
+    prog = build_simple_program()
+
+    result = prog.eval(features, state, n_stocks)
+    expected = features["opens_t"] * 2 - 1
+    assert result.shape == (n_stocks,)
+    assert np.allclose(result, expected)
