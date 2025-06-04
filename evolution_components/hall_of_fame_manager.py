@@ -82,6 +82,24 @@ def add_program_to_hof(
     global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
 
     fp = program.fingerprint
+
+    # Reject if the new program's predictions are highly correlated with any
+    # existing HOF entry.  Skip comparison against entries that share the same
+    # fingerprint (possible updates of an existing program).
+    if (
+        processed_preds_matrix is not None
+        and _hof_processed_prediction_timeseries_for_corr
+        and processed_preds_matrix.size > 0
+    ):
+        candidate_ts = processed_preds_matrix.ravel()
+        for hof_ts, hof_fp in zip(
+            _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
+        ):
+            if hof_fp == fp or len(hof_ts) != len(candidate_ts):
+                continue
+            corr = abs(_safe_corr(candidate_ts, hof_ts))
+            if not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
+                return  # Too correlated – do not add to the HOF
     
     # Logic for adding to _hof_programs_data (main HOF for output)
     # This HOF considers fitness for ranking and uniqueness based on _keep_dupes_in_hof_config
