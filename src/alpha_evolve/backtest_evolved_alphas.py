@@ -10,7 +10,7 @@ from typing import Dict, List, Tuple, Any
 import numpy as np
 import pandas as pd
 
-from config import BacktestConfig                # ← NEW
+from .config import BacktestConfig
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
