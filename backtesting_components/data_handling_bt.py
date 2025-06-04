@@ -26,13 +26,16 @@ def load_and_align_data_for_backtest(
     for csv_file in glob.glob(os.path.join(data_dir_param, "*.csv")):
         try:
             df = pd.read_csv(csv_file)
-            if 'time' not in df.columns: continue
+            if 'time' not in df.columns:
+                continue
             df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
             df = df.dropna(subset=['time']).sort_values("time").set_index("time")
-            if df.empty: continue
+            if df.empty:
+                continue
             
             required_cols = ['open', 'high', 'low', 'close']
-            if not all(col in df.columns for col in required_cols): continue
+            if not all(col in df.columns for col in required_cols):
+                continue
 
             df_with_features = _rolling_features_individual_df_bt(df)
             raw_dfs[Path(csv_file).stem] = df_with_features.dropna()
@@ -54,8 +57,10 @@ def load_and_align_data_for_backtest(
             # print(f"Warning (backtest): Duplicate timestamps found in {sym_name}. Keeping first.") # Optional
             df_sym = df_sym[~df_sym.index.duplicated(keep='first')]
             raw_dfs[sym_name] = df_sym
-        if common_index is None: common_index = df_sym.index
-        else: common_index = common_index.intersection(df_sym.index)
+        if common_index is None:
+            common_index = df_sym.index
+        else:
+            common_index = common_index.intersection(df_sym.index)
     
     if common_index is None or len(common_index) < min_common_points_param:
         sys.exit(f"Not enough common history for backtesting (need at least {min_common_points_param}, got {len(common_index) if common_index is not None else 0}).")
@@ -70,7 +75,8 @@ def load_and_align_data_for_backtest(
 
     for sym in symbols_to_keep:
         # Ensure symbol still exists in raw_dfs (it should if symbols_to_keep is from raw_dfs.keys())
-        if sym not in raw_dfs: continue
+        if sym not in raw_dfs:
+            continue
         
         df_sym = raw_dfs[sym].reindex(common_index).ffill().bfill()
         if df_sym.isnull().values.any():

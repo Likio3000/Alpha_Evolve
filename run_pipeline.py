@@ -74,8 +74,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
 #  helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
-    from pathlib import Path
-    import pickle, time
+    import time
 
     print(f"\n— Evolution: {cfg.generations} generations  (seed {cfg.seed})")
     hof = ae.evolve(cfg)                                   # List[(AlphaProgram, IC)]

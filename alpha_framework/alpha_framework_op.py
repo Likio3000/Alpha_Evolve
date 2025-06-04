@@ -4,7 +4,7 @@ from typing import Dict, Tuple, Union # Added Union
 import numpy as np
 
 # Imports from other framework modules
-from .alpha_framework_types import OP_REGISTRY, TypeId # OpSpec is implicitly used via OP_REGISTRY
+from .alpha_framework_types import OP_REGISTRY # OpSpec is implicitly used via OP_REGISTRY
 
 # ---------------------------------------------------------------------------
 # 3 – Instruction container
@@ -29,7 +29,8 @@ class Op:
 
             if expected_type == "scalar":
                 if isinstance(arg_val, np.ndarray):
-                    if arg_val.size == 1: processed_args.append(arg_val.item())
+                    if arg_val.size == 1:
+                        processed_args.append(arg_val.item())
                     elif spec.is_elementwise and arg_val.ndim == 1:
                          processed_args.append(arg_val)
                     else:
@@ -67,7 +68,8 @@ class Op:
         elif spec.out_type == "vector" and np.isscalar(result):
             result = np.full(n_stocks, float(result))
         elif spec.out_type == "vector" and isinstance(result, np.ndarray) and result.ndim == 1 and result.shape[0] != n_stocks and not spec.is_cross_sectional_aggregator:
-            if result.size == 1: result = np.full(n_stocks, result.item())
+            if result.size == 1:
+                result = np.full(n_stocks, result.item())
             else:
                 resized_res = np.zeros(n_stocks, dtype=result.dtype)
                 copy_len_res = min(len(result), n_stocks)

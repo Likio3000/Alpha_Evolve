@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
 import pandas as pd
-import numpy as np # Though not directly used here, often useful with pandas
 
 # Module-level state for loaded data
 _ALIGNED_DFS: Optional[OrderedDictType[str, pd.DataFrame]] = None
@@ -45,7 +44,7 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
 
             df_with_features = _rolling_features_individual_df(df)
             raw_dfs[Path(csv_file).stem] = df_with_features.dropna() # Drop NaNs from rolling features
-        except Exception as e:
+        except Exception:
             # print(f"Error processing {csv_file}: {e}")
             continue
 
@@ -65,8 +64,10 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
             df_sym = df_sym[~df_sym.index.duplicated(keep='first')]
             raw_dfs[sym_name] = df_sym
 
-        if common_index is None: common_index = df_sym.index
-        else: common_index = common_index.intersection(df_sym.index)
+        if common_index is None:
+            common_index = df_sym.index
+        else:
+            common_index = common_index.intersection(df_sym.index)
     
     # The number of points needed for evaluation is min_common_points_param.
     # The actual data slice needs to be longer by eval_lag to calculate the final forward returns.

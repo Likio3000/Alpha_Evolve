@@ -1,10 +1,8 @@
 from __future__ import annotations
 import random
-import sys
 import time
-from typing import Dict, List, Tuple, Optional, Any 
+from typing import Dict, List, Tuple, Optional 
 import numpy as np
-import pickle
 
 from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES, SCALAR_FEATURE_NAMES
 from evolution_components import (
@@ -62,8 +60,10 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
 
 FEATURE_VARS: Dict[str, TypeId] = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
 FEATURE_VARS.update({name: "scalar" for name in SCALAR_FEATURE_NAMES})
-if "const_1" not in FEATURE_VARS: FEATURE_VARS["const_1"] = "scalar"
-if "const_neg_1" not in FEATURE_VARS: FEATURE_VARS["const_neg_1"] = "scalar"
+if "const_1" not in FEATURE_VARS:
+    FEATURE_VARS["const_1"] = "scalar"
+if "const_neg_1" not in FEATURE_VARS:
+    FEATURE_VARS["const_neg_1"] = "scalar"
 
 INITIAL_STATE_VARS: Dict[str, TypeId] = {
     "prev_s1_vec": "vector",
@@ -109,7 +109,8 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                     bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
             
             gen_eval_time = time.perf_counter() - t_start_gen
-            if gen_eval_time > 0: gen_eval_times_history.append(gen_eval_time)
+            if gen_eval_time > 0:
+                gen_eval_times_history.append(gen_eval_time)
 
             eval_results.sort(key=lambda x: x[1], reverse=True)
 
@@ -151,7 +152,8 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             
             elites_added_fingerprints = set()
             for res_idx, res_score, _, _ in eval_results:
-                if res_score <= -float('inf'): continue
+                if res_score <= -float('inf'):
+                    continue
                 prog_candidate = pop[res_idx]
                 fp_cand = prog_candidate.fingerprint
                 if fp_cand not in elites_added_fingerprints or cfg.keep_dupes_in_hof: 
