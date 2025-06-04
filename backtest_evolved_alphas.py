@@ -55,6 +55,7 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--data",              dest="data_dir",            default=argparse.SUPPRESS)
     p.add_argument("--fee",               type=float,                 default=argparse.SUPPRESS)
     p.add_argument("--hold",              type=int,                   default=argparse.SUPPRESS)
+    p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
     p.add_argument("--scale",             choices=["zscore", "rank", "sign"],
                                                                   default=argparse.SUPPRESS)
     p.add_argument("--lag",               dest="eval_lag",            type=int,   default=argparse.SUPPRESS)
