@@ -49,6 +49,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
     p.add_argument("--scale",              choices=["zscore","rank","sign"],
                                                      default=argparse.SUPPRESS)
     p.add_argument("--quiet",              action="store_true", default=argparse.SUPPRESS)
+    p.add_argument("--workers",            type=int,   default=argparse.SUPPRESS)
 
     # ───► shared data flags
     p.add_argument("--data_dir",                 default=argparse.SUPPRESS)

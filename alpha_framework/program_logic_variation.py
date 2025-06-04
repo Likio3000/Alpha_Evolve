@@ -271,6 +271,8 @@ def mutate_program_logic(
     # 3) invalidate cached var-type map
     new_prog._vars_info_cache = None
 
+    return new_prog
+
 
 def crossover_program_logic(
     self_prog: AlphaProgram, # Instance of AlphaProgram (parent 1)
