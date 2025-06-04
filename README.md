@@ -36,6 +36,17 @@ Use `pytest` to run the unit tests after installing the dependencies:
 pytest
 ```
 
+## Default hyperparameters
+
+The values in `config.py` mirror the meta‑hyper‑parameters listed in
+Section 4.1 of the reproduction guide:
+
+* population size **100**
+* tournament size **10**
+* mutation probability **0.9**
+* setup, predict and update operation limits **21/21/45**
+* correlation cutoff for Hall of Fame entries **15 %**
+
 ## Data handling
 
 Aligned OHLCV data is loaded from a directory of CSV files. The

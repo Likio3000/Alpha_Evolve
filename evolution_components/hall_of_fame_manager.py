@@ -15,7 +15,8 @@ _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFI
 # For correlation penalty
 _hof_processed_prediction_timeseries_for_corr: List[np.ndarray] = []
 _hof_corr_fingerprints: List[str] = []  # keep order to manage eviction
-_corr_penalty_config: Dict[str, float] = {"weight": 0.25, "cutoff": 0.20}
+# Default correlation penalty configuration mirrors Section 9
+_corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 
 
 def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, corr_cutoff: float):
