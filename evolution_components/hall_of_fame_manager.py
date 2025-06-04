@@ -14,12 +14,13 @@ _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFI
 
 # For correlation penalty
 _hof_processed_prediction_timeseries_for_corr: List[np.ndarray] = []
+_hof_corr_fingerprints: List[str] = []  # keep order to manage eviction
 _corr_penalty_config: Dict[str, float] = {"weight": 0.25, "cutoff": 0.20}
 
 
 def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, corr_cutoff: float):
     global _hof_programs_data, _hof_max_size, _hof_fingerprints_set, _keep_dupes_in_hof_config
-    global _hof_processed_prediction_timeseries_for_corr, _corr_penalty_config
+    global _hof_processed_prediction_timeseries_for_corr, _corr_penalty_config, _hof_corr_fingerprints
     
     _hof_programs_data = []
     _hof_max_size = max_size
@@ -27,6 +28,7 @@ def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, 
     _keep_dupes_in_hof_config = keep_dupes # Though original was hardcoded False
     
     _hof_processed_prediction_timeseries_for_corr = []
+    _hof_corr_fingerprints = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
     print(f"Hall of Fame initialized: max_size={max_size}, keep_dupes={keep_dupes}, corr_penalty_w={corr_penalty_weight}, corr_cutoff={corr_cutoff}")
 
@@ -65,11 +67,14 @@ def add_program_to_hof(
     mean_ic: float, 
     processed_preds_matrix: Optional[np.ndarray]
 ):
+    """Add ``program`` to the Hall of Fame and update correlation tracking.
+
+    The function keeps the main HOF ordered by fitness and maintains a
+    separate list of flattened prediction time series used for correlation
+    penalties.  Duplicate fingerprints are ignored in the correlation list and
+    the size of both structures is capped at ``_hof_max_size``.
     """
-    Adds a program to the HOF if it's eligible.
-    Manages _hof_programs_data and _hof_processed_prediction_timeseries_for_corr.
-    """
-    global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr
+    global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
 
     fp = program.fingerprint
     
@@ -102,42 +107,28 @@ def add_program_to_hof(
             _hof_fingerprints_set.discard(removed_prog_data[0])
 
 
-    # Logic for adding to _hof_processed_prediction_timeseries_for_corr (for correlation penalty)
-    # This one seems to always add unique fingerprints if the program is "good" (positive fitness previously)
-    if processed_preds_matrix is not None and fitness > -float('inf'): # Check fitness from evaluate before calling this
-        # Only add to correlation HOF if its fingerprint is new for this specific list
-        # This list might have a different size/eviction policy than the main HOF.
-        # Original code implies DUPLICATE_HOF_SZ for this list, let's use _hof_max_size for consistency
-        
-        # Check if this fingerprint's timeseries is already in _hof_processed_prediction_timeseries_for_corr
-        # This requires pairing fingerprints with timeseries if we want to avoid adding duplicate series for same fp
-        # Simpler: just add, and rely on diversity from the main loop.
-        # Original logic: `if fp_best not in _HOF_fingerprints:` then add to both lists.
-        # Let's refine: add to _hof_processed_prediction_timeseries_for_corr if it's a "good" unique program
-        # that made it into the candidate pool for HOF.
-
-        # Simplified: add the processed_preds_matrix of the current best program of the generation to this list.
-        # The selection of "best" is done in the main evolution loop.
-        # So this function might not be the right place to populate _hof_processed_prediction_timeseries_for_corr.
-        # Let's make a separate function or manage it in the evolution loop.
-
-        # For now, this function only manages the main HOF. Correlation HOF update is tricky here.
-        pass
+    # Logic for maintaining the list used for correlation penalty.
+    if processed_preds_matrix is not None and fitness > -float("inf"):
+        if fp not in _hof_corr_fingerprints:
+            _hof_processed_prediction_timeseries_for_corr.append(processed_preds_matrix.ravel())
+            _hof_corr_fingerprints.append(fp)
+            if len(_hof_processed_prediction_timeseries_for_corr) > _hof_max_size:
+                _hof_processed_prediction_timeseries_for_corr.pop(0)
+                _hof_corr_fingerprints.pop(0)
 
 
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
-    """Dedicated function to update the HOF list used for correlation penalties."""
-    global _hof_processed_prediction_timeseries_for_corr
-    # This assumes we only add if the fingerprint is new *to this list*.
-    # For simplicity, let's assume it stores the last _hof_max_size unique series.
-    # This part needs to align with how it was used in evolve_alphas's main loop.
-    # The original code added the *best program of the generation* to this list if its fp was new.
-    
-    # To avoid complex state, this function assumes it's being called for programs
-    # that are deemed worthy of being in the "correlation HOF".
-    _hof_processed_prediction_timeseries_for_corr.append(processed_preds_matrix)
-    if len(_hof_processed_prediction_timeseries_for_corr) > _hof_max_size: # Cap its size
+    """Add a program's predictions to the correlation HOF, ensuring uniqueness."""
+    global _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
+
+    if program_fp in _hof_corr_fingerprints:
+        return
+
+    _hof_processed_prediction_timeseries_for_corr.append(processed_preds_matrix.ravel())
+    _hof_corr_fingerprints.append(program_fp)
+    if len(_hof_processed_prediction_timeseries_for_corr) > _hof_max_size:
         _hof_processed_prediction_timeseries_for_corr.pop(0)
+        _hof_corr_fingerprints.pop(0)
 
 
 def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
@@ -202,8 +193,9 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
 
 def clear_hof():
     """Clears all HOF state."""
-    global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr
+    global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
     _hof_programs_data = []
     _hof_fingerprints_set = set()
     _hof_processed_prediction_timeseries_for_corr = []
+    _hof_corr_fingerprints = []
     print("Hall of Fame cleared.")
