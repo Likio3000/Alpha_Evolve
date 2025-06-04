@@ -53,6 +53,9 @@ class EvolutionConfig(DataConfig):
     early_abort_t: float = 5e-2
     scale: str = "zscore"
 
+    # parallelism
+    n_workers: int = 1
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  cross-sectional back-test

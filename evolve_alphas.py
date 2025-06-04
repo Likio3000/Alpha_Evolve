@@ -1,7 +1,8 @@
 from __future__ import annotations
 import random
 import time
-from typing import Dict, List, Tuple, Optional 
+import multiprocessing as mp
+from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES, SCALAR_FEATURE_NAMES
@@ -70,11 +71,27 @@ INITIAL_STATE_VARS: Dict[str, TypeId] = {
     "rolling_mean_custom": "vector"
 }
 
+
+def _rng() -> np.random.Generator:
+    return np.random.default_rng(np.random.randint(0, 2**32))
+
+
+def _evaluate_prog_for_pool(args: Tuple[int, AlphaProgram]) -> Tuple[int, float, float, Optional[np.ndarray]]:
+    idx, prog = args
+    return (
+        idx,
+        *evaluate_program(prog, dh_module, hof_module, INITIAL_STATE_VARS)
+    )
+
 def _random_prog(cfg: EvoConfig) -> AlphaProgram: # Signature changed
-    return AlphaProgram.random_program(FEATURE_VARS, INITIAL_STATE_VARS, max_total_ops=cfg.max_ops)
+    return AlphaProgram.random_program(
+        FEATURE_VARS, INITIAL_STATE_VARS, max_total_ops=cfg.max_ops, rng=_rng()
+    )
 
 def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature changed
-    return p.mutate(FEATURE_VARS, INITIAL_STATE_VARS, max_total_ops=cfg.max_ops)
+    return p.mutate(
+        FEATURE_VARS, INITIAL_STATE_VARS, max_total_ops=cfg.max_ops, rng=_rng()
+    )
 
 ###############################################################################
 # EVOLVE LOOP ##############################################################
@@ -93,20 +110,33 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
 
             bar = pbar(range(cfg.pop_size), desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet)
-            for i in bar:
-                prog = pop[i]
-                score, mean_ic, processed_preds_matrix = evaluate_program(
-                    prog, 
-                    dh_module, 
-                    hof_module, 
-                    INITIAL_STATE_VARS
-                )
-                eval_results.append((i, score, mean_ic, processed_preds_matrix))
-                pop_fitness_scores[i] = score
-                if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
-                    valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
-                    best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
-                    bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+
+            if cfg.n_workers > 1:
+                with mp.Pool(processes=cfg.n_workers) as pool:
+                    result_iter = pool.imap_unordered(_evaluate_prog_for_pool, enumerate(pop))
+                    for _ in bar:
+                        i, score, mean_ic, processed_preds_matrix = next(result_iter)
+                        eval_results.append((i, score, mean_ic, processed_preds_matrix))
+                        pop_fitness_scores[i] = score
+                        if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
+                            valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
+                            best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
+                            bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+            else:
+                for i in bar:
+                    prog = pop[i]
+                    score, mean_ic, processed_preds_matrix = evaluate_program(
+                        prog,
+                        dh_module,
+                        hof_module,
+                        INITIAL_STATE_VARS
+                    )
+                    eval_results.append((i, score, mean_ic, processed_preds_matrix))
+                    pop_fitness_scores[i] = score
+                    if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
+                        valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
+                        best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
+                        bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
             
             gen_eval_time = time.perf_counter() - t_start_gen
             if gen_eval_time > 0:
@@ -190,7 +220,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
 
                 child: AlphaProgram
                 if random.random() < cfg.p_cross:
-                    child = parent_a.crossover(parent_b)
+                    child = parent_a.crossover(parent_b, rng=_rng())
                 else:
                     child = parent_a.copy() if random.random() < 0.5 else parent_b.copy()
                 
