@@ -53,6 +53,9 @@ class EvolutionConfig(DataConfig):
     early_abort_t: float = 5e-2
     scale: str = "zscore"
 
+    # evaluation cache
+    eval_cache_size: int = 128
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  cross-sectional back-test

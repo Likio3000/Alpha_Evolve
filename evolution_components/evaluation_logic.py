@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from typing import TYPE_CHECKING, Dict, List, Tuple, Optional, Any, Set
+from collections import OrderedDict
 
 if TYPE_CHECKING:
     from alpha_framework.alpha_framework_program import AlphaProgram # Changed from alpha_program_core
@@ -15,8 +16,17 @@ from alpha_framework.alpha_framework_types import ( # Ensure these are correct b
 )
 
 
-# Module-level cache
-_eval_cache: Dict[str, Tuple[float, float, Optional[np.ndarray]]] = {}
+# Module-level cache (least-recently used)
+_eval_cache: "OrderedDict[str, Tuple[float, float, Optional[np.ndarray]]]" = OrderedDict()
+_EVAL_CACHE_MAX_SIZE = 128
+
+
+def _cache_set(fp: str, value: Tuple[float, float, Optional[np.ndarray]]) -> None:
+    if fp in _eval_cache:
+        _eval_cache.move_to_end(fp)
+    elif len(_eval_cache) >= _EVAL_CACHE_MAX_SIZE:
+        _eval_cache.popitem(last=False)
+    _eval_cache[fp] = value
 
 # Evaluation constants (to be passed or configured)
 # These were global in evolve_alphas.py
@@ -56,9 +66,10 @@ def configure_evaluation(
     print(f"Evaluation logic configured: {scale_method=}, {parsimony_penalty=}, etc.")
 
 
-def initialize_evaluation_cache():
-    global _eval_cache
-    _eval_cache = {}
+def initialize_evaluation_cache(max_size: int = 128):
+    global _eval_cache, _EVAL_CACHE_MAX_SIZE
+    _EVAL_CACHE_MAX_SIZE = max_size
+    _eval_cache = OrderedDict()
     print("Evaluation cache cleared and initialized.")
 
 def _safe_corr_eval(a: np.ndarray, b: np.ndarray) -> float:  # Specific to evaluation logic's needs
@@ -176,10 +187,11 @@ def evaluate_program(
 
     fp = prog.fingerprint
     if fp in _eval_cache:
+        _eval_cache.move_to_end(fp)
         return _eval_cache[fp]
 
     if not _uses_feature_vector_check(prog):
-        _eval_cache[fp] = (-float('inf'), 0.0, None)
+        _cache_set(fp, (-float('inf'), 0.0, None))
         return _eval_cache[fp]
 
     # Get data from data_handling module
@@ -212,7 +224,7 @@ def evaluate_program(
     
     num_evaluation_steps = len(common_time_index) - eval_lag
     if num_evaluation_steps <= 0: # Not enough data for even one evaluation
-        _eval_cache[fp] = (-float('inf'), 0.0, None)
+        _cache_set(fp, (-float('inf'), 0.0, None))
         return _eval_cache[fp]
 
     for t_idx in range(num_evaluation_steps):
@@ -243,7 +255,7 @@ def evaluate_program(
 
             if np.any(np.isnan(raw_predictions_t)) or np.any(np.isinf(raw_predictions_t)):
                 # print(f"Program {fp} yielded NaN/Inf at t_idx {t_idx}. Aborting eval for this prog.")
-                _eval_cache[fp] = (-float('inf'), 0.0, None)
+                _cache_set(fp, (-float('inf'), 0.0, None))
                 return _eval_cache[fp]
             
             all_raw_predictions_timeseries.append(raw_predictions_t.copy())
@@ -269,7 +281,7 @@ def evaluate_program(
 
                 if mean_xs_std_partial < _EVAL_CONFIG["early_abort_xs_threshold"] or \
                    mean_t_std_partial < _EVAL_CONFIG["early_abort_t_threshold"]:
-                    _eval_cache[fp] = (-float('inf'), 0.0, None)
+                    _cache_set(fp, (-float('inf'), 0.0, None))
                     return _eval_cache[fp]
 
             # IC calculation
@@ -284,11 +296,11 @@ def evaluate_program(
                 daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
 
         except Exception: # Broad exception during program's .eval() or IC calculation
-            _eval_cache[fp] = (-float('inf'), 0.0, None)
+            _cache_set(fp, (-float('inf'), 0.0, None))
             return _eval_cache[fp]
 
     if not daily_ic_values or not all_raw_predictions_timeseries or not all_processed_predictions_timeseries:
-        _eval_cache[fp] = (-float('inf'), 0.0, None)
+        _cache_set(fp, (-float('inf'), 0.0, None))
         return _eval_cache[fp]
 
     mean_daily_ic = float(np.mean(daily_ic_values))
@@ -318,5 +330,5 @@ def evaluate_program(
         correlation_penalty = hof_module.get_correlation_penalty_with_hof(full_processed_predictions_matrix.flatten())
         score -= correlation_penalty
 
-    _eval_cache[fp] = (score, mean_daily_ic, full_processed_predictions_matrix)
+    _cache_set(fp, (score, mean_daily_ic, full_processed_predictions_matrix))
     return score, mean_daily_ic, full_processed_predictions_matrix

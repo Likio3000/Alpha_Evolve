@@ -55,7 +55,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
         corr_penalty_weight=cfg.corr_penalty_w,
         corr_cutoff=cfg.corr_cutoff
     )
-    initialize_evaluation_cache()
+    initialize_evaluation_cache(cfg.eval_cache_size)
 
 
 FEATURE_VARS: Dict[str, TypeId] = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
@@ -128,8 +128,8 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             if not eval_results or eval_results[0][1] <= -float('inf'):
                 print(f"Gen {gen+1:3d} | No valid programs. Restarting population and HOF.")
                 pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
-                initialize_evaluation_cache() 
-                clear_hof() 
+                initialize_evaluation_cache(cfg.eval_cache_size)
+                clear_hof()
                 gen_eval_times_history.clear()
                 continue
 
