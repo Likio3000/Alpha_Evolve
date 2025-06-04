@@ -45,3 +45,28 @@ def test_scalar_vector_handling():
     expected = features["opens_t"] * 2 - 1
     assert result.shape == (n_stocks,)
     assert np.allclose(result, expected)
+
+
+def test_heaviside_op():
+    buf = {"s": np.array([-1.0, 0.5, 0.0])}
+    Op("out", "heaviside", ("s",)).execute(buf, n_stocks=3)
+    assert np.allclose(buf["out"], np.array([0.0, 1.0, 0.0]))
+
+
+def test_relation_ops():
+    v = np.array([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
+    groups = np.array([0, 0, 0, 1, 1, 1])
+    buf = {"v": v, "g": groups}
+    Op("rank_out", "relation_rank", ("v", "g")).execute(buf, n_stocks=6)
+    Op("demean_out", "relation_demean", ("v", "g")).execute(buf, n_stocks=6)
+    expected_rank = np.array([-1.0, 0.0, 1.0, -1.0, 0.0, 1.0])
+    expected_demean = np.array([-1.0, 0.0, 1.0, -1.0, 0.0, 1.0])
+    assert np.allclose(buf["rank_out"], expected_rank)
+    assert np.allclose(buf["demean_out"], expected_demean)
+
+
+def test_norm_op():
+    m = np.array([[3.0, 4.0], [0.0, 0.0]])
+    buf = {"m": m}
+    Op("n", "norm", ("m",)).execute(buf, n_stocks=2)
+    assert buf["n"] == np.linalg.norm(m)

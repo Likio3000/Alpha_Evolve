@@ -86,6 +86,31 @@ def _log(a):
 @register_op("sqrt", in_types=("scalar",), out="scalar", is_elementwise=True)
 def _sqrt(a): return np.sqrt(np.maximum(np.asarray(a), 0))
 
+@register_op("exp", in_types=("scalar",), out="scalar", is_elementwise=True)
+@safe_op
+def _exp(a):
+    return np.exp(a)
+
+@register_op("sin", in_types=("scalar",), out="scalar", is_elementwise=True)
+@safe_op
+def _sin(a):
+    return np.sin(a)
+
+@register_op("cos", in_types=("scalar",), out="scalar", is_elementwise=True)
+@safe_op
+def _cos(a):
+    return np.cos(a)
+
+@register_op("tan", in_types=("scalar",), out="scalar", is_elementwise=True)
+@safe_op
+def _tan(a):
+    return np.tan(a)
+
+@register_op("heaviside", in_types=("scalar",), out="scalar", is_elementwise=True)
+def _heaviside(a):
+    a_arr = np.asarray(a)
+    return np.where(a_arr > 0, 1.0, 0.0)
+
 @register_op("power", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
 def _power(a, b):
     """
@@ -191,6 +216,36 @@ def _cs_rank(v):
 @register_op("cs_demean", in_types=("vector",), out="vector")
 def _cs_demean(v): return v - (_cs_mean(v) if v.size > 0 else 0.0)
 
+@register_op("relation_rank", in_types=("vector", "vector"), out="vector")
+def _relation_rank(v, groups):
+    v_arr = np.asarray(v, dtype=float)
+    grp_arr = np.asarray(groups, dtype=int)
+    result = np.zeros_like(v_arr, dtype=float)
+    for g in np.unique(grp_arr):
+        mask = grp_arr == g
+        vals = v_arr[mask]
+        if vals.size <= 1:
+            result[mask] = 0.0
+            continue
+        order = vals.argsort()
+        ranks = np.empty_like(order, dtype=float)
+        ranks[order] = np.arange(vals.size)
+        result[mask] = (ranks / (vals.size - 1 + 1e-9)) * 2.0 - 1.0
+    return result
+
+@register_op("relation_demean", in_types=("vector", "vector"), out="vector")
+def _relation_demean(v, groups):
+    v_arr = np.asarray(v, dtype=float)
+    grp_arr = np.asarray(groups, dtype=int)
+    result = np.zeros_like(v_arr, dtype=float)
+    for g in np.unique(grp_arr):
+        mask = grp_arr == g
+        if not np.any(mask):
+            continue
+        group_mean = float(np.mean(v_arr[mask]))
+        result[mask] = v_arr[mask] - group_mean
+    return result
+
 @register_op("vec_add_scalar", in_types=("vector", "scalar"), out="vector")
 def _vec_add_scalar(v, s): return v + s
 
@@ -212,6 +267,10 @@ def _matmul_mm(m1, m2): return m1 @ m2
 
 @register_op("transpose", in_types=("matrix",), out="matrix")
 def _transpose(m): return m.T
+
+@register_op("norm", in_types=("matrix",), out="scalar")
+def _norm(m):
+    return float(np.linalg.norm(m))
 
 # Extraction ops
 @register_op("get_feature_vector", in_types=("matrix", "scalar"), out="vector")
