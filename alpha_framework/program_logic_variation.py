@@ -11,6 +11,11 @@ from .alpha_framework_types import (
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
 )
 from .alpha_framework_op import Op
+from .program_logic_generation import (
+    MAX_SETUP_OPS,
+    MAX_PREDICT_OPS,
+    MAX_UPDATE_OPS,
+)
 
 
 if TYPE_CHECKING:
@@ -25,8 +30,11 @@ def mutate_program_logic(
     prob_remove: float = 0.2,
     prob_change_op: float = 0.3,
     prob_change_inputs: float = 0.3,
-    max_total_ops: int = 48,
-    rng: Optional[np.random.Generator] = None
+    max_total_ops: int = 87,
+    rng: Optional[np.random.Generator] = None,
+    max_setup_ops: int = MAX_SETUP_OPS,
+    max_predict_ops: int = MAX_PREDICT_OPS,
+    max_update_ops: int = MAX_UPDATE_OPS,
 ) -> AlphaProgram:
     """
     Core logic for AlphaProgram.mutate method.
@@ -38,12 +46,13 @@ def mutate_program_logic(
     chosen_block_name = rng.choice(block_name_choices)
 
     block_ref_map = {"setup": new_prog.setup, "predict": new_prog.predict_ops, "update": new_prog.update_ops}
+    block_limit_map = {"setup": max_setup_ops, "predict": max_predict_ops, "update": max_update_ops}
     chosen_block_ops_list = block_ref_map[chosen_block_name]
 
     current_total_ops = sum(len(b) for b in block_ref_map.values())
 
     possible_mutations = []
-    if current_total_ops < max_total_ops:
+    if current_total_ops < max_total_ops and len(chosen_block_ops_list) < block_limit_map[chosen_block_name]:
         possible_mutations.append("add")
     if len(chosen_block_ops_list) > (1 if chosen_block_name == "predict" else 0) :
         possible_mutations.append("remove")
@@ -251,14 +260,25 @@ def mutate_program_logic(
     if spec.is_cross_sectional_aggregator:
         new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, "cs_rank", ("vol10_t",))
 
+    # 1) remove dead / unreachable ops
     new_prog.prune()
-    return new_prog
+
+    # 2) hard-cap each block to its max size
+    new_prog.setup        = new_prog.setup[:max_setup_ops]
+    new_prog.predict_ops  = new_prog.predict_ops[:max_predict_ops]
+    new_prog.update_ops   = new_prog.update_ops[:max_update_ops]
+
+    # 3) invalidate cached var-type map
+    new_prog._vars_info_cache = None
 
 
 def crossover_program_logic(
     self_prog: AlphaProgram, # Instance of AlphaProgram (parent 1)
     other_prog: AlphaProgram, # Instance of AlphaProgram (parent 2)
-    rng: Optional[np.random.Generator] = None
+    rng: Optional[np.random.Generator] = None,
+    max_setup_ops: int = MAX_SETUP_OPS,
+    max_predict_ops: int = MAX_PREDICT_OPS,
+    max_update_ops: int = MAX_UPDATE_OPS,
 ) -> AlphaProgram:
     """
     Core logic for AlphaProgram.crossover method.
@@ -319,5 +339,10 @@ def crossover_program_logic(
                                 (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t")
             child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_assign,)))
 
-    child.prune()
+    child.prune()                                     # 1) drop dead code
+    child.setup       = child.setup[:max_setup_ops]   # 2) enforce stage limits
+    child.predict_ops = child.predict_ops[:max_predict_ops]
+    child.update_ops  = child.update_ops[:max_update_ops]
+    child._vars_info_cache = None                     # 3) clear cache
+
     return child

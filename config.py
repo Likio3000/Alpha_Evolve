@@ -27,19 +27,22 @@ class DataConfig:
 class EvolutionConfig(DataConfig):
     generations: int = 10
     seed: int = 42
-    pop_size: int = 96
-    tournament_k: int = 3
-    elite_keep: int = 4
+    pop_size: int = 100
+    tournament_k: int = 10
+    elite_keep: int = 1
     hof_size: int = 20
     quiet: bool = False
 
     # breeding / variation
-    p_mut: float = 0.55
-    p_cross: float = 0.6
+    p_mut: float = 0.9
+    p_cross: float = 0.0
     fresh_rate: float = 0.12
 
     # complexity / similarity guards
-    max_ops: int = 48
+    max_ops: int = 87
+    max_setup_ops: int = 21
+    max_predict_ops: int = 21
+    max_update_ops: int = 45
     parsimony_penalty: float = 0.0001
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
@@ -52,6 +55,9 @@ class EvolutionConfig(DataConfig):
     early_abort_xs: float = 5e-2
     early_abort_t: float = 5e-2
     scale: str = "zscore"
+
+    # evaluation cache
+    eval_cache_size: int = 128
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -5,6 +5,11 @@ import numpy as np
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
 from .alpha_framework_op import Op
 
+# Per-stage limits from the paper
+MAX_SETUP_OPS = 21
+MAX_PREDICT_OPS = 21
+MAX_UPDATE_OPS = 45
+
 if TYPE_CHECKING:
     from .alpha_framework_program import AlphaProgram # For type hint of cls and return type
 
@@ -14,7 +19,10 @@ def generate_random_program_logic(
     feature_vars: Dict[str, TypeId],
     state_vars: Dict[str, TypeId],
     max_total_ops: int = 32,
-    rng: Optional[np.random.Generator] = None
+    rng: Optional[np.random.Generator] = None,
+    max_setup_ops: int = MAX_SETUP_OPS,
+    max_predict_ops: int = MAX_PREDICT_OPS,
+    max_update_ops: int = MAX_UPDATE_OPS,
 ) -> AlphaProgram:
     """
     Build a random but type-correct AlphaProgram.
@@ -23,10 +31,14 @@ def generate_random_program_logic(
     rng = rng or np.random.default_rng()
     prog = cls() # type: ignore # cls() will be an AlphaProgram instance
 
-    # — split total op budget into three blocks —
+    # — split total op budget into three blocks, respecting per-stage limits —
     n_predict_ops = max(1, int(max_total_ops * 0.70))
-    n_setup_ops   = int(max_total_ops * 0.15)
-    n_update_ops  = max_total_ops - n_predict_ops - n_setup_ops
+    n_setup_ops = int(max_total_ops * 0.15)
+    n_update_ops = max_total_ops - n_predict_ops - n_setup_ops
+
+    n_setup_ops = min(n_setup_ops, max_setup_ops)
+    n_predict_ops = min(n_predict_ops, max_predict_ops)
+    n_update_ops = min(n_update_ops, max_update_ops)
 
     tmp_idx = 0
     def _new_tmp(t: TypeId) -> str:

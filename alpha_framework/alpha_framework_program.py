@@ -16,6 +16,7 @@ from .alpha_framework_types import (
     OP_REGISTRY # Required for OpSpec access
 )
 from .alpha_framework_op import Op
+from . import program_logic_generation
 from .program_logic_generation import generate_random_program_logic
 from .program_logic_variation import mutate_program_logic, crossover_program_logic
 
@@ -73,9 +74,21 @@ class AlphaProgram:
         feature_vars: Dict[str, TypeId],
         state_vars: Dict[str, TypeId],
         max_total_ops: int = 32,
-        rng: Optional[np.random.Generator] = None
+        rng: Optional[np.random.Generator] = None,
+        max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
+        max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
+        max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
     ) -> "AlphaProgram":
-        return generate_random_program_logic(cls, feature_vars, state_vars, max_total_ops, rng)
+        return generate_random_program_logic(
+            cls,
+            feature_vars,
+            state_vars,
+            max_total_ops,
+            rng,
+            max_setup_ops,
+            max_predict_ops,
+            max_update_ops,
+        )
 
     def copy(self) -> "AlphaProgram":
         new_prog = AlphaProgram(
@@ -89,12 +102,42 @@ class AlphaProgram:
     def mutate(self, feature_vars: Dict[str, TypeId], state_vars: Dict[str, TypeId],
                prob_add: float = 0.2, prob_remove: float = 0.2,
                prob_change_op: float = 0.3, prob_change_inputs: float = 0.3,
-               max_total_ops: int = 48, rng: Optional[np.random.Generator] = None) -> "AlphaProgram":
-        return mutate_program_logic(self, feature_vars, state_vars, prob_add, prob_remove,
-                                    prob_change_op, prob_change_inputs, max_total_ops, rng)
+               max_total_ops: int = 87,
+               rng: Optional[np.random.Generator] = None,
+               max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
+               max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
+               max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS) -> "AlphaProgram":
+        return mutate_program_logic(
+            self,
+            feature_vars,
+            state_vars,
+            prob_add,
+            prob_remove,
+            prob_change_op,
+            prob_change_inputs,
+            max_total_ops,
+            rng,
+            max_setup_ops,
+            max_predict_ops,
+            max_update_ops,
+        )
 
-    def crossover(self, other: "AlphaProgram", rng: Optional[np.random.Generator] = None) -> "AlphaProgram":
-        return crossover_program_logic(self, other, rng)
+    def crossover(
+        self,
+        other: "AlphaProgram",
+        rng: Optional[np.random.Generator] = None,
+        max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
+        max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
+        max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+    ) -> "AlphaProgram":
+        return crossover_program_logic(
+            self,
+            other,
+            rng,
+            max_setup_ops,
+            max_predict_ops,
+            max_update_ops,
+        )
 
     @staticmethod
     def _get_default_feature_vars() -> Dict[str, TypeId]:
