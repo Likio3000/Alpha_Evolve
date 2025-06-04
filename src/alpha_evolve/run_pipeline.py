@@ -12,9 +12,9 @@ import sys
 import time
 from pathlib import Path
 
-from config import EvolutionConfig, BacktestConfig
-import evolve_alphas as ae
-import backtest_evolved_alphas as bt
+from .config import EvolutionConfig, BacktestConfig
+from . import evolve_alphas as ae
+from . import backtest_evolved_alphas as bt
 
 BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 

@@ -23,7 +23,7 @@ from evolution_components import data_handling as dh_module
 from evolution_components import hall_of_fame_manager as hof_module
 from evolution_components import evaluation_logic as el_module
 
-from config import EvoConfig # New import
+from .config import EvoConfig
 
 ###############################################################################
 # CLI & CONFIG REMOVED ########################################################
