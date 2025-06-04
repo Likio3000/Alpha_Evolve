@@ -260,13 +260,16 @@ def mutate_program_logic(
     if spec.is_cross_sectional_aggregator:
         new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, "cs_rank", ("vol10_t",))
 
-    # Enforce per-stage limits
-    new_prog.setup = new_prog.setup[:max_setup_ops]
-    new_prog.predict_ops = new_prog.predict_ops[:max_predict_ops]
-    new_prog.update_ops = new_prog.update_ops[:max_update_ops]
+    # 1) remove dead / unreachable ops
+    new_prog.prune()
 
+    # 2) hard-cap each block to its max size
+    new_prog.setup        = new_prog.setup[:max_setup_ops]
+    new_prog.predict_ops  = new_prog.predict_ops[:max_predict_ops]
+    new_prog.update_ops   = new_prog.update_ops[:max_update_ops]
+
+    # 3) invalidate cached var-type map
     new_prog._vars_info_cache = None
-    return new_prog
 
 
 def crossover_program_logic(
@@ -336,10 +339,10 @@ def crossover_program_logic(
                                 (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "opens_t")
             child.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_assign,)))
 
-    # Enforce per-stage limits
-    child.setup = child.setup[:max_setup_ops]
+    child.prune()                                     # 1) drop dead code
+    child.setup       = child.setup[:max_setup_ops]   # 2) enforce stage limits
     child.predict_ops = child.predict_ops[:max_predict_ops]
-    child.update_ops = child.update_ops[:max_update_ops]
+    child.update_ops  = child.update_ops[:max_update_ops]
+    child._vars_info_cache = None                     # 3) clear cache
 
-    child._vars_info_cache = None
     return child
