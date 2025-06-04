@@ -38,6 +38,13 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
     p.add_argument("--parsimony_penalty",  type=float, default=argparse.SUPPRESS)
     p.add_argument("--corr_penalty_w",     type=float, default=argparse.SUPPRESS)
     p.add_argument("--corr_cutoff",        type=float, default=argparse.SUPPRESS)
+    p.add_argument("--keep_dupes_in_hof", action="store_true",
+                   default=argparse.SUPPRESS)
+    p.add_argument("--xs_flat_guard",      type=float, default=argparse.SUPPRESS)
+    p.add_argument("--t_flat_guard",       type=float, default=argparse.SUPPRESS)
+    p.add_argument("--early_abort_bars",   type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--early_abort_xs",     type=float, default=argparse.SUPPRESS)
+    p.add_argument("--early_abort_t",      type=float, default=argparse.SUPPRESS)
     p.add_argument("--hof_size",           type=int,   default=argparse.SUPPRESS)
     p.add_argument("--scale",              choices=["zscore","rank","sign"],
                                                      default=argparse.SUPPRESS)
@@ -58,6 +65,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
 
     p.add_argument("--fee",                            type=float, default=argparse.SUPPRESS)
     p.add_argument("--hold",                           type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
 
     ns = p.parse_args()
     d = vars(ns)
@@ -114,6 +122,7 @@ def main() -> None:
         "--top",   str(bt_cfg.top_to_backtest),
         "--fee",   str(bt_cfg.fee),
         "--hold",  str(bt_cfg.hold),
+        "--annualization_factor", str(bt_cfg.annualization_factor),
         "--scale", bt_cfg.scale,
         "--lag",   str(bt_cfg.eval_lag),
         "--data",  str(bt_cfg.data_dir),
