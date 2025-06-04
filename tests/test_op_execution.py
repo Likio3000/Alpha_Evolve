@@ -30,5 +30,3 @@ def test_invalid_vector_type_raises():
     op = Op("out", "vec_mul_scalar", ("v", "s"))
     with pytest.raises(TypeError):
         op.execute(buf, n_stocks=2)
-
-

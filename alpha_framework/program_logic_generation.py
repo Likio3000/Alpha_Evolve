@@ -1,45 +1,46 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Dict, List, Tuple, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 import numpy as np
 
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
 from .alpha_framework_op import Op
 
 if TYPE_CHECKING:
-    from .alpha_framework_program import AlphaProgram # For type hint of cls and return type
+    from .alpha_framework_program import (
+        AlphaProgram,
+    )  # For type hint of cls and return type
 
 
 def generate_random_program_logic(
-    cls: type, # Actually AlphaProgram class
+    cls: type,  # Actually AlphaProgram class
     feature_vars: Dict[str, TypeId],
     state_vars: Dict[str, TypeId],
     max_total_ops: int = 32,
-    rng: Optional[np.random.Generator] = None
+    rng: Optional[np.random.Generator] = None,
 ) -> AlphaProgram:
     """
     Build a random but type-correct AlphaProgram.
     This is the core logic for AlphaProgram.random_program.
     """
     rng = rng or np.random.default_rng()
-    prog = cls() # type: ignore # cls() will be an AlphaProgram instance
+    prog = cls()  # type: ignore # cls() will be an AlphaProgram instance
 
     # — split total op budget into three blocks —
     n_predict_ops = max(1, int(max_total_ops * 0.70))
-    n_setup_ops   = int(max_total_ops * 0.15)
-    n_update_ops  = max_total_ops - n_predict_ops - n_setup_ops
+    n_setup_ops = int(max_total_ops * 0.15)
+    n_update_ops = max_total_ops - n_predict_ops - n_setup_ops
 
     tmp_idx = 0
+
     def _new_tmp(t: TypeId) -> str:
         nonlocal tmp_idx
         tmp_idx += 1
-        return f"{'s' if t=='scalar' else 'v' if t=='vector' else 'm'}{tmp_idx}"
+        return f"{'s' if t == 'scalar' else 'v' if t == 'vector' else 'm'}{tmp_idx}"
 
     # ────────────────── helper to append ops ──────────────────
-    def _add_ops(block: List[Op],
-                 in_vars: Dict[str, TypeId],
-                 how_many: int,
-                 is_predict: bool) -> None:
-
+    def _add_ops(
+        block: List[Op], in_vars: Dict[str, TypeId], how_many: int, is_predict: bool
+    ) -> None:
         current = in_vars.copy()
 
         for k in range(how_many):
@@ -47,7 +48,7 @@ def generate_random_program_logic(
             candidates = []
             for op_name, spec in OP_REGISTRY.items():
                 if op_name == "assign_vector" and is_predict and k != how_many - 1:
-                    continue          # reserve assign_vector for emergency only
+                    continue  # reserve assign_vector for emergency only
 
                 inputs_for_spec: List[List[str]] = []
                 ok = True
@@ -93,7 +94,7 @@ def generate_random_program_logic(
                         "operation for the final predict slot"
                     )
             else:
-                idx = rng.integers(len(candidates))      # ← pick index
+                idx = rng.integers(len(candidates))  # ← pick index
                 chosen_name, chosen_spec, pools = candidates[idx]
                 chosen_ins = tuple(rng.choice(p) for p in pools)
                 out_t = chosen_spec.out_type
@@ -102,23 +103,21 @@ def generate_random_program_logic(
                         out_t = "vector"
 
             # 3. emit op
-            out_name = (FINAL_PREDICTION_VECTOR_NAME
-                        if last_predict_slot
-                        else _new_tmp(out_t)) # type: ignore
-            block.append(Op(out_name, chosen_name, chosen_ins)) # type: ignore
-            current[out_name] = out_t # type: ignore
+            out_name = (
+                FINAL_PREDICTION_VECTOR_NAME if last_predict_slot else _new_tmp(out_t)
+            )  # type: ignore
+            block.append(Op(out_name, chosen_name, chosen_ins))  # type: ignore
+            current[out_name] = out_t  # type: ignore
 
     # ────────────────── actually build the three blocks ──────────────────
-    _add_ops(prog.setup,   {**feature_vars, **state_vars},           n_setup_ops,   False)
+    _add_ops(prog.setup, {**feature_vars, **state_vars}, n_setup_ops, False)
     # Need AlphaProgram._trace_vars_for_block here.
     # This indicates that _trace_vars_for_block might need to be a static helper too, or passed.
     # For now, let's assume prog has _trace_vars_for_block method.
-    after_setup = prog._trace_vars_for_block(prog.setup,
-                                             {**feature_vars, **state_vars})
+    after_setup = prog._trace_vars_for_block(prog.setup, {**feature_vars, **state_vars})
 
-    _add_ops(prog.predict_ops, after_setup,                          n_predict_ops, True)
-    after_predict = prog._trace_vars_for_block(prog.predict_ops,
-                                               after_setup)
+    _add_ops(prog.predict_ops, after_setup, n_predict_ops, True)
+    after_predict = prog._trace_vars_for_block(prog.predict_ops, after_setup)
 
-    _add_ops(prog.update_ops, after_predict,                         n_update_ops,  False)
+    _add_ops(prog.update_ops, after_predict, n_update_ops, False)
     return prog

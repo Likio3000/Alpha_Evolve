@@ -9,6 +9,7 @@ Dataclass-based “single source of truth” for every pipeline knob.
 
 from dataclasses import dataclass
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  shared data-handling knobs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,8 +61,8 @@ class EvolutionConfig(DataConfig):
 @dataclass
 class BacktestConfig(DataConfig):
     top_to_backtest: int = 10
-    fee: float = 1.0                      # round-trip commission (bps)
-    hold: int = 1                         # holding period (bars)
+    fee: float = 1.0  # round-trip commission (bps)
+    hold: int = 1  # holding period (bars)
     scale: str = "zscore"
     annualization_factor: float = 252 * 6
     seed: int = 42

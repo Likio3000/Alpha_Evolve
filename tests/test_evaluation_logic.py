@@ -42,32 +42,48 @@ def test_evaluate_program_basic(monkeypatch):
     class DummyDH:
         def __init__(self):
             self.index = pd.RangeIndex(3)
-            self.dfs = OrderedDict({
-                "A": pd.DataFrame({
-                    "opens": [1.0, 2.0, 3.0],
-                    "highs": [0, 0, 0],
-                    "lows": [0, 0, 0],
-                    "closes": [0, 0, 0],
-                    "ranges": [0, 0, 0],
-                    "ma5": [0, 0, 0], "vol5": [0, 0, 0],
-                    "ma10": [0, 0, 0], "vol10": [0, 0, 0],
-                    "ma20": [0, 0, 0], "vol20": [0, 0, 0],
-                    "ma30": [0, 0, 0], "vol30": [0, 0, 0],
-                    "ret_fwd": [0.1, 0.2, 0.3],
-                }, index=self.index),
-                "B": pd.DataFrame({
-                    "opens": [2.0, 3.0, 4.0],
-                    "highs": [0, 0, 0],
-                    "lows": [0, 0, 0],
-                    "closes": [0, 0, 0],
-                    "ranges": [0, 0, 0],
-                    "ma5": [0, 0, 0], "vol5": [0, 0, 0],
-                    "ma10": [0, 0, 0], "vol10": [0, 0, 0],
-                    "ma20": [0, 0, 0], "vol20": [0, 0, 0],
-                    "ma30": [0, 0, 0], "vol30": [0, 0, 0],
-                    "ret_fwd": [0.2, 0.3, 0.4],
-                }, index=self.index),
-            })
+            self.dfs = OrderedDict(
+                {
+                    "A": pd.DataFrame(
+                        {
+                            "opens": [1.0, 2.0, 3.0],
+                            "highs": [0, 0, 0],
+                            "lows": [0, 0, 0],
+                            "closes": [0, 0, 0],
+                            "ranges": [0, 0, 0],
+                            "ma5": [0, 0, 0],
+                            "vol5": [0, 0, 0],
+                            "ma10": [0, 0, 0],
+                            "vol10": [0, 0, 0],
+                            "ma20": [0, 0, 0],
+                            "vol20": [0, 0, 0],
+                            "ma30": [0, 0, 0],
+                            "vol30": [0, 0, 0],
+                            "ret_fwd": [0.1, 0.2, 0.3],
+                        },
+                        index=self.index,
+                    ),
+                    "B": pd.DataFrame(
+                        {
+                            "opens": [2.0, 3.0, 4.0],
+                            "highs": [0, 0, 0],
+                            "lows": [0, 0, 0],
+                            "closes": [0, 0, 0],
+                            "ranges": [0, 0, 0],
+                            "ma5": [0, 0, 0],
+                            "vol5": [0, 0, 0],
+                            "ma10": [0, 0, 0],
+                            "vol10": [0, 0, 0],
+                            "ma20": [0, 0, 0],
+                            "vol20": [0, 0, 0],
+                            "ma30": [0, 0, 0],
+                            "vol30": [0, 0, 0],
+                            "ret_fwd": [0.2, 0.3, 0.4],
+                        },
+                        index=self.index,
+                    ),
+                }
+            )
 
         def get_aligned_dfs(self):
             return self.dfs

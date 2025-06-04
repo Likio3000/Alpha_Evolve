@@ -23,57 +23,70 @@ BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 #  CLI → two dataclass configs
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
-    p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
+    p = argparse.ArgumentParser(
+        description="Evolve and back-test alphas (one-stop shop)"
+    )
 
     # ───► evolution flags
     p.add_argument("generations", type=int)
-    p.add_argument("--seed",               type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--pop_size",           type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--tournament_k",       type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--p_mut",              type=float, default=argparse.SUPPRESS)
-    p.add_argument("--p_cross",            type=float, default=argparse.SUPPRESS)
-    p.add_argument("--elite_keep",         type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--fresh_rate",         type=float, default=argparse.SUPPRESS)
-    p.add_argument("--max_ops",            type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--parsimony_penalty",  type=float, default=argparse.SUPPRESS)
-    p.add_argument("--corr_penalty_w",     type=float, default=argparse.SUPPRESS)
-    p.add_argument("--corr_cutoff",        type=float, default=argparse.SUPPRESS)
-    p.add_argument("--keep_dupes_in_hof", action="store_true",
-                   default=argparse.SUPPRESS)
-    p.add_argument("--xs_flat_guard",      type=float, default=argparse.SUPPRESS)
-    p.add_argument("--t_flat_guard",       type=float, default=argparse.SUPPRESS)
-    p.add_argument("--early_abort_bars",   type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--early_abort_xs",     type=float, default=argparse.SUPPRESS)
-    p.add_argument("--early_abort_t",      type=float, default=argparse.SUPPRESS)
-    p.add_argument("--hof_size",           type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--scale",              choices=["zscore","rank","sign"],
-                                                     default=argparse.SUPPRESS)
-    p.add_argument("--quiet",              action="store_true", default=argparse.SUPPRESS)
+    p.add_argument("--seed", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--pop_size", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--tournament_k", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--p_mut", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--p_cross", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--elite_keep", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--fresh_rate", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--max_ops", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--parsimony_penalty", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--corr_penalty_w", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--corr_cutoff", type=float, default=argparse.SUPPRESS)
+    p.add_argument(
+        "--keep_dupes_in_hof", action="store_true", default=argparse.SUPPRESS
+    )
+    p.add_argument("--xs_flat_guard", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--t_flat_guard", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--early_abort_bars", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--early_abort_xs", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--early_abort_t", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--hof_size", type=int, default=argparse.SUPPRESS)
+    p.add_argument(
+        "--scale", choices=["zscore", "rank", "sign"], default=argparse.SUPPRESS
+    )
+    p.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS)
 
     # ───► shared data flags
-    p.add_argument("--data_dir",                 default=argparse.SUPPRESS)
-    p.add_argument("--max_lookback_data_option", choices=['common_1200',
-                                                          'specific_long_10k',
-                                                          'full_overlap'],
-                                                   default=argparse.SUPPRESS)
-    p.add_argument("--min_common_points",  type=int, default=argparse.SUPPRESS)
-    p.add_argument("--eval_lag",           type=int, default=argparse.SUPPRESS)
+    p.add_argument("--data_dir", default=argparse.SUPPRESS)
+    p.add_argument(
+        "--max_lookback_data_option",
+        choices=["common_1200", "specific_long_10k", "full_overlap"],
+        default=argparse.SUPPRESS,
+    )
+    p.add_argument("--min_common_points", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--eval_lag", type=int, default=argparse.SUPPRESS)
 
     # ───► back-test-only flags
-    p.add_argument("--top",   dest="top_to_backtest", type=int, default=argparse.SUPPRESS)
-    p.add_argument("--top_to_backtest", dest="top_to_backtest", type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    p.add_argument("--top", dest="top_to_backtest", type=int, default=argparse.SUPPRESS)
+    p.add_argument(
+        "--top_to_backtest",
+        dest="top_to_backtest",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
 
-    p.add_argument("--fee",                            type=float, default=argparse.SUPPRESS)
-    p.add_argument("--hold",                           type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--fee", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--hold", type=int, default=argparse.SUPPRESS)
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
 
     ns = p.parse_args()
     d = vars(ns)
 
-    evo_cfg = EvolutionConfig(**{k: v for k, v in d.items()
-                                 if k in EvolutionConfig.__annotations__})
-    bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
-                                 if k in BacktestConfig.__annotations__})
+    evo_cfg = EvolutionConfig(
+        **{k: v for k, v in d.items() if k in EvolutionConfig.__annotations__}
+    )
+    bt_cfg = BacktestConfig(
+        **{k: v for k, v in d.items() if k in BacktestConfig.__annotations__}
+    )
 
     return evo_cfg, bt_cfg
 
@@ -82,17 +95,17 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
 #  helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
-    from pathlib import Path
-    import pickle, time
+    import time
 
     print(f"\n— Evolution: {cfg.generations} generations  (seed {cfg.seed})")
-    hof = ae.evolve(cfg)                                   # List[(AlphaProgram, IC)]
-    hof = hof[:cfg.hof_size]
+    hof = ae.evolve(cfg)  # List[(AlphaProgram, IC)]
+    hof = hof[: cfg.hof_size]
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    out_file = (run_output_dir / "pickles" /
-                f"evolved_top{cfg.hof_size}_{cfg.generations}g_"
-                f"{cfg.max_lookback_data_option}_{stamp}.pkl")
+    out_file = (
+        run_output_dir / "pickles" / f"evolved_top{cfg.hof_size}_{cfg.generations}g_"
+        f"{cfg.max_lookback_data_option}_{stamp}.pkl"
+    )
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with open(out_file, "wb") as fh:
         pickle.dump(hof, fh)
@@ -108,9 +121,10 @@ def main() -> None:
     evo_cfg, bt_cfg = parse_args()
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
-    run_dir = (BASE_OUTPUT_DIR /
-               f"run_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
-               f"{evo_cfg.max_lookback_data_option}_{run_stamp}")
+    run_dir = (
+        BASE_OUTPUT_DIR / f"run_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
+        f"{evo_cfg.max_lookback_data_option}_{run_stamp}"
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
 
     pickle_path = _evolve_and_save(evo_cfg, run_dir)
@@ -118,18 +132,30 @@ def main() -> None:
     # ­­­ build argv for the back-tester (same flag names → zero changes there)
     bt_argv = [
         "backtest_evolved_alphas.py",
-        "--input", str(pickle_path),
-        "--top",   str(bt_cfg.top_to_backtest),
-        "--fee",   str(bt_cfg.fee),
-        "--hold",  str(bt_cfg.hold),
-        "--annualization_factor", str(bt_cfg.annualization_factor),
-        "--scale", bt_cfg.scale,
-        "--lag",   str(bt_cfg.eval_lag),
-        "--data",  str(bt_cfg.data_dir),
-        "--outdir", str(run_dir / "backtest_portfolio_csvs"),
-        "--data_alignment_strategy", bt_cfg.max_lookback_data_option,
-        "--min_common_data_points",  str(bt_cfg.min_common_points),
-        "--seed",  str(bt_cfg.seed),
+        "--input",
+        str(pickle_path),
+        "--top",
+        str(bt_cfg.top_to_backtest),
+        "--fee",
+        str(bt_cfg.fee),
+        "--hold",
+        str(bt_cfg.hold),
+        "--annualization_factor",
+        str(bt_cfg.annualization_factor),
+        "--scale",
+        bt_cfg.scale,
+        "--lag",
+        str(bt_cfg.eval_lag),
+        "--data",
+        str(bt_cfg.data_dir),
+        "--outdir",
+        str(run_dir / "backtest_portfolio_csvs"),
+        "--data_alignment_strategy",
+        bt_cfg.max_lookback_data_option,
+        "--min_common_data_points",
+        str(bt_cfg.min_common_points),
+        "--seed",
+        str(bt_cfg.seed),
         "--debug_prints",
     ]
 

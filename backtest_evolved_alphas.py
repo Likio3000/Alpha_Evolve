@@ -3,14 +3,13 @@ import argparse
 import pickle
 import random
 import sys
-import textwrap
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 
 import numpy as np
 import pandas as pd
 
-from config import BacktestConfig                # ← NEW
+from config import BacktestConfig  # ← NEW
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
@@ -21,11 +20,13 @@ from backtesting_components import (
     backtest_cross_sectional_alpha,
 )
 
+
 # --------------------------------------------------------------------------- #
 #  helpers                                                                    #
 # --------------------------------------------------------------------------- #
-def load_programs_from_pickle(n_to_load: int, pickle_filepath: str) \
-        -> List[Tuple[AlphaProgram, float]]:
+def load_programs_from_pickle(
+    n_to_load: int, pickle_filepath: str
+) -> List[Tuple[AlphaProgram, float]]:
     if not Path(pickle_filepath).exists():
         sys.exit(f"Pickle file not found: {pickle_filepath}")
     try:
@@ -43,35 +44,49 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p = argparse.ArgumentParser(description="Back-test evolved cross-sectional alphas")
 
     # ­­­ file / misc (stay as raw CLI params) ­­­ #
-    p.add_argument("--input", default="evolved_top_alphas.pkl",
-                   help="Pickle produced by the evolution stage")
-    p.add_argument("--outdir", default="evolved_bt_cs_results",
-                   help="Directory to write CSV summaries")
+    p.add_argument(
+        "--input",
+        default="evolved_top_alphas.pkl",
+        help="Pickle produced by the evolution stage",
+    )
+    p.add_argument(
+        "--outdir",
+        default="evolved_bt_cs_results",
+        help="Directory to write CSV summaries",
+    )
     p.add_argument("--debug_prints", action="store_true")
     p.add_argument("--annualization_factor_override", type=float, default=None)
 
     # ­­­ back-test knobs – map straight into BacktestConfig ­­­ #
-    p.add_argument("--top",               dest="top_to_backtest",     type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--data",              dest="data_dir",            default=argparse.SUPPRESS)
-    p.add_argument("--fee",               type=float,                 default=argparse.SUPPRESS)
-    p.add_argument("--hold",              type=int,                   default=argparse.SUPPRESS)
+    p.add_argument("--top", dest="top_to_backtest", type=int, default=argparse.SUPPRESS)
+    p.add_argument("--data", dest="data_dir", default=argparse.SUPPRESS)
+    p.add_argument("--fee", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--hold", type=int, default=argparse.SUPPRESS)
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
-    p.add_argument("--scale",             choices=["zscore", "rank", "sign"],
-                                                                  default=argparse.SUPPRESS)
-    p.add_argument("--lag",               dest="eval_lag",            type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--data_alignment_strategy",
-                   dest="max_lookback_data_option",
-                   choices=["common_1200", "specific_long_10k", "full_overlap"],
-                   default=argparse.SUPPRESS)
-    p.add_argument("--min_common_data_points",
-                   dest="min_common_points", type=int,                default=argparse.SUPPRESS)
-    p.add_argument("--seed",              type=int,                   default=argparse.SUPPRESS)
+    p.add_argument(
+        "--scale", choices=["zscore", "rank", "sign"], default=argparse.SUPPRESS
+    )
+    p.add_argument("--lag", dest="eval_lag", type=int, default=argparse.SUPPRESS)
+    p.add_argument(
+        "--data_alignment_strategy",
+        dest="max_lookback_data_option",
+        choices=["common_1200", "specific_long_10k", "full_overlap"],
+        default=argparse.SUPPRESS,
+    )
+    p.add_argument(
+        "--min_common_data_points",
+        dest="min_common_points",
+        type=int,
+        default=argparse.SUPPRESS,
+    )
+    p.add_argument("--seed", type=int, default=argparse.SUPPRESS)
 
     ns = p.parse_args()
 
     # feed only recognised fields into the dataclass
-    cfg_kwargs = {k: v for k, v in vars(ns).items()
-                  if k in BacktestConfig.__annotations__}
+    cfg_kwargs = {
+        k: v for k, v in vars(ns).items() if k in BacktestConfig.__annotations__
+    }
     cfg = BacktestConfig(**cfg_kwargs)
 
     return cfg, ns
@@ -98,8 +113,10 @@ def main() -> None:
         cfg.max_lookback_data_option,
         cfg.min_common_points,
     )
-    print(f"{len(stock_symbols)} symbols | {len(common_index)} bars "
-          f"({common_index.min()} → {common_index.max()})")
+    print(
+        f"{len(stock_symbols)} symbols | {len(common_index)} bars "
+        f"({common_index.min()} → {common_index.max()})"
+    )
 
     # ----------------------------------------------------------- programmes
     programs = load_programs_from_pickle(cfg.top_to_backtest, cli.input)
@@ -126,30 +143,37 @@ def main() -> None:
             cross_sectional_feature_vector_names=CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
             debug_prints=cli.debug_prints,
             annualization_factor=cli.annualization_factor_override
-                                   if cli.annualization_factor_override is not None
-                                   else cfg.annualization_factor,
+            if cli.annualization_factor_override is not None
+            else cfg.annualization_factor,
         )
 
-        metrics.update({
-            "AlphaID":        f"Alpha_{idx:02d}",
-            "OriginalMetric": evo_ic,
-            "Program":        prog.to_string(max_len=1_000_000_000),
-        })
+        metrics.update(
+            {
+                "AlphaID": f"Alpha_{idx:02d}",
+                "OriginalMetric": evo_ic,
+                "Program": prog.to_string(max_len=1_000_000_000),
+            }
+        )
         results.append(metrics)
 
-        print(f"  └─ Sharpe {metrics['Sharpe']:+.3f}  "
-              f"AnnRet {metrics['AnnReturn']*100:6.2f}%  "
-              f"MaxDD {metrics['MaxDD']*100:6.2f}%  "
-              f"Turnover {metrics['Turnover']:.4f}")
+        print(
+            f"  └─ Sharpe {metrics['Sharpe']:+.3f}  "
+            f"AnnRet {metrics['AnnReturn'] * 100:6.2f}%  "
+            f"MaxDD {metrics['MaxDD'] * 100:6.2f}%  "
+            f"Turnover {metrics['Turnover']:.4f}"
+        )
 
     # --------------------------------------------------------- save summary
     if results:
-        df = (pd.DataFrame(results)
-                .sort_values("Sharpe", ascending=False))
+        df = pd.DataFrame(results).sort_values("Sharpe", ascending=False)
         summary = Path(cli.outdir) / f"backtest_summary_top{cfg.top_to_backtest}.csv"
         df.to_csv(summary, index=False, float_format="%.4f")
         print(f"\nBack-test summary written → {summary}")
-        print(df.drop(columns=["Program", "Error"], errors="ignore").to_string(index=False))
+        print(
+            df.drop(columns=["Program", "Error"], errors="ignore").to_string(
+                index=False
+            )
+        )
 
 
 # --------------------------------------------------------------------------- #

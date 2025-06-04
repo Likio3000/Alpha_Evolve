@@ -29,7 +29,10 @@ def build_prog_b() -> AlphaProgram:
 
 
 def make_feature_dict(n: int):
-    feats = {name: np.arange(1, n + 1, dtype=float) for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
+    feats = {
+        name: np.arange(1, n + 1, dtype=float)
+        for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+    }
     feats.update({"const_1": 1.0, "const_neg_1": -1.0})
     return feats
 
@@ -54,7 +57,9 @@ def test_mutate_and_crossover_eval():
     pred = mutated.eval(features, {}, n)
     assert isinstance(pred, np.ndarray)
     assert pred.shape == (n,)
-    vars_after = mutated.get_vars_at_point("predict", len(mutated.predict_ops), feature_vars, state_vars)
+    vars_after = mutated.get_vars_at_point(
+        "predict", len(mutated.predict_ops), feature_vars, state_vars
+    )
     assert vars_after[FINAL_PREDICTION_VECTOR_NAME] == "vector"
 
     rng = np.random.default_rng(1)
@@ -62,5 +67,7 @@ def test_mutate_and_crossover_eval():
     pred_c = crossed.eval(features, {}, n)
     assert isinstance(pred_c, np.ndarray)
     assert pred_c.shape == (n,)
-    vars_after_c = crossed.get_vars_at_point("predict", len(crossed.predict_ops), feature_vars, state_vars)
+    vars_after_c = crossed.get_vars_at_point(
+        "predict", len(crossed.predict_ops), feature_vars, state_vars
+    )
     assert vars_after_c[FINAL_PREDICTION_VECTOR_NAME] == "vector"
