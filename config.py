@@ -39,10 +39,14 @@ class EvolutionConfig(DataConfig):
     fresh_rate: float = 0.12
 
     # complexity / similarity guards
+    # operation limits (Section 4.1 of the paper)
     max_ops: int = 87
     max_setup_ops: int = 21
     max_predict_ops: int = 21
     max_update_ops: int = 45
+    max_scalar_operands: int = 10
+    max_vector_operands: int = 16
+    max_matrix_operands: int = 4
     parsimony_penalty: float = 0.0001
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
