@@ -1,6 +1,11 @@
 import numpy as np
 
 from alpha_framework import AlphaProgram, FINAL_PREDICTION_VECTOR_NAME
+from alpha_framework.program_logic_generation import (
+    MAX_SETUP_OPS,
+    MAX_PREDICT_OPS,
+    MAX_UPDATE_OPS,
+)
 
 
 def test_random_program_final_op_vector():
@@ -15,3 +20,18 @@ def test_random_program_final_op_vector():
         after_setup = prog._trace_vars_for_block(prog.setup, {**feature_vars, **state_vars})
         vars_after_predict = prog._trace_vars_for_block(prog.predict_ops, after_setup)
         assert vars_after_predict[FINAL_PREDICTION_VECTOR_NAME] == "vector"
+
+
+def test_random_program_respects_block_limits():
+    feature_vars = AlphaProgram._get_default_feature_vars()
+    state_vars = {"dummy": "scalar"}
+    rng = np.random.default_rng(1)
+    prog = AlphaProgram.random_program(
+        feature_vars,
+        state_vars,
+        max_total_ops=200,
+        rng=rng,
+    )
+    assert len(prog.setup) <= MAX_SETUP_OPS
+    assert len(prog.predict_ops) <= MAX_PREDICT_OPS
+    assert len(prog.update_ops) <= MAX_UPDATE_OPS

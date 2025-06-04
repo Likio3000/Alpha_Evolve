@@ -71,10 +71,24 @@ INITIAL_STATE_VARS: Dict[str, TypeId] = {
 }
 
 def _random_prog(cfg: EvoConfig) -> AlphaProgram: # Signature changed
-    return AlphaProgram.random_program(FEATURE_VARS, INITIAL_STATE_VARS, max_total_ops=cfg.max_ops)
+    return AlphaProgram.random_program(
+        FEATURE_VARS,
+        INITIAL_STATE_VARS,
+        max_total_ops=cfg.max_ops,
+        max_setup_ops=cfg.max_setup_ops,
+        max_predict_ops=cfg.max_predict_ops,
+        max_update_ops=cfg.max_update_ops,
+    )
 
 def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature changed
-    return p.mutate(FEATURE_VARS, INITIAL_STATE_VARS, max_total_ops=cfg.max_ops)
+    return p.mutate(
+        FEATURE_VARS,
+        INITIAL_STATE_VARS,
+        max_total_ops=cfg.max_ops,
+        max_setup_ops=cfg.max_setup_ops,
+        max_predict_ops=cfg.max_predict_ops,
+        max_update_ops=cfg.max_update_ops,
+    )
 
 ###############################################################################
 # EVOLVE LOOP ##############################################################
@@ -190,7 +204,12 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
 
                 child: AlphaProgram
                 if random.random() < cfg.p_cross:
-                    child = parent_a.crossover(parent_b)
+                    child = parent_a.crossover(
+                        parent_b,
+                        max_setup_ops=cfg.max_setup_ops,
+                        max_predict_ops=cfg.max_predict_ops,
+                        max_update_ops=cfg.max_update_ops,
+                    )
                 else:
                     child = parent_a.copy() if random.random() < 0.5 else parent_b.copy()
                 
