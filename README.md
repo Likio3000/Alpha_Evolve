@@ -36,6 +36,16 @@ Use `pytest` to run the unit tests after installing the dependencies:
 pytest
 ```
 
+## Usage
+
+Run the full pipeline for five generations:
+
+```bash
+uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
+```
+
+The `--debug_prints` flag forwards verbose output to the back-tester.
+
 ## Default hyperparameters
 
 The values in `config.py` mirror the meta‑hyper‑parameters listed in

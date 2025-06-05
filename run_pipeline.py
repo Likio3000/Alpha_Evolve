@@ -2,7 +2,7 @@
 """
 run_pipeline.py  – evolve cross-sectional alphas **and** back-test them.
 Usage example:
-    uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5
+    uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
 
 Operation limit flags:
     --max_setup_ops
@@ -31,7 +31,7 @@ BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 # ─────────────────────────────────────────────────────────────────────────────
 #  CLI → two dataclass configs
 # ─────────────────────────────────────────────────────────────────────────────
-def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
+def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool]:
     p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
 
     # ───► evolution flags
@@ -83,6 +83,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
     p.add_argument("--fee",                            type=float, default=argparse.SUPPRESS)
     p.add_argument("--hold",                           type=int,   default=argparse.SUPPRESS)
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--debug_prints", action="store_true")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -92,7 +93,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
     bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
                                  if k in BacktestConfig.__annotations__})
 
-    return evo_cfg, bt_cfg
+    return evo_cfg, bt_cfg, ns.debug_prints
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +122,7 @@ def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
 #  main
 # ─────────────────────────────────────────────────────────────────────────────
 def main() -> None:
-    evo_cfg, bt_cfg = parse_args()
+    evo_cfg, bt_cfg, debug_prints = parse_args()
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
     run_dir = (BASE_OUTPUT_DIR /
@@ -146,8 +147,9 @@ def main() -> None:
         "--data_alignment_strategy", bt_cfg.max_lookback_data_option,
         "--min_common_data_points",  str(bt_cfg.min_common_points),
         "--seed",  str(bt_cfg.seed),
-        "--debug_prints",
     ]
+    if debug_prints:
+        bt_argv.append("--debug_prints")
 
     print("\n— Back-testing …")
     orig_argv = sys.argv[:]
