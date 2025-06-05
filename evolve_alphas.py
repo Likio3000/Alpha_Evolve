@@ -1,7 +1,7 @@
 from __future__ import annotations
 import random
 import time
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from multiprocessing import Pool, cpu_count
 import numpy as np
 
@@ -136,8 +136,6 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
 
             if eval_results and eval_results[0][1].fitness > -np.inf:
                 best_prog_idx_this_gen, best_metrics_this_gen = eval_results[0]
-                best_fit_this_gen = best_metrics_this_gen.fitness
-                best_ic_this_gen = best_metrics_this_gen.mean_ic
                 best_preds_matrix_this_gen = best_metrics_this_gen.processed_predictions
                 best_program_instance_this_gen = pop[best_prog_idx_this_gen]
 
