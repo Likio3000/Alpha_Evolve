@@ -7,7 +7,9 @@ from evolution_components.evaluation_logic import (
     _safe_corr_eval,
     evaluate_program,
     initialize_evaluation_cache,
+    configure_evaluation,
 )
+from evolution_components import hall_of_fame_manager as hof
 from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 
 
@@ -175,3 +177,153 @@ def test_eval_cache_eviction():
 
     evaluate_program(prog1, dh, hof, {})  # Needs recompute
     assert dh.calls == 4
+
+
+class FlatDH:
+    def __init__(self):
+        self.index = pd.RangeIndex(4)
+        const = {"opens": [1.0] * 4, "ret_fwd": [0.0] * 4}
+        self.dfs = OrderedDict({
+            "A": pd.DataFrame(const, index=self.index),
+            "B": pd.DataFrame(const, index=self.index),
+        })
+
+    def get_aligned_dfs(self):
+        return self.dfs
+
+    def get_common_time_index(self):
+        return self.index
+
+    def get_stock_symbols(self):
+        return list(self.dfs.keys())
+
+    def get_n_stocks(self):
+        return len(self.dfs)
+
+    def get_eval_lag(self):
+        return 1
+
+
+class XSCrossFlatDH:
+    def __init__(self):
+        self.index = pd.RangeIndex(5)
+        seq = [1.0, 2.0, 3.0, 4.0, 5.0]
+        self.dfs = OrderedDict({
+            "A": pd.DataFrame({"opens": seq, "ret_fwd": [0.0] * 5}, index=self.index),
+            "B": pd.DataFrame({"opens": seq, "ret_fwd": [0.0] * 5}, index=self.index),
+        })
+
+    def get_aligned_dfs(self):
+        return self.dfs
+
+    def get_common_time_index(self):
+        return self.index
+
+    def get_stock_symbols(self):
+        return list(self.dfs.keys())
+
+    def get_n_stocks(self):
+        return len(self.dfs)
+
+    def get_eval_lag(self):
+        return 1
+
+
+class TemporalFlatDH:
+    def __init__(self):
+        self.index = pd.RangeIndex(5)
+        self.dfs = OrderedDict({
+            "A": pd.DataFrame({"opens": [1.0] * 5, "ret_fwd": [0.0] * 5}, index=self.index),
+            "B": pd.DataFrame({"opens": [2.0] * 5, "ret_fwd": [0.0] * 5}, index=self.index),
+        })
+
+    def get_aligned_dfs(self):
+        return self.dfs
+
+    def get_common_time_index(self):
+        return self.index
+
+    def get_stock_symbols(self):
+        return list(self.dfs.keys())
+
+    def get_n_stocks(self):
+        return len(self.dfs)
+
+    def get_eval_lag(self):
+        return 1
+
+
+def test_early_abort_triggered():
+    prog = build_simple_program("ea")
+    dh = FlatDH()
+    hof = DummyHOF()
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=3,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        scale_method="zscore",
+    )
+    initialize_evaluation_cache(max_size=2)
+    score, mean_ic, preds = evaluate_program(prog, dh, hof, {})
+    assert score == -float("inf")
+    assert preds is None
+
+
+def test_flatness_guard_cross_sectional():
+    prog = build_simple_program("xs")
+    dh = XSCrossFlatDH()
+    hof = DummyHOF()
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=100,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        scale_method="zscore",
+    )
+    initialize_evaluation_cache(max_size=2)
+    score, _, preds = evaluate_program(prog, dh, hof, {})
+    assert preds.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
+    assert score == -float("inf")
+
+
+def test_flatness_guard_temporal():
+    prog = build_simple_program("tmp")
+    dh = TemporalFlatDH()
+    hof = DummyHOF()
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=100,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        scale_method="zscore",
+    )
+    initialize_evaluation_cache(max_size=2)
+    score, _, preds = evaluate_program(prog, dh, hof, {})
+    assert preds.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
+    assert score == -float("inf")
+
+
+def test_correlation_penalty_applied():
+    prog = build_simple_program("corr")
+    dh = CountingDH()
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0)
+    initialize_evaluation_cache(max_size=2)
+
+    _, _, preds = evaluate_program(prog, dh, hof, {})
+    hof.update_correlation_hof(prog.fingerprint, preds)
+
+    initialize_evaluation_cache(max_size=2)
+    score, _, _ = evaluate_program(prog, dh, hof, {})
+    base_score = 1.0 - 0.002 * prog.size / 32
+    assert score == pytest.approx(base_score - 0.5)
+

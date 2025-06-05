@@ -65,6 +65,18 @@ def test_relation_ops():
     assert np.allclose(buf["demean_out"], expected_demean)
 
 
+def test_relation_ops_realistic_groups():
+    v = np.array([10.0, 20.0, 30.0, 100.0, 80.0, 5.0, 15.0, 25.0])
+    groups = np.array([1, 1, 1, 2, 2, 3, 3, 3])
+    buf = {"v": v, "g": groups}
+    Op("rank_out", "relation_rank", ("v", "g")).execute(buf, n_stocks=8)
+    Op("demean_out", "relation_demean", ("v", "g")).execute(buf, n_stocks=8)
+    expected_rank = np.array([-1.0, 0.0, 1.0, 1.0, -1.0, -1.0, 0.0, 1.0])
+    expected_demean = np.array([-10.0, 0.0, 10.0, 10.0, -10.0, -10.0, 0.0, 10.0])
+    assert np.allclose(buf["rank_out"], expected_rank)
+    assert np.allclose(buf["demean_out"], expected_demean)
+
+
 def test_norm_op():
     m = np.array([[3.0, 4.0], [0.0, 0.0]])
     buf = {"m": m}
