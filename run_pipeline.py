@@ -31,7 +31,7 @@ BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 # ─────────────────────────────────────────────────────────────────────────────
 #  CLI → two dataclass configs
 # ─────────────────────────────────────────────────────────────────────────────
-def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool]:
+def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool, bool]:
     p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
 
     # ───► evolution flags
@@ -84,6 +84,8 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool]:
     p.add_argument("--hold",                           type=int,   default=argparse.SUPPRESS)
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
     p.add_argument("--debug_prints", action="store_true")
+    p.add_argument("--run_baselines", action="store_true",
+                   help="also train baseline models")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -93,7 +95,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool]:
     bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
                                  if k in BacktestConfig.__annotations__})
 
-    return evo_cfg, bt_cfg, ns.debug_prints
+    return evo_cfg, bt_cfg, ns.debug_prints, ns.run_baselines
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,11 +120,27 @@ def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
     return out_file
 
 
+def _train_baselines(data_dir: str, out_dir: Path) -> None:
+    """Train baseline models and dump their metrics as JSON."""
+    from baselines.ga_tree import train_ga_tree
+    from baselines.rank_lstm import train_rank_lstm
+    import json
+
+    metrics = {
+        "ga_tree": train_ga_tree(data_dir),
+        "rank_lstm": train_rank_lstm(data_dir),
+    }
+    out_file = out_dir / "baseline_metrics.json"
+    with open(out_file, "w") as fh:
+        json.dump(metrics, fh, indent=2)
+    print(f"Saved baseline metrics → {out_file}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  main
 # ─────────────────────────────────────────────────────────────────────────────
 def main() -> None:
-    evo_cfg, bt_cfg, debug_prints = parse_args()
+    evo_cfg, bt_cfg, debug_prints, run_baselines = parse_args()
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
     run_dir = (BASE_OUTPUT_DIR /
@@ -158,6 +176,9 @@ def main() -> None:
         bt.main()
     finally:
         sys.argv = orig_argv
+
+    if run_baselines:
+        _train_baselines(bt_cfg.data_dir, run_dir)
 
     print(f"\n✔  Pipeline finished – artefacts in  {run_dir}")
 
