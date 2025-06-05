@@ -7,7 +7,31 @@ Dataclass-based “single source of truth” for every pipeline knob.
 * BacktestConfig   – everything the cross-sectional back-tester needs
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Dict
+
+# Default mapping from token symbol to sector ID used across the project.  The
+# mapping groups major crypto assets into rough "sectors" so relation-based
+# operations can reason about them.  A value of ``-1`` denotes an unknown
+# sector.
+DEFAULT_CRYPTO_SECTOR_MAPPING: Dict[str, int] = {
+    "BTC": 0,  # Core
+    "ETH": 1,
+    "SOL": 1,  # Ecosystem
+    # Altcoins
+    "ADA": 2,
+    "AVA": 2,
+    "SUI": 2,
+    "APT": 2,
+    "INJ": 2,
+    "RNDR": 2,
+    "ARB": 2,
+    "LINK": 2,
+    # Memes
+    "BONK": 3,
+    "DOGE": 3,
+    "PEPE": 3,
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  shared data-handling knobs
@@ -18,6 +42,12 @@ class DataConfig:
     max_lookback_data_option: str = "common_1200"
     min_common_points: int = 1200
     eval_lag: int = 1
+    # Mapping from token symbols to sector IDs used for relation-aware
+    # operations.  It defaults to ``DEFAULT_CRYPTO_SECTOR_MAPPING`` defined
+    # above but can be overridden per configuration instance.
+    sector_mapping: Dict[str, int] = field(
+        default_factory=lambda: DEFAULT_CRYPTO_SECTOR_MAPPING.copy()
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
