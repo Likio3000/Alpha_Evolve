@@ -45,6 +45,8 @@ Section 4.1 of the reproduction guide:
 * tournament size **10**
 * mutation probability **0.9**
 * setup, predict and update operation limits **21/21/45**
+* scalar/vector/matrix operand limits **10/16/4**
+* evaluation cache size **128**
 * correlation cutoff for Hall of Fame entries **15 %**
 
 ## Data handling

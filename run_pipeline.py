@@ -3,6 +3,15 @@
 run_pipeline.py  – evolve cross-sectional alphas **and** back-test them.
 Usage example:
     uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5
+
+Operation limit flags:
+    --max_setup_ops
+    --max_predict_ops
+    --max_update_ops
+    --max_scalar_operands
+    --max_vector_operands
+    --max_matrix_operands
+    --eval_cache_size
 """
 
 from __future__ import annotations
@@ -35,6 +44,12 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
     p.add_argument("--elite_keep",         type=int,   default=argparse.SUPPRESS)
     p.add_argument("--fresh_rate",         type=float, default=argparse.SUPPRESS)
     p.add_argument("--max_ops",            type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--max_setup_ops",      type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--max_predict_ops",    type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--max_update_ops",     type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--max_scalar_operands", type=int,  default=argparse.SUPPRESS)
+    p.add_argument("--max_vector_operands", type=int,  default=argparse.SUPPRESS)
+    p.add_argument("--max_matrix_operands", type=int,  default=argparse.SUPPRESS)
     p.add_argument("--parsimony_penalty",  type=float, default=argparse.SUPPRESS)
     p.add_argument("--corr_penalty_w",     type=float, default=argparse.SUPPRESS)
     p.add_argument("--corr_cutoff",        type=float, default=argparse.SUPPRESS)
@@ -50,6 +65,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig]:
                                                      default=argparse.SUPPRESS)
     p.add_argument("--quiet",              action="store_true", default=argparse.SUPPRESS)
     p.add_argument("--workers",            type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--eval_cache_size",    type=int,   default=argparse.SUPPRESS)
 
     # ───► shared data flags
     p.add_argument("--data_dir",                 default=argparse.SUPPRESS)
