@@ -80,6 +80,57 @@ def _load_all_csv(data_dir: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def backtest_ga_tree(
+    data_dir: str,
+    train_points: int = 1,
+    test_points: int = 1,
+    eval_lag: int = 1,
+    strategy: str = "common_1200",
+    seed: int = 0,
+) -> Dict[str, float]:
+    """Train on a data split and return IC and out-of-sample Sharpe."""
+
+    from evolution_components import data_handling as dh
+
+    dh.initialize_data(data_dir, strategy, train_points + test_points + 1, eval_lag)
+    train_split, _, test_split = dh.get_data_splits(train_points, 1, test_points)
+
+    def _concat(split: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        df = pd.concat([s for s in split.values()]).reset_index(drop=True)
+        return df
+
+    np.random.seed(seed)
+
+    train_df = _concat(train_split)
+    rets = train_df["close"].pct_change().shift(-1).fillna(0.0).values
+    features = ["open", "high", "low", "close"]
+
+    population = [_random_tree(features, depth=3) for _ in range(5)]
+    best_ic = -np.inf
+    best_tree = population[0]
+    for _ in range(3):
+        preds = [_tree_predict(t, train_df) for t in population]
+        ics = [_ic(p, rets) for p in preds]
+        best_idx = int(np.argmax(ics))
+        if ics[best_idx] > best_ic:
+            best_ic = ics[best_idx]
+            best_tree = population[best_idx]
+        new_pop = [best_tree]
+        while len(new_pop) < len(population):
+            a, b = np.random.choice(population, 2, replace=False)
+            child = _crossover(a, b)
+            child = _mutate(child, features, 0.2)
+            new_pop.append(child)
+        population = new_pop
+
+    test_df = _concat(test_split)
+    preds_test = _tree_predict(best_tree, test_df)
+    test_returns = np.sign(preds_test) * test_df["ret_fwd"].values
+    sharpe = test_returns.mean() / (test_returns.std(ddof=0) + 1e-9)
+
+    return {"IC": float(best_ic), "Sharpe": float(sharpe)}
+
+
 def train_ga_tree(data_dir: str) -> Dict[str, float]:
     df = _load_all_csv(data_dir)
     rets = df["close"].pct_change().shift(-1).fillna(0.0).values
@@ -102,5 +153,5 @@ def train_ga_tree(data_dir: str) -> Dict[str, float]:
             child = _mutate(child, features, 0.2)
             new_pop.append(child)
         population = new_pop
-    sharpe = best_ic * 10  # toy relation
-    return {"IC": best_ic, "Sharpe": sharpe}
+    bt_metrics = backtest_ga_tree(data_dir)
+    return {"IC": best_ic, "Sharpe": bt_metrics["Sharpe"]}
