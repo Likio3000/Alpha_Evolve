@@ -1,5 +1,7 @@
 # Alpha Evolve
 
+[![Tests](https://github.com/YOUR_GITHUB_USERNAME/Alpha_Evolve/actions/workflows/python.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/Alpha_Evolve/actions/workflows/python.yml)
+
 Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
 ## Requirements
