@@ -42,6 +42,8 @@ Run the full pipeline for five generations:
 
 ```bash
 uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
+
+Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
 ```
 
 The `--debug_prints` flag forwards verbose output to the back-tester.
