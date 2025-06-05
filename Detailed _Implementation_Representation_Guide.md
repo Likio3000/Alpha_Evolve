@@ -30,7 +30,7 @@ Key ingredients:
 
 1. Moving averages (MA‑5, 10, 20, 30).
 2. Volatility of close prices over the same horizons.
-3. Raw OHLCV: *open, high, low, close, volume*.
+3. Raw OHLCV: *open, high, low, close* (volume unavailable).
 
 ### 2.2 Label
 
