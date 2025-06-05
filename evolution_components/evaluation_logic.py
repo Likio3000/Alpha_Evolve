@@ -2,6 +2,7 @@ from __future__ import annotations
 import numpy as np
 from typing import TYPE_CHECKING, Dict, List, Tuple, Optional, Any, Set
 from collections import OrderedDict
+from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from alpha_framework.alpha_framework_program import AlphaProgram # Changed from alpha_program_core
@@ -17,11 +18,20 @@ from alpha_framework.alpha_framework_types import ( # Ensure these are correct b
 
 
 # Module-level cache (least-recently used)
-_eval_cache: "OrderedDict[str, Tuple[float, float, Optional[np.ndarray]]]" = OrderedDict()
+@dataclass
+class EvalResult:
+    fitness: float
+    mean_ic: float
+    parsimony_penalty: float
+    correlation_penalty: float
+    processed_predictions: Optional[np.ndarray]
+
+
+_eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
 _EVAL_CACHE_MAX_SIZE = 128
 
 
-def _cache_set(fp: str, value: Tuple[float, float, Optional[np.ndarray]]) -> None:
+def _cache_set(fp: str, value: EvalResult) -> None:
     if fp in _eval_cache:
         _eval_cache.move_to_end(fp)
     elif len(_eval_cache) >= _EVAL_CACHE_MAX_SIZE:
@@ -182,7 +192,7 @@ def evaluate_program(
     dh_module: data_handling, # Pass the data_handling module for access
     hof_module: hof_manager,  # Pass the hall_of_fame_manager module
     initial_prog_state_vars_config: Dict[str, Any] # e.g. evolve_alphas.INITIAL_STATE_VARS
-) -> Tuple[float, float, Optional[np.ndarray]]:
+) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
     fp = prog.fingerprint
@@ -191,7 +201,7 @@ def evaluate_program(
         return _eval_cache[fp]
 
     if not _uses_feature_vector_check(prog):
-        _cache_set(fp, (-float('inf'), 0.0, None))
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
         return _eval_cache[fp]
 
     # Get data from data_handling module
@@ -224,7 +234,7 @@ def evaluate_program(
     
     num_evaluation_steps = len(common_time_index) - eval_lag
     if num_evaluation_steps <= 0: # Not enough data for even one evaluation
-        _cache_set(fp, (-float('inf'), 0.0, None))
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
         return _eval_cache[fp]
 
     for t_idx in range(num_evaluation_steps):
@@ -255,7 +265,7 @@ def evaluate_program(
 
             if np.any(np.isnan(raw_predictions_t)) or np.any(np.isinf(raw_predictions_t)):
                 # print(f"Program {fp} yielded NaN/Inf at t_idx {t_idx}. Aborting eval for this prog.")
-                _cache_set(fp, (-float('inf'), 0.0, None))
+                _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
                 return _eval_cache[fp]
             
             all_raw_predictions_timeseries.append(raw_predictions_t.copy())
@@ -281,7 +291,7 @@ def evaluate_program(
 
                 if mean_xs_std_partial < _EVAL_CONFIG["early_abort_xs_threshold"] or \
                    mean_t_std_partial < _EVAL_CONFIG["early_abort_t_threshold"]:
-                    _cache_set(fp, (-float('inf'), 0.0, None))
+                    _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
                     return _eval_cache[fp]
 
             # IC calculation
@@ -296,15 +306,17 @@ def evaluate_program(
                 daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
 
         except Exception: # Broad exception during program's .eval() or IC calculation
-            _cache_set(fp, (-float('inf'), 0.0, None))
+            _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
             return _eval_cache[fp]
 
     if not daily_ic_values or not all_raw_predictions_timeseries or not all_processed_predictions_timeseries:
-        _cache_set(fp, (-float('inf'), 0.0, None))
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
         return _eval_cache[fp]
 
     mean_daily_ic = float(np.mean(daily_ic_values))
-    score = mean_daily_ic - (_EVAL_CONFIG["parsimony_penalty_factor"] * prog.size / _EVAL_CONFIG["max_ops_for_parsimony"])
+    parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * prog.size / _EVAL_CONFIG["max_ops_for_parsimony"]
+    score = mean_daily_ic - parsimony_penalty
+    correlation_penalty = 0.0
 
     full_raw_predictions_matrix = np.array(all_raw_predictions_timeseries)
     full_processed_predictions_matrix = np.array(all_processed_predictions_timeseries)
@@ -329,6 +341,6 @@ def evaluate_program(
     if score > -float('inf') and full_processed_predictions_matrix.size > 0:
         correlation_penalty = hof_module.get_correlation_penalty_with_hof(full_processed_predictions_matrix.flatten())
         score -= correlation_penalty
-
-    _cache_set(fp, (score, mean_daily_ic, full_processed_predictions_matrix))
-    return score, mean_daily_ic, full_processed_predictions_matrix
+    result = EvalResult(score, mean_daily_ic, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix)
+    _cache_set(fp, result)
+    return result

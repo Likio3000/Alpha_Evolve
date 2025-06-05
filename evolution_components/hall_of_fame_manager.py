@@ -5,9 +5,10 @@ import textwrap # For printing HoF
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram
+    from .evaluation_logic import EvalResult
 
 # Module-level state for Hall of Fame
-_hof_programs_data: List[Tuple[str, float, float, AlphaProgram, np.ndarray]] = [] # fp, fitness, ic, prog, processed_preds_matrix
+_hof_programs_data: List[Tuple[str, EvalResult, AlphaProgram]] = []  # fp, metrics, prog
 _hof_max_size: int = 20
 _hof_fingerprints_set: Set[str] = set() # For quick check of existence
 _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFIG
@@ -75,10 +76,8 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
     return _corr_penalty_config["weight"] * float(np.mean(corrs))
 
 def add_program_to_hof(
-    program: AlphaProgram, 
-    fitness: float, 
-    mean_ic: float, 
-    processed_preds_matrix: Optional[np.ndarray]
+    program: AlphaProgram,
+    metrics: EvalResult,
 ):
     """Add ``program`` to the Hall of Fame and update correlation tracking.
 
@@ -93,6 +92,7 @@ def add_program_to_hof(
 
     # Reject if the new program's predictions are highly correlated with any
     # existing HOF entry.  Skip comparison against entries that share the same
+    processed_preds_matrix = metrics.processed_predictions
     # fingerprint (possible updates of an existing program).
     if (
         processed_preds_matrix is not None
@@ -108,25 +108,23 @@ def add_program_to_hof(
                 return  # Too correlated – do not add to the HOF
     
     # Logic for adding to _hof_programs_data (main HOF for output)
-    # This HOF considers fitness for ranking and uniqueness based on _keep_dupes_in_hof_config
     if not _keep_dupes_in_hof_config and fp in _hof_fingerprints_set:
-        # If not keeping dupes and already exists, only update if new one is better
         existing_idx = -1
-        for i, (efp, efit, _, _, _) in enumerate(_hof_programs_data):
+        for i, (efp, _, _) in enumerate(_hof_programs_data):
             if efp == fp:
                 existing_idx = i
                 break
-        if existing_idx != -1 and fitness > _hof_programs_data[existing_idx][1]:
-            _hof_programs_data[existing_idx] = (fp, fitness, mean_ic, program, processed_preds_matrix if processed_preds_matrix is not None else np.array([]))
-        elif existing_idx == -1: # Should not happen if fp in _hof_fingerprints_set, but as a safeguard
-             _hof_programs_data.append((fp, fitness, mean_ic, program, processed_preds_matrix if processed_preds_matrix is not None else np.array([])))
-             _hof_fingerprints_set.add(fp)
-
-    else: # Keeping dupes or it's a new fingerprint
-        _hof_programs_data.append((fp, fitness, mean_ic, program, processed_preds_matrix if processed_preds_matrix is not None else np.array([])))
+        if existing_idx != -1 and metrics.fitness > _hof_programs_data[existing_idx][1].fitness:
+            _hof_programs_data[existing_idx] = (fp, metrics, program)
+        elif existing_idx == -1:
+            _hof_programs_data.append((fp, metrics, program))
+            _hof_fingerprints_set.add(fp)
+    else:
+        _hof_programs_data.append((fp, metrics, program))
         _hof_fingerprints_set.add(fp)
 
-    _hof_programs_data.sort(key=lambda x: x[1], reverse=True) # Sort by fitness
+
+        _hof_programs_data.sort(key=lambda x: x[1].fitness, reverse=True)  # Sort by fitness
     if len(_hof_programs_data) > _hof_max_size:
         removed_prog_data = _hof_programs_data.pop()
         # If we remove a unique program, ensure its fingerprint is also removed from the set
@@ -137,7 +135,7 @@ def add_program_to_hof(
 
 
     # Logic for maintaining the list used for correlation penalty.
-    if processed_preds_matrix is not None and fitness > -float("inf"):
+    if processed_preds_matrix is not None and metrics.fitness > -float("inf"):
         if fp not in _hof_corr_fingerprints:
             _hof_rank_pred_matrix.append(_rank_vector(processed_preds_matrix.ravel()))
             _hof_corr_fingerprints.append(fp)
@@ -167,17 +165,17 @@ def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
     
     final_list: List[Tuple[AlphaProgram, float]] = []
     if _keep_dupes_in_hof_config:
-        for _, _, ic, prog, _ in _hof_programs_data:
-            final_list.append((prog, ic))
+        for _, metrics, prog in _hof_programs_data:
+            final_list.append((prog, metrics.mean_ic))
             if len(final_list) >= _hof_max_size:
                 break
     else:
         # _hof_programs_data is already sorted by fitness and should contain unique FPs if not _keep_dupes
         # (or best version of duplicate FPs)
         unique_output_progs: Dict[str, Tuple[AlphaProgram, float]] = {}
-        for fp, _, ic, prog, _ in _hof_programs_data:
-            if fp not in unique_output_progs: # Add first encountered (best fitness)
-                unique_output_progs[fp] = (prog, ic)
+        for fp, metrics, prog in _hof_programs_data:
+            if fp not in unique_output_progs:  # Add first encountered (best fitness)
+                unique_output_progs[fp] = (prog, metrics.mean_ic)
             if len(unique_output_progs) >= _hof_max_size:
                 break
         final_list = list(unique_output_progs.values())
@@ -187,23 +185,18 @@ def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
 
 _TOP_TO_SHOW_PRINT = 10 # From original _update_and_print_hof
 
-def print_generation_summary(generation: int, population: List[AlphaProgram], eval_results_sorted: list): # eval_results_sorted: (idx_in_pop, score, ic, processed_preds_matrix)
+def print_generation_summary(generation: int, population: List[AlphaProgram], eval_results_sorted: list): # eval_results_sorted contains (idx_in_pop, EvalResult)
     """Prints the HOF summary like _update_and_print_hof."""
     # This function will use the current state of _hof_programs_data
     
     # First, ensure _hof_programs_data is up-to-date with the current generation's best if they qualify
     # This logic was part of the original _update_and_print_hof
     # For each of the top N (e.g., _TOP_TO_SHOW_PRINT) from eval_results_sorted of current gen:
-    temp_hof_candidates = []
-    for pop_idx, fit, ic, preds_matrix_or_none in eval_results_sorted[:_TOP_TO_SHOW_PRINT]:
-        if fit <= -float('inf'):
+    for pop_idx, eval_res in eval_results_sorted[:_TOP_TO_SHOW_PRINT]:
+        if eval_res.fitness <= -float("inf"):
             continue  # Skip invalid programs
         prog = population[pop_idx]
         fp = prog.fingerprint
-        # Add to a temporary list for consideration against the static HOF
-        # The actual add_program_to_hof would have been called for the single best or all
-        # This print function is more about "displaying" the current top from _hof_programs_data
-        temp_hof_candidates.append((fp, fit, ic, prog, preds_matrix_or_none if preds_matrix_or_none is not None else np.array([])))
 
     # Merge current generation's best with existing static HOF for display purposes
     # This is tricky because add_program_to_hof already updates the static HOF.
@@ -215,12 +208,9 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     print("─" * len(hdr))
     
     # Print from the managed _hof_programs_data
-    for rk, (fp, fit, ic, prog, _) in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
+    for rk, (fp, metrics, prog) in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
         head = textwrap.shorten(prog.to_string(max_len=300), width=90, placeholder="…")
-        print(f" {rk:>4} | {fit:+7.4f} | {ic:+5.3f} | {prog.size:3d} | {fp[:8]} | {head}")
-    print()
-
-
+        print(f" {rk:>4} | {metrics.fitness:+7.4f} | {metrics.mean_ic:+5.3f} | {prog.size:3d} | {fp[:8]} | {head}")
 def clear_hof():
     """Clears all HOF state."""
     global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
