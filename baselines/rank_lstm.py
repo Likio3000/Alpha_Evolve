@@ -37,6 +37,46 @@ def _load_all_csv(data_dir: str) -> List[pd.DataFrame]:
     return [pd.read_csv(fp) for fp in glob.glob(os.path.join(data_dir, "*.csv"))]
 
 
+def backtest_rank_lstm(
+    data_dir: str,
+    seq_len: int = 1,
+    lmbd: float = 0.1,
+    eval_lag: int = 1,
+    strategy: str = "common_1200",
+    seed: int = 0,
+) -> Dict[str, float]:
+    """Train on a data split and compute out-of-sample Sharpe."""
+
+    from evolution_components import data_handling as dh
+
+    dh.initialize_data(data_dir, strategy, 3, eval_lag)
+    train_split, _, test_split = dh.get_data_splits(1, 1, 1)
+
+    def _stack(split: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        return pd.concat([df for df in split.values()]).sort_index().reset_index(drop=True)
+
+    np.random.seed(seed)
+
+    train_df = _stack(train_split)
+    X_train, y_train = _prepare_sequences(train_df, seq_len)
+    if len(y_train) == 0:
+        return {"IC": 0.0, "Sharpe": 0.0}
+
+    w = _train_linear(X_train, y_train, lmbd)
+
+    test_df = _stack(test_split)
+    X_test, y_test = _prepare_sequences(test_df, seq_len)
+    if len(y_test) == 0:
+        return {"IC": 0.0, "Sharpe": 0.0}
+
+    preds = _predict_linear(w, X_test)
+    ic = _ic(preds, y_test)
+    returns = np.sign(preds) * y_test
+    sharpe = returns.mean() / (returns.std(ddof=0) + 1e-9)
+
+    return {"IC": float(ic), "Sharpe": float(sharpe)}
+
+
 def train_rank_lstm(
     data_dir: str,
     seq_lens=(4, 8),
@@ -68,5 +108,7 @@ def train_rank_lstm(
             if ic > best_ic:
                 best_ic = ic
                 best_metrics = {"IC": ic, "Sharpe": ic * 10}
-    return best_metrics
+
+    bt_metrics = backtest_rank_lstm(data_dir, seq_len=seq_lens[0], lmbd=lambdas[0])
+    return {"IC": best_ic, "Sharpe": bt_metrics["Sharpe"]}
 
