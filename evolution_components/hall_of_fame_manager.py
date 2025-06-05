@@ -13,7 +13,8 @@ _hof_fingerprints_set: Set[str] = set() # For quick check of existence
 _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFIG
 
 # For correlation penalty
-_hof_processed_prediction_timeseries_for_corr: List[np.ndarray] = []
+# Store rank-transformed prediction vectors for correlation checks
+_hof_rank_pred_matrix: List[np.ndarray] = []
 _hof_corr_fingerprints: List[str] = []  # keep order to manage eviction
 # Default correlation penalty configuration mirrors Section 9
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
@@ -21,14 +22,14 @@ _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 
 def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, corr_cutoff: float):
     global _hof_programs_data, _hof_max_size, _hof_fingerprints_set, _keep_dupes_in_hof_config
-    global _hof_processed_prediction_timeseries_for_corr, _corr_penalty_config, _hof_corr_fingerprints
+    global _hof_rank_pred_matrix, _corr_penalty_config, _hof_corr_fingerprints
     
     _hof_programs_data = []
     _hof_max_size = max_size
     _hof_fingerprints_set = set()
     _keep_dupes_in_hof_config = keep_dupes # Though original was hardcoded False
     
-    _hof_processed_prediction_timeseries_for_corr = []
+    _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
     print(f"Hall of Fame initialized: max_size={max_size}, keep_dupes={keep_dupes}, corr_penalty_w={corr_penalty_weight}, corr_cutoff={corr_cutoff}")
@@ -47,25 +48,31 @@ def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Copied from evolve_alp
         return 0.0
     return float(corr_matrix[0, 1])
 
+def _rank_vector(vec: np.ndarray) -> np.ndarray:
+    """Return zero-mean ranks for ``vec`` used in Spearman correlation."""
+    order = np.argsort(vec)
+    ranks = np.empty_like(order, dtype=float)
+    ranks[order] = np.arange(len(vec), dtype=float)
+    ranks -= ranks.mean()
+    return ranks
+
+
 def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray) -> float:
-    penalty = 0.0
-    if not _hof_processed_prediction_timeseries_for_corr or current_prog_flat_processed_ts.std(ddof=0) < 1e-9:
-        return penalty
+    if not _hof_rank_pred_matrix or current_prog_flat_processed_ts.std(ddof=0) < 1e-9:
+        return 0.0
 
-    high_corrs = []
-    for hof_flat_processed_ts in _hof_processed_prediction_timeseries_for_corr:
-        if len(current_prog_flat_processed_ts) != len(hof_flat_processed_ts):
+    cand_rank = _rank_vector(current_prog_flat_processed_ts)
+    corrs: List[float] = []
+    for hof_rank in _hof_rank_pred_matrix:
+        if len(hof_rank) != len(cand_rank):
             continue
-        if hof_flat_processed_ts.std(ddof=0) < 1e-9:
-            continue
+        corr = abs(_safe_corr(cand_rank, hof_rank))
+        if not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
+            corrs.append(corr)
 
-        corr_with_hof = abs(_safe_corr(current_prog_flat_processed_ts, hof_flat_processed_ts))
-        if not np.isnan(corr_with_hof) and corr_with_hof > _corr_penalty_config["cutoff"]:
-            high_corrs.append(corr_with_hof)
-    
-    if high_corrs:
-        penalty = _corr_penalty_config["weight"] * float(np.mean(high_corrs))
-    return penalty
+    if not corrs:
+        return 0.0
+    return _corr_penalty_config["weight"] * float(np.mean(corrs))
 
 def add_program_to_hof(
     program: AlphaProgram, 
@@ -80,7 +87,7 @@ def add_program_to_hof(
     penalties.  Duplicate fingerprints are ignored in the correlation list and
     the size of both structures is capped at ``_hof_max_size``.
     """
-    global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
+    global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
 
     fp = program.fingerprint
 
@@ -89,16 +96,14 @@ def add_program_to_hof(
     # fingerprint (possible updates of an existing program).
     if (
         processed_preds_matrix is not None
-        and _hof_processed_prediction_timeseries_for_corr
+        and _hof_rank_pred_matrix
         and processed_preds_matrix.size > 0
     ):
-        candidate_ts = processed_preds_matrix.ravel()
-        for hof_ts, hof_fp in zip(
-            _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
-        ):
-            if hof_fp == fp or len(hof_ts) != len(candidate_ts):
+        cand_rank = _rank_vector(processed_preds_matrix.ravel())
+        for hof_rank, hof_fp in zip(_hof_rank_pred_matrix, _hof_corr_fingerprints):
+            if hof_fp == fp or len(hof_rank) != len(cand_rank):
                 continue
-            corr = abs(_safe_corr(candidate_ts, hof_ts))
+            corr = abs(_safe_corr(cand_rank, hof_rank))
             if not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
                 return  # Too correlated – do not add to the HOF
     
@@ -134,24 +139,24 @@ def add_program_to_hof(
     # Logic for maintaining the list used for correlation penalty.
     if processed_preds_matrix is not None and fitness > -float("inf"):
         if fp not in _hof_corr_fingerprints:
-            _hof_processed_prediction_timeseries_for_corr.append(processed_preds_matrix.ravel())
+            _hof_rank_pred_matrix.append(_rank_vector(processed_preds_matrix.ravel()))
             _hof_corr_fingerprints.append(fp)
-            if len(_hof_processed_prediction_timeseries_for_corr) > _hof_max_size:
-                _hof_processed_prediction_timeseries_for_corr.pop(0)
+            if len(_hof_rank_pred_matrix) > _hof_max_size:
+                _hof_rank_pred_matrix.pop(0)
                 _hof_corr_fingerprints.pop(0)
 
 
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
     """Add a program's predictions to the correlation HOF, ensuring uniqueness."""
-    global _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
+    global _hof_rank_pred_matrix, _hof_corr_fingerprints
 
     if program_fp in _hof_corr_fingerprints:
         return
 
-    _hof_processed_prediction_timeseries_for_corr.append(processed_preds_matrix.ravel())
+    _hof_rank_pred_matrix.append(_rank_vector(processed_preds_matrix.ravel()))
     _hof_corr_fingerprints.append(program_fp)
-    if len(_hof_processed_prediction_timeseries_for_corr) > _hof_max_size:
-        _hof_processed_prediction_timeseries_for_corr.pop(0)
+    if len(_hof_rank_pred_matrix) > _hof_max_size:
+        _hof_rank_pred_matrix.pop(0)
         _hof_corr_fingerprints.pop(0)
 
 
@@ -218,9 +223,9 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
 
 def clear_hof():
     """Clears all HOF state."""
-    global _hof_programs_data, _hof_fingerprints_set, _hof_processed_prediction_timeseries_for_corr, _hof_corr_fingerprints
+    global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
     _hof_programs_data = []
     _hof_fingerprints_set = set()
-    _hof_processed_prediction_timeseries_for_corr = []
+    _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     print("Hall of Fame cleared.")

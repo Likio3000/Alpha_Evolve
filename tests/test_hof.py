@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 from evolution_components import hall_of_fame_manager as hof
@@ -22,6 +23,17 @@ def test_high_corr_program_rejected_from_hof():
     hof.add_program_to_hof(prog_b, fitness=0.9, mean_ic=0.0, processed_preds_matrix=preds_b)
 
     assert len(hof._hof_programs_data) == 1
-    assert len(hof._hof_processed_prediction_timeseries_for_corr) == 1
+    assert len(hof._hof_rank_pred_matrix) == 1
 
+    hof.clear_hof()
+
+
+def test_rank_matrix_updates_and_penalty():
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0)
+    prog = make_prog("c")
+    preds = np.array([[1.0, 2.0], [2.0, 3.0]])
+    hof.update_correlation_hof(prog.fingerprint, preds)
+    assert len(hof._hof_rank_pred_matrix) == 1
+    penalty = hof.get_correlation_penalty_with_hof(preds.ravel())
+    assert penalty == pytest.approx(0.5)
     hof.clear_hof()
