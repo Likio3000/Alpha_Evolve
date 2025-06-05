@@ -130,6 +130,13 @@ def _train_baselines(data_dir: str, out_dir: Path) -> None:
         "ga_tree": train_ga_tree(data_dir),
         "rank_lstm": train_rank_lstm(data_dir),
     }
+    name_map = {
+        "ga_tree": "GA tree",
+        "rank_lstm": "RankLSTM",
+    }
+    for name, m in metrics.items():
+        nm = name_map.get(name, name)
+        print(f"{nm} IC: {m['IC']:.4f} Sharpe: {m['Sharpe']:.4f}")
     out_file = out_dir / "baseline_metrics.json"
     with open(out_file, "w") as fh:
         json.dump(metrics, fh, indent=2)

@@ -27,3 +27,12 @@ def test_parse_args_run_baselines(monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     _, _, _, run_baselines = parse_args()
     assert run_baselines is True
+
+
+def test_train_baselines_prints(tmp_path, capsys):
+    from run_pipeline import _train_baselines
+
+    _train_baselines("tests/data/good", tmp_path)
+    captured = capsys.readouterr().out
+    assert "GA tree" in captured
+    assert "RankLSTM" in captured
