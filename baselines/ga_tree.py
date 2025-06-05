@@ -1,0 +1,92 @@
+import numpy as np
+import pandas as pd
+from typing import Dict
+
+
+_OPERATORS = [
+    np.add,
+    np.subtract,
+    np.multiply,
+]
+
+
+class _Node:
+    def __init__(self, op, left=None, right=None, feature=None):
+        self.op = op
+        self.left = left
+        self.right = right
+        self.feature = feature
+
+    def eval(self, data_row: Dict[str, float]) -> float:
+        if self.feature is not None:
+            return float(data_row[self.feature])
+        left_val = self.left.eval(data_row)
+        right_val = self.right.eval(data_row)
+        return float(self.op(left_val, right_val))
+
+
+def _random_tree(features, depth=2):
+    if depth == 0 or (np.random.rand() < 0.3):
+        feat = np.random.choice(features)
+        return _Node(None, feature=feat)
+    op = np.random.choice(_OPERATORS)
+    return _Node(op, _random_tree(features, depth - 1), _random_tree(features, depth - 1))
+
+
+def _mutate(tree, features, prob=0.1):
+    if np.random.rand() < prob:
+        return _random_tree(features)
+    if tree.left:
+        tree.left = _mutate(tree.left, features, prob)
+    if tree.right:
+        tree.right = _mutate(tree.right, features, prob)
+    return tree
+
+
+def _crossover(a, b, prob=0.5):
+    if np.random.rand() < prob:
+        return b
+    if a.left and b.left:
+        a.left = _crossover(a.left, b.left, prob)
+    if a.right and b.right:
+        a.right = _crossover(a.right, b.right, prob)
+    return a
+
+
+def _tree_predict(tree: _Node, df: pd.DataFrame) -> np.ndarray:
+    preds = []
+    for _, row in df.iterrows():
+        preds.append(tree.eval(row))
+    return np.array(preds)
+
+
+def _ic(preds: np.ndarray, rets: np.ndarray) -> float:
+    if preds.std(ddof=0) < 1e-9 or rets.std(ddof=0) < 1e-9:
+        return 0.0
+    return float(np.corrcoef(preds, rets)[0, 1])
+
+
+def train_ga_tree(data_dir: str) -> Dict[str, float]:
+    df = pd.read_csv(f"{data_dir}/AAA.csv")
+    rets = df['close'].pct_change().shift(-1).fillna(0.0).values
+    features = ['open', 'high', 'low', 'close']
+
+    population = [_random_tree(features, depth=3) for _ in range(5)]
+    best_ic = -np.inf
+    best_tree = population[0]
+    for _ in range(3):
+        preds = [_tree_predict(t, df) for t in population]
+        ics = [_ic(p, rets) for p in preds]
+        best_idx = int(np.argmax(ics))
+        if ics[best_idx] > best_ic:
+            best_ic = ics[best_idx]
+            best_tree = population[best_idx]
+        new_pop = [best_tree]
+        while len(new_pop) < len(population):
+            a, b = np.random.choice(population, 2, replace=False)
+            child = _crossover(a, b)
+            child = _mutate(child, features, 0.2)
+            new_pop.append(child)
+        population = new_pop
+    sharpe = best_ic * 10  # toy relation
+    return {"IC": best_ic, "Sharpe": sharpe}
