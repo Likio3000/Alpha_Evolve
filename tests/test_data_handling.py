@@ -1,6 +1,11 @@
 import pytest
 
-from evolution_components.data_handling import _load_and_align_data_internal, get_data_splits, initialize_data
+from evolution_components.data_handling import (
+    _load_and_align_data_internal,
+    get_data_splits,
+    initialize_data,
+    get_sector_groups,
+)
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
 
 DATA_DIR = "tests/data/good"
@@ -58,3 +63,13 @@ def test_get_data_splits_returns_expected_lengths():
 
     assert train["AAA"].index[-1] == val["AAA"].index[0]
     assert val["AAA"].index[-1] == test["AAA"].index[0]
+
+
+def test_get_sector_groups_example_symbols():
+    symbols = [
+        "BINANCE_BTCUSDT, 240",
+        "BINANCE_ETHUSDT, 240",
+        "BYBIT_BONKUSDT, 240",
+    ]
+    groups = get_sector_groups(symbols)
+    assert list(groups) == [0, 1, 3]
