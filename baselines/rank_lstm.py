@@ -1,6 +1,8 @@
+import glob
+import os
 import numpy as np
 import pandas as pd
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 
 def _prepare_sequences(df: pd.DataFrame, seq_len: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -31,14 +33,34 @@ def _ic(preds: np.ndarray, rets: np.ndarray) -> float:
     return float(np.corrcoef(preds, rets)[0, 1])
 
 
-def train_rank_lstm(data_dir: str, seq_lens=(4, 8), units=(32,), lambdas=(0.1,)) -> Dict[str, float]:
-    df = pd.read_csv(f"{data_dir}/AAA.csv")
+def _load_all_csv(data_dir: str) -> List[pd.DataFrame]:
+    return [pd.read_csv(fp) for fp in glob.glob(os.path.join(data_dir, "*.csv"))]
+
+
+def train_rank_lstm(
+    data_dir: str,
+    seq_lens=(4, 8),
+    units=(32,),
+    lambdas=(0.1,),
+) -> Dict[str, float]:
+    data_frames = _load_all_csv(data_dir)
     best_ic = -np.inf
     best_metrics = {"IC": 0.0, "Sharpe": 0.0}
     for sl in seq_lens:
-        X, y = _prepare_sequences(df, sl)
-        if len(y) == 0:
+        # build one big training set by concatenating sequences from every symbol
+        X_all: List[np.ndarray] = []
+        y_all: List[np.ndarray] = []
+        for df in data_frames:
+            X_sym, y_sym = _prepare_sequences(df, sl)
+            if len(y_sym):
+                X_all.append(X_sym)
+                y_all.append(y_sym)
+
+        if not X_all:
             continue
+
+        X = np.vstack(X_all)
+        y = np.concatenate(y_all)
         for lam in lambdas:
             w = _train_linear(X, y, lam)
             preds = _predict_linear(w, X)
@@ -47,3 +69,4 @@ def train_rank_lstm(data_dir: str, seq_lens=(4, 8), units=(32,), lambdas=(0.1,))
                 best_ic = ic
                 best_metrics = {"IC": ic, "Sharpe": ic * 10}
     return best_metrics
+

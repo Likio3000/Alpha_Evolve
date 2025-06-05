@@ -1,6 +1,8 @@
+import glob
+import os
 import numpy as np
 import pandas as pd
-from typing import Dict
+from typing import Dict, List
 
 
 _OPERATORS = [
@@ -66,10 +68,22 @@ def _ic(preds: np.ndarray, rets: np.ndarray) -> float:
     return float(np.corrcoef(preds, rets)[0, 1])
 
 
+def _load_all_csv(data_dir: str) -> pd.DataFrame:
+    """Stack all <symbol>.csv files in *data_dir* into one long frame."""
+    frames: List[pd.DataFrame] = []
+    for fp in glob.glob(os.path.join(data_dir, "*.csv")):
+        f = pd.read_csv(fp)
+        f["__sym__"] = os.path.splitext(os.path.basename(fp))[0]
+        frames.append(f)
+    if not frames:
+        raise FileNotFoundError(f"No *.csv files in {data_dir}")
+    return pd.concat(frames, ignore_index=True)
+
+
 def train_ga_tree(data_dir: str) -> Dict[str, float]:
-    df = pd.read_csv(f"{data_dir}/AAA.csv")
-    rets = df['close'].pct_change().shift(-1).fillna(0.0).values
-    features = ['open', 'high', 'low', 'close']
+    df = _load_all_csv(data_dir)
+    rets = df["close"].pct_change().shift(-1).fillna(0.0).values
+    features = ["open", "high", "low", "close"]  # still scalar tree-features
 
     population = [_random_tree(features, depth=3) for _ in range(5)]
     best_ic = -np.inf
