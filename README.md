@@ -50,6 +50,8 @@ Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
 
 The `--debug_prints` flag forwards verbose output to the back-tester.
 
+Back-test summaries now include an `Ops` column showing the operation count of each alpha.
+
 ## Default hyperparameters
 
 The values in `config.py` mirror the meta‑hyper‑parameters listed in
