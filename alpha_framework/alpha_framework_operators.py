@@ -254,8 +254,11 @@ def _vec_add_scalar(v, s): return v + s
 def _vec_mul_scalar(v, s): return v * s
 
 @register_op("vec_div_scalar", in_types=("vector", "scalar"), out="vector")
-@safe_op # safe_op will handle _clean_num for inputs
-def _vec_div_scalar(v, s): return v / (s if np.abs(s) > 1e-9 else np.copysign(1e-9, s))
+@safe_op  # safe_op will handle _clean_num for inputs
+def _vec_div_scalar(v, s):
+    """Divide vector ``v`` by scalar ``s`` while avoiding zero denominators."""
+    denom = np.sign(s) * max(abs(s), 1e-3)
+    return v / denom
 
 
 # Matrix ops

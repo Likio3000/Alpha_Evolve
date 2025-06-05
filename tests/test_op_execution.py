@@ -4,6 +4,22 @@ import pytest
 from alpha_framework import Op
 
 
+def test_vec_div_scalar_small_denominator():
+    v = np.array([1.0, -2.0, 3.0])
+    buf = {"v": v, "s": 1e-12}
+    Op("out", "vec_div_scalar", ("v", "s")).execute(buf, n_stocks=3)
+    expected = v / 1e-3
+    assert np.allclose(buf["out"], expected)
+
+
+def test_vec_div_scalar_small_negative_denominator():
+    v = np.array([1.0, -2.0, 3.0])
+    buf = {"v": v, "s": -1e-12}
+    Op("out", "vec_div_scalar", ("v", "s")).execute(buf, n_stocks=3)
+    expected = v / -1e-3
+    assert np.allclose(buf["out"], expected)
+
+
 def test_scalar_to_vector_broadcast():
     buf = {"vec": 2.0, "s": 3.0}
     op = Op("out", "vec_mul_scalar", ("vec", "s"))
