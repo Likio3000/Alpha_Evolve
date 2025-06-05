@@ -85,7 +85,6 @@ def train_rank_lstm(
 ) -> Dict[str, float]:
     data_frames = _load_all_csv(data_dir)
     best_ic = -np.inf
-    best_metrics = {"IC": 0.0, "Sharpe": 0.0}
     for sl in seq_lens:
         # build one big training set by concatenating sequences from every symbol
         X_all: List[np.ndarray] = []
@@ -107,7 +106,6 @@ def train_rank_lstm(
             ic = _ic(preds, y)
             if ic > best_ic:
                 best_ic = ic
-                best_metrics = {"IC": ic, "Sharpe": ic * 10}
 
     bt_metrics = backtest_rank_lstm(data_dir, seq_len=seq_lens[0], lmbd=lambdas[0])
     return {"IC": best_ic, "Sharpe": bt_metrics["Sharpe"]}

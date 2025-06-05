@@ -1,6 +1,6 @@
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, List, Tuple, Dict, Optional, Set # Added Set
+from typing import TYPE_CHECKING, List, Tuple, Dict, Set # Added Set
 import textwrap # For printing HoF
 
 if TYPE_CHECKING:
