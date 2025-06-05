@@ -3,6 +3,7 @@ import pytest
 
 from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 from evolution_components import hall_of_fame_manager as hof
+from evolution_components.evaluation_logic import EvalResult
 
 
 def make_prog(unique: str) -> AlphaProgram:
@@ -15,12 +16,12 @@ def test_high_corr_program_rejected_from_hof():
 
     prog_a = make_prog("const_1")
     preds_a = np.array([[1.0, 2.0], [3.0, 4.0]])
-    hof.add_program_to_hof(prog_a, fitness=1.0, mean_ic=0.0, processed_preds_matrix=preds_a)
+    hof.add_program_to_hof(prog_a, EvalResult(1.0, 0.0, 0.0, 0.0, preds_a))
     assert len(hof._hof_programs_data) == 1
 
     prog_b = make_prog("const_neg_1")
     preds_b = preds_a * 2.0  # perfectly correlated with preds_a
-    hof.add_program_to_hof(prog_b, fitness=0.9, mean_ic=0.0, processed_preds_matrix=preds_b)
+    hof.add_program_to_hof(prog_b, EvalResult(0.9, 0.0, 0.0, 0.0, preds_b))
 
     assert len(hof._hof_programs_data) == 1
     assert len(hof._hof_rank_pred_matrix) == 1

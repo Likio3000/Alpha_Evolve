@@ -98,12 +98,12 @@ def test_evaluate_program_basic(monkeypatch):
 
     hof = DummyHOF()
 
-    score, mean_ic, preds = evaluate_program(prog, dh, hof, {})
+    res = evaluate_program(prog, dh, hof, {})
 
-    assert preds.shape == (2, 2)
+    assert res.processed_predictions.shape == (2, 2)
     expected_score = 1.0 - 0.002 * prog.size / 32
-    assert score == pytest.approx(expected_score)
-    assert mean_ic == pytest.approx(1.0)
+    assert res.fitness == pytest.approx(expected_score)
+    assert res.mean_ic == pytest.approx(1.0)
 
 
 class CountingDH:
@@ -268,9 +268,9 @@ def test_early_abort_triggered():
         scale_method="zscore",
     )
     initialize_evaluation_cache(max_size=2)
-    score, mean_ic, preds = evaluate_program(prog, dh, hof, {})
-    assert score == -float("inf")
-    assert preds is None
+    res = evaluate_program(prog, dh, hof, {})
+    assert res.fitness == -float("inf")
+    assert res.processed_predictions is None
 
 
 def test_flatness_guard_cross_sectional():
@@ -288,9 +288,9 @@ def test_flatness_guard_cross_sectional():
         scale_method="zscore",
     )
     initialize_evaluation_cache(max_size=2)
-    score, _, preds = evaluate_program(prog, dh, hof, {})
-    assert preds.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
-    assert score == -float("inf")
+    res = evaluate_program(prog, dh, hof, {})
+    assert res.processed_predictions.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
+    assert res.fitness == -float("inf")
 
 
 def test_flatness_guard_temporal():
@@ -308,9 +308,9 @@ def test_flatness_guard_temporal():
         scale_method="zscore",
     )
     initialize_evaluation_cache(max_size=2)
-    score, _, preds = evaluate_program(prog, dh, hof, {})
-    assert preds.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
-    assert score == -float("inf")
+    res = evaluate_program(prog, dh, hof, {})
+    assert res.processed_predictions.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
+    assert res.fitness == -float("inf")
 
 
 def test_correlation_penalty_applied():
@@ -319,11 +319,11 @@ def test_correlation_penalty_applied():
     hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0)
     initialize_evaluation_cache(max_size=2)
 
-    _, _, preds = evaluate_program(prog, dh, hof, {})
-    hof.update_correlation_hof(prog.fingerprint, preds)
+    res1 = evaluate_program(prog, dh, hof, {})
+    hof.update_correlation_hof(prog.fingerprint, res1.processed_predictions)
 
     initialize_evaluation_cache(max_size=2)
-    score, _, _ = evaluate_program(prog, dh, hof, {})
+    res2 = evaluate_program(prog, dh, hof, {})
     base_score = 1.0 - 0.002 * prog.size / 32
-    assert score == pytest.approx(base_score - 0.5)
+    assert res2.fitness == pytest.approx(base_score - 0.5)
 

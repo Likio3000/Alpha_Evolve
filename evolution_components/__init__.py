@@ -7,7 +7,7 @@ from .data_handling import (
     get_data_splits,
     get_sector_groups,
 )
-from .evaluation_logic import evaluate_program, initialize_evaluation_cache
+from .evaluation_logic import evaluate_program, initialize_evaluation_cache, EvalResult
 from .hall_of_fame_manager import (
     initialize_hof,
     add_program_to_hof,
@@ -27,6 +27,7 @@ __all__ = [
     "get_data_splits",
     "get_sector_groups",
     "evaluate_program",
+    "EvalResult",
     "initialize_evaluation_cache",
     "initialize_hof",
     "add_program_to_hof",

@@ -91,15 +91,15 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature c
         max_update_ops=cfg.max_update_ops,
     )
 
-def _eval_worker(args) -> Tuple[int, float, float, Optional[np.ndarray]]:
+def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
     idx, prog = args
-    score, mean_ic, processed_preds = evaluate_program(
+    result = evaluate_program(
         prog,
         dh_module,
         hof_module,
         INITIAL_STATE_VARS
     )
-    return idx, score, mean_ic, processed_preds
+    return idx, result
 
 ###############################################################################
 # EVOLVE LOOP ##############################################################
@@ -114,15 +114,15 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
     try:
         for gen in range(cfg.generations):
             t_start_gen = time.perf_counter()
-            eval_results: List[Tuple[int, float, float, Optional[np.ndarray]]] = []
+            eval_results: List[Tuple[int, el_module.EvalResult]] = []
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
 
             with Pool(processes=cfg.workers or cpu_count()) as pool:
                 results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
                 bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
-                for i, score, mean_ic, processed_preds_matrix in bar:
-                    eval_results.append((i, score, mean_ic, processed_preds_matrix))
-                    pop_fitness_scores[i] = score
+                for i, result in bar:
+                    eval_results.append((i, result))
+                    pop_fitness_scores[i] = result.fitness
                     if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
                         valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
                         best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
@@ -132,20 +132,23 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             if gen_eval_time > 0:
                 gen_eval_times_history.append(gen_eval_time)
 
-            eval_results.sort(key=lambda x: x[1], reverse=True)
+            eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
 
-            if eval_results and eval_results[0][1] > -np.inf:
-                best_prog_idx_this_gen, best_fit_this_gen, best_ic_this_gen, best_preds_matrix_this_gen = eval_results[0]
+            if eval_results and eval_results[0][1].fitness > -np.inf:
+                best_prog_idx_this_gen, best_metrics_this_gen = eval_results[0]
+                best_fit_this_gen = best_metrics_this_gen.fitness
+                best_ic_this_gen = best_metrics_this_gen.mean_ic
+                best_preds_matrix_this_gen = best_metrics_this_gen.processed_predictions
                 best_program_instance_this_gen = pop[best_prog_idx_this_gen]
-                
-                add_program_to_hof(best_program_instance_this_gen, best_fit_this_gen, best_ic_this_gen, best_preds_matrix_this_gen)
+
+                add_program_to_hof(best_program_instance_this_gen, best_metrics_this_gen)
 
                 if best_preds_matrix_this_gen is not None:
                     update_correlation_hof(best_program_instance_this_gen.fingerprint, best_preds_matrix_this_gen)
 
             print_generation_summary(gen, pop, eval_results)
 
-            if not eval_results or eval_results[0][1] <= -float('inf'):
+            if not eval_results or eval_results[0][1].fitness <= -float('inf'):
                 print(f"Gen {gen+1:3d} | No valid programs. Restarting population and HOF.")
                 pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
                 initialize_evaluation_cache(cfg.eval_cache_size)
@@ -161,7 +164,9 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                     eta_seconds = remaining_gens * avg_gen_time
                     eta_str = f" | ETA {time.strftime('%Hh%Mm%Ss', time.gmtime(eta_seconds))}"
             
-            best_prog_idx, best_fit, best_ic, _ = eval_results[0]
+            best_prog_idx, best_metrics = eval_results[0]
+            best_fit = best_metrics.fitness
+            best_ic = best_metrics.mean_ic
             best_program_obj = pop[best_prog_idx]
             print(
                 f"Gen {gen+1:3d} BestThisGenFit {best_fit:+.4f} MeanIC {best_ic:+.4f} Ops {best_program_obj.size:2d} EvalTime {gen_eval_time:.1f}s{eta_str}\n"
@@ -171,8 +176,8 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             new_pop: List[AlphaProgram] = []
             
             elites_added_fingerprints = set()
-            for res_idx, res_score, _, _ in eval_results:
-                if res_score <= -float('inf'):
+            for res_idx, res_metrics in eval_results:
+                if res_metrics.fitness <= -float('inf'):
                     continue
                 prog_candidate = pop[res_idx]
                 fp_cand = prog_candidate.fingerprint
@@ -182,7 +187,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 if len(new_pop) >= cfg.elite_keep:
                     break
             
-            if not new_pop and eval_results and eval_results[0][1] > -float('inf'):
+            if not new_pop and eval_results and eval_results[0][1].fitness > -float('inf'):
                  new_pop.append(pop[eval_results[0][0]].copy())
 
             while len(new_pop) < cfg.pop_size:
