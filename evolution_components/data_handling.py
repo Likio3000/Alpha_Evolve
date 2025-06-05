@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
+import numpy as np
 import pandas as pd
 
 # Module-level state for loaded data
@@ -149,6 +150,50 @@ def get_n_stocks() -> int:
 def get_eval_lag() -> int:
     # _EVAL_LAG_CACHE is set during initialize_data
     return _EVAL_LAG_CACHE
+
+
+_DEFAULT_SECTOR_MAPPING = {
+    "BTC": 0,  # Core
+    "ETH": 1, "SOL": 1,  # Ecosystem
+    "ADA": 2, "AVA": 2, "SUI": 2, "APT": 2, "INJ": 2,
+    "RNDR": 2, "ARB": 2, "LINK": 2,  # Altcoins
+    "BONK": 3, "DOGE": 3, "PEPE": 3,  # Memes
+}
+
+
+def _extract_token(sym: str) -> str:
+    token = sym.split("_", 1)[-1]
+    token = token.split(",", 1)[0]
+    token = token.upper()
+    for suf in ("USDT", "USDC", "USD"):
+        if token.endswith(suf):
+            token = token[: -len(suf)]
+            break
+    return token
+
+
+def get_sector_groups(symbols: Optional[List[str]] = None,
+                      mapping: Dict[str, int] | None = None) -> np.ndarray:
+    """Return sector IDs for provided symbols.
+
+    If ``symbols`` is ``None`` the currently loaded stock symbols are used.
+    ``mapping`` allows overriding the default token → sector mapping.
+    """
+
+    if symbols is None:
+        if _STOCK_SYMBOLS is None:
+            raise RuntimeError("Data not initialized. Call initialize_data() first.")
+        symbols = _STOCK_SYMBOLS
+
+    sector_map = _DEFAULT_SECTOR_MAPPING if mapping is None else mapping
+
+    groups: List[int] = []
+    for s in symbols:
+        token = _extract_token(s)
+        sector = sector_map.get(token, -1)
+        groups.append(sector)
+
+    return np.array(groups, dtype=int)
 
 
 def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tuple[

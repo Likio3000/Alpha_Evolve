@@ -5,6 +5,7 @@ from .data_handling import (
     get_stock_symbols,
     get_n_stocks,
     get_data_splits,
+    get_sector_groups,
 )
 from .evaluation_logic import evaluate_program, initialize_evaluation_cache
 from .hall_of_fame_manager import (
@@ -24,6 +25,7 @@ __all__ = [
     "get_stock_symbols",
     "get_n_stocks",
     "get_data_splits",
+    "get_sector_groups",
     "evaluate_program",
     "initialize_evaluation_cache",
     "initialize_hof",
