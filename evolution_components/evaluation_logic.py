@@ -198,14 +198,20 @@ def evaluate_program(
 ) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
+    logger = logging.getLogger(__name__)
+
     fp = prog.fingerprint
     if fp in _eval_cache:
         _eval_cache.move_to_end(fp)
-        return _eval_cache[fp]
+        cached = _eval_cache[fp]
+        logger.debug("Cache hit for %s with fitness %.6f", fp, cached.fitness)
+        return cached
 
     if not _uses_feature_vector_check(prog):
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
-        return _eval_cache[fp]
+        logger.debug("Program %s does not use any feature vector", fp)
+        result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, None)
+        _cache_set(fp, result)
+        return result
 
     # Get data from data_handling module
     aligned_dfs = dh_module.get_aligned_dfs()
@@ -297,10 +303,27 @@ def evaluate_program(
                      mean_t_std_partial = partial_raw_preds_matrix.std(ddof=0)
 
 
-                if mean_xs_std_partial < _EVAL_CONFIG["early_abort_xs_threshold"] or \
-                   mean_t_std_partial < _EVAL_CONFIG["early_abort_t_threshold"]:
-                    _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
-                    return _eval_cache[fp]
+                early_abort = False
+                if mean_xs_std_partial < _EVAL_CONFIG["early_abort_xs_threshold"]:
+                    logger.debug(
+                        "Early abort for %s due to XS flatness %.6f < %.6f",
+                        fp,
+                        mean_xs_std_partial,
+                        _EVAL_CONFIG["early_abort_xs_threshold"],
+                    )
+                    early_abort = True
+                if mean_t_std_partial < _EVAL_CONFIG["early_abort_t_threshold"]:
+                    logger.debug(
+                        "Early abort for %s due to temporal flatness %.6f < %.6f",
+                        fp,
+                        mean_t_std_partial,
+                        _EVAL_CONFIG["early_abort_t_threshold"],
+                    )
+                    early_abort = True
+                if early_abort:
+                    result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, None)
+                    _cache_set(fp, result)
+                    return result
 
             # IC calculation
             return_timestamp_for_ic = common_time_index[t_idx + eval_lag]
@@ -332,23 +355,59 @@ def evaluate_program(
     # Flatness guards (on raw predictions)
     if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[1] > 0: # XS check
         cross_sectional_stds = full_raw_predictions_matrix.std(axis=1, ddof=0)
-        if np.mean(cross_sectional_stds) < _EVAL_CONFIG["xs_flatness_guard_threshold"]:
+        mean_xs_std = np.mean(cross_sectional_stds)
+        if mean_xs_std < _EVAL_CONFIG["xs_flatness_guard_threshold"]:
+            logger.debug(
+                "Cross-sectional flatness guard triggered for %s: %.6f < %.6f",
+                fp,
+                mean_xs_std,
+                _EVAL_CONFIG["xs_flatness_guard_threshold"],
+            )
             score = -float('inf')
-    
+
     if score > -float('inf'): # Temporal check only if not already penalized to -inf
         if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[0] > 1:
             time_std_per_stock = full_raw_predictions_matrix.std(axis=0, ddof=0)
-            if np.mean(time_std_per_stock) < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
+            mean_t_std = np.mean(time_std_per_stock)
+            if mean_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
+                logger.debug(
+                    "Temporal flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
                 score = -float('inf')
         elif full_raw_predictions_matrix.ndim == 1 and full_raw_predictions_matrix.shape[0] > 1: # Single series case
-            if full_raw_predictions_matrix.std(ddof=0) < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
+            mean_t_std = full_raw_predictions_matrix.std(ddof=0)
+            if mean_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
+                logger.debug(
+                    "Temporal flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
                 score = -float('inf')
 
 
     # HOF correlation penalty (uses processed predictions)
     if score > -float('inf') and full_processed_predictions_matrix.size > 0:
         correlation_penalty = hof_module.get_correlation_penalty_with_hof(full_processed_predictions_matrix.flatten())
+        if correlation_penalty > 0:
+            logger.debug(
+                "Correlation penalty for %s: %.6f",
+                fp,
+                correlation_penalty,
+            )
         score -= correlation_penalty
     result = EvalResult(score, mean_daily_ic, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix)
+    logger.debug(
+        "Eval summary %s | fitness %.6f mean_ic %.6f parsimony %.6f correlation %.6f ops %d",
+        fp,
+        result.fitness,
+        result.mean_ic,
+        result.parsimony_penalty,
+        result.correlation_penalty,
+        prog.size,
+    )
     _cache_set(fp, result)
     return result
