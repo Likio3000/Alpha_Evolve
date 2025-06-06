@@ -16,6 +16,7 @@ Operation limit flags:
 
 from __future__ import annotations
 import argparse
+import logging
 import pickle
 import sys
 import time
@@ -24,6 +25,7 @@ from pathlib import Path
 from config import EvolutionConfig, BacktestConfig
 import evolve_alphas as ae
 import backtest_evolved_alphas as bt
+from utils.logging_setup import setup_logging
 
 BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 
@@ -31,7 +33,7 @@ BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 # ─────────────────────────────────────────────────────────────────────────────
 #  CLI → two dataclass configs
 # ─────────────────────────────────────────────────────────────────────────────
-def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool, bool]:
+def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
 
     # ───► evolution flags
@@ -86,6 +88,10 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool, bool]:
     p.add_argument("--debug_prints", action="store_true")
     p.add_argument("--run_baselines", action="store_true",
                    help="also train baseline models")
+    p.add_argument("--log-level", default="INFO",
+                   help="Logging level (DEBUG, INFO, WARNING, ERROR)")
+    p.add_argument("--log-file", default=None,
+                   help="File to additionally write logs to")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -95,7 +101,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool, bool]:
     bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
                                  if k in BacktestConfig.__annotations__})
 
-    return evo_cfg, bt_cfg, ns.debug_prints, ns.run_baselines
+    return evo_cfg, bt_cfg, ns
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,8 +109,8 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, bool, bool]:
 # ─────────────────────────────────────────────────────────────────────────────
 def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
     import time
-
-    print(f"\n— Evolution: {cfg.generations} generations  (seed {cfg.seed})")
+    logger = logging.getLogger(__name__)
+    logger.info(f"\n— Evolution: {cfg.generations} generations  (seed {cfg.seed})")
     hof = ae.evolve(cfg)                                   # List[(AlphaProgram, IC)]
     hof = hof[:cfg.hof_size]
 
@@ -116,7 +122,7 @@ def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
     with open(out_file, "wb") as fh:
         pickle.dump(hof, fh)
 
-    print(f"Saved {len(hof)} programmes → {out_file}")
+    logger.info(f"Saved {len(hof)} programmes → {out_file}")
     return out_file
 
 
@@ -134,20 +140,29 @@ def _train_baselines(data_dir: str, out_dir: Path) -> None:
         "ga_tree": "GA tree",
         "rank_lstm": "RankLSTM",
     }
+    logger = logging.getLogger(__name__)
     for name, m in metrics.items():
         nm = name_map.get(name, name)
-        print(f"{nm} IC: {m['IC']:.4f} Sharpe: {m['Sharpe']:.4f}")
+        logger.info(f"{nm} IC: {m['IC']:.4f} Sharpe: {m['Sharpe']:.4f}")
     out_file = out_dir / "baseline_metrics.json"
     with open(out_file, "w") as fh:
         json.dump(metrics, fh, indent=2)
-    print(f"Saved baseline metrics → {out_file}")
+    logger.info(f"Saved baseline metrics → {out_file}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  main
 # ─────────────────────────────────────────────────────────────────────────────
 def main() -> None:
-    evo_cfg, bt_cfg, debug_prints, run_baselines = parse_args()
+    evo_cfg, bt_cfg, cli = parse_args()
+
+    level = getattr(logging, str(cli.log_level).upper(), logging.INFO)
+    if getattr(cli, "debug_prints", False):
+        level = logging.DEBUG
+    elif getattr(cli, "quiet", False):
+        level = logging.WARNING
+
+    setup_logging(level=level, log_file=cli.log_file)
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
     run_dir = (BASE_OUTPUT_DIR /
@@ -173,10 +188,11 @@ def main() -> None:
         "--min_common_data_points",  str(bt_cfg.min_common_points),
         "--seed",  str(bt_cfg.seed),
     ]
-    if debug_prints:
+    if cli.debug_prints:
         bt_argv.append("--debug_prints")
 
-    print("\n— Back-testing …")
+    logger = logging.getLogger(__name__)
+    logger.info("\n— Back-testing …")
     orig_argv = sys.argv[:]
     sys.argv = bt_argv
     try:
@@ -184,10 +200,10 @@ def main() -> None:
     finally:
         sys.argv = orig_argv
 
-    if run_baselines:
+    if cli.run_baselines:
         _train_baselines(bt_cfg.data_dir, run_dir)
 
-    print(f"\n✔  Pipeline finished – artefacts in  {run_dir}")
+    logger.info(f"\n✔  Pipeline finished – artefacts in  {run_dir}")
 
 
 if __name__ == "__main__":

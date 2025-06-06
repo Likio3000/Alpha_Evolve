@@ -50,6 +50,10 @@ Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
 
 The `--debug_prints` flag forwards verbose output to the back-tester.
 
+Logging can be controlled globally via `--log-level` and `--log-file`.  The
+`--quiet` and `--debug_prints` flags lower or raise the log verbosity when
+running the pipeline.
+
 Back-test summaries now include an `Ops` column showing the operation count of each alpha.
 
 ## Default hyperparameters
