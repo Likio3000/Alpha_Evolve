@@ -4,6 +4,7 @@ import time
 from typing import Dict, List, Tuple
 from multiprocessing import Pool, cpu_count
 import numpy as np
+import logging
 
 from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES, SCALAR_FEATURE_NAMES
 from evolution_components import (
@@ -147,7 +148,10 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             print_generation_summary(gen, pop, eval_results)
 
             if not eval_results or eval_results[0][1].fitness <= -float('inf'):
-                print(f"Gen {gen+1:3d} | No valid programs. Restarting population and HOF.")
+                logging.getLogger(__name__).info(
+                    "Gen %s | No valid programs. Restarting population and HOF.",
+                    gen + 1,
+                )
                 pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
                 initialize_evaluation_cache(cfg.eval_cache_size)
                 clear_hof()
@@ -166,9 +170,15 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             best_fit = best_metrics.fitness
             best_ic = best_metrics.mean_ic
             best_program_obj = pop[best_prog_idx]
-            print(
-                f"Gen {gen+1:3d} BestThisGenFit {best_fit:+.4f} MeanIC {best_ic:+.4f} Ops {best_program_obj.size:2d} EvalTime {gen_eval_time:.1f}s{eta_str}\n"
-                f"  └─ {best_program_obj.to_string(max_len=100)}"
+            logging.getLogger(__name__).info(
+                "Gen %3d BestThisGenFit %+7.4f MeanIC %+7.4f Ops %2d EvalTime %.1fs%s\n  └─ %s",
+                gen + 1,
+                best_fit,
+                best_ic,
+                best_program_obj.size,
+                gen_eval_time,
+                eta_str,
+                best_program_obj.to_string(max_len=100),
             )
 
             new_pop: List[AlphaProgram] = []
@@ -229,7 +239,9 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             pop = new_pop
             
     except KeyboardInterrupt:
-        print("\n[Ctrl‑C] Evolution stopped early. Processing current HOF...")
+        logging.getLogger(__name__).info(
+            "[Ctrl‑C] Evolution stopped early. Processing current HOF..."
+        )
     
     final_top_programs_with_ic = get_final_hof_programs()
     return final_top_programs_with_ic

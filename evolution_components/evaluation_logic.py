@@ -3,6 +3,7 @@ import numpy as np
 from typing import TYPE_CHECKING, Dict, List, Optional, Any, Set
 from collections import OrderedDict
 from dataclasses import dataclass
+import logging
 
 if TYPE_CHECKING:
     from alpha_framework.alpha_framework_program import AlphaProgram # Changed from alpha_program_core
@@ -73,14 +74,16 @@ def configure_evaluation(
     _EVAL_CONFIG["early_abort_xs_threshold"] = early_abort_xs
     _EVAL_CONFIG["early_abort_t_threshold"] = early_abort_t
     _EVAL_CONFIG["ic_scale_method"] = scale_method
-    print(f"Evaluation logic configured: {scale_method=}, {parsimony_penalty=}, etc.")
+    logging.getLogger(__name__).debug(
+        "Evaluation logic configured: %s, %s", scale_method, parsimony_penalty
+    )
 
 
 def initialize_evaluation_cache(max_size: int = 128):
     global _eval_cache, _EVAL_CACHE_MAX_SIZE
     _EVAL_CACHE_MAX_SIZE = max_size
     _eval_cache = OrderedDict()
-    print("Evaluation cache cleared and initialized.")
+    logging.getLogger(__name__).debug("Evaluation cache cleared and initialized.")
 
 def _safe_corr_eval(a: np.ndarray, b: np.ndarray) -> float:  # Specific to evaluation logic's needs
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):

@@ -2,6 +2,7 @@ from __future__ import annotations
 import numpy as np
 from typing import TYPE_CHECKING, List, Tuple, Dict, Set # Added Set
 import textwrap # For printing HoF
+import logging
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram
@@ -33,7 +34,13 @@ def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, 
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
-    print(f"Hall of Fame initialized: max_size={max_size}, keep_dupes={keep_dupes}, corr_penalty_w={corr_penalty_weight}, corr_cutoff={corr_cutoff}")
+    logging.getLogger(__name__).info(
+        "Hall of Fame initialized: max_size=%s, keep_dupes=%s, corr_penalty_w=%s, corr_cutoff=%s",
+        max_size,
+        keep_dupes,
+        corr_penalty_weight,
+        corr_cutoff,
+    )
 
 def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Copied from evolve_alphas, will be used for HOF penalty
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
@@ -202,15 +209,24 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     # This is tricky because add_program_to_hof already updates the static HOF.
     # The printing should just reflect the current state of _hof_programs_data.
 
-    print(f"\n★ Generation {generation+1} – Top (up to) {_TOP_TO_SHOW_PRINT} overall from HOF ★")
+    logger = logging.getLogger(__name__)
+    logger.info("\n★ Generation %s – Top (up to) %s overall from HOF ★", generation+1, _TOP_TO_SHOW_PRINT)
     hdr = " Rank | Fitness |  IC  | Ops | Finger  | First 90 chars"
-    print(hdr)
-    print("─" * len(hdr))
+    logger.info(hdr)
+    logger.info("─" * len(hdr))
     
     # Print from the managed _hof_programs_data
     for rk, (fp, metrics, prog) in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
         head = textwrap.shorten(prog.to_string(max_len=300), width=90, placeholder="…")
-        print(f" {rk:>4} | {metrics.fitness:+7.4f} | {metrics.mean_ic:+5.3f} | {prog.size:3d} | {fp[:8]} | {head}")
+        logger.info(
+            " %4d | %+7.4f | %+5.3f | %3d | %s | %s",
+            rk,
+            metrics.fitness,
+            metrics.mean_ic,
+            prog.size,
+            fp[:8],
+            head,
+        )
 def clear_hof():
     """Clears all HOF state."""
     global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
@@ -218,4 +234,4 @@ def clear_hof():
     _hof_fingerprints_set = set()
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
-    print("Hall of Fame cleared.")
+    logging.getLogger(__name__).info("Hall of Fame cleared.")
