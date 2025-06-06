@@ -4,6 +4,7 @@ from alpha_framework import (
     AlphaProgram,
     Op,
     FINAL_PREDICTION_VECTOR_NAME,
+    SCALAR_FEATURE_NAMES,
 )
 from alpha_framework.program_logic_variation import (
     mutate_program_logic,
@@ -21,7 +22,9 @@ def build_prog_with_dead_ops() -> AlphaProgram:
 
 
 def make_feature_vars():
-    return {"opens_t": "vector", "const_1": "scalar", "const_neg_1": "scalar"}
+    feature_vars = {"opens_t": "vector"}
+    feature_vars.update({name: "scalar" for name in SCALAR_FEATURE_NAMES})
+    return feature_vars
 
 
 def test_prune_removes_unreachable_and_changes_fingerprint():
