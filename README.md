@@ -57,6 +57,16 @@ sh scripts/recommended_pipeline.sh
 The script expands the meta‑hyper‑parameters and adds a few useful flags like
 `--run_baselines`.
 
+For a fully specified command where every parameter is explicitly set you can
+run
+
+```bash
+sh scripts/run_pipeline_all_args.sh
+```
+
+This convenience script mirrors all defaults from `config.py` so you can easily
+edit any knob.
+
 The `--debug_prints` flag forwards verbose output to the back-tester.
 
 Logging can be controlled globally via `--log-level` and `--log-file`.  The
