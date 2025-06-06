@@ -370,3 +370,16 @@ def test_sector_vector_available():
     expected = _scale_signal_for_ic(np.array([0.0, 1.0]), "zscore")
     assert np.allclose(res.processed_predictions[0], expected)
 
+
+
+def test_feature_vector_check_failure():
+    prog = AlphaProgram(predict_ops=[
+        Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("state_vec",))
+    ])
+    dh = CountingDH()
+    hof = DummyHOF()
+    initialize_evaluation_cache(max_size=2)
+    res = evaluate_program(prog, dh, hof, {"state_vec": "vector"})
+    assert res.fitness == -float("inf")
+    assert res.processed_predictions is None
+    assert dh.calls == 0
