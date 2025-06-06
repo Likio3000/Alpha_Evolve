@@ -10,6 +10,7 @@ from alpha_framework.program_logic_generation import (
 
 def test_random_program_final_op_vector():
     feature_vars = AlphaProgram._get_default_feature_vars()
+    feature_vars.update({"const_1": "scalar", "const_neg_1": "scalar"})
     state_vars = {"dummy": "scalar"}
     rng = np.random.default_rng(0)
     for _ in range(20):
@@ -24,6 +25,7 @@ def test_random_program_final_op_vector():
 
 def test_random_program_respects_block_limits():
     feature_vars = AlphaProgram._get_default_feature_vars()
+    feature_vars.update({"const_1": "scalar", "const_neg_1": "scalar"})
     state_vars = {"dummy": "scalar"}
     rng = np.random.default_rng(1)
     prog = AlphaProgram.random_program(
