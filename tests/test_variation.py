@@ -5,6 +5,7 @@ from alpha_framework import (
     Op,
     FINAL_PREDICTION_VECTOR_NAME,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    SCALAR_FEATURE_NAMES,
 )
 from alpha_framework.program_logic_variation import (
     mutate_program_logic,
@@ -30,13 +31,14 @@ def build_prog_b() -> AlphaProgram:
 
 def make_feature_dict(n: int):
     feats = {name: np.arange(1, n + 1, dtype=float) for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
-    feats.update({"const_1": 1.0, "const_neg_1": -1.0})
+    for name in SCALAR_FEATURE_NAMES:
+        feats[name] = 1.0 if "neg" not in name else -1.0
     return feats
 
 
 def make_feature_vars():
     feature_vars = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
-    feature_vars.update({"const_1": "scalar", "const_neg_1": "scalar"})
+    feature_vars.update({name: "scalar" for name in SCALAR_FEATURE_NAMES})
     return feature_vars
 
 

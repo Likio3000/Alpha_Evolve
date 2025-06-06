@@ -1,6 +1,10 @@
 import numpy as np
 
-from alpha_framework import AlphaProgram, FINAL_PREDICTION_VECTOR_NAME
+from alpha_framework import (
+    AlphaProgram,
+    FINAL_PREDICTION_VECTOR_NAME,
+    CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+)
 from alpha_framework.program_logic_generation import (
     MAX_SETUP_OPS,
     MAX_PREDICT_OPS,
@@ -9,8 +13,8 @@ from alpha_framework.program_logic_generation import (
 
 
 def test_random_program_final_op_vector():
-    feature_vars = AlphaProgram._get_default_feature_vars()
-    state_vars = {"dummy": "scalar"}
+    feature_vars = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
+    state_vars = {}
     rng = np.random.default_rng(0)
     for _ in range(20):
         prog = AlphaProgram.random_program(feature_vars, state_vars, max_total_ops=8, rng=rng)
