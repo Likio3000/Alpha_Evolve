@@ -142,12 +142,8 @@ class AlphaProgram:
     @staticmethod
     def _get_default_feature_vars() -> Dict[str, TypeId]:
         default_vars = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
-        default_vars.update({name: "scalar" for name in SCALAR_FEATURE_NAMES})
-        # Ensure base constants are present, though SCALAR_FEATURE_NAMES should cover them
-        if "const_1" not in default_vars:
-            default_vars["const_1"] = "scalar"
-        if "const_neg_1" not in default_vars:
-            default_vars["const_neg_1"] = "scalar"
+        # Do not include constant scalar features by default.  They are still
+        # available via SCALAR_FEATURE_NAMES if callers need them explicitly.
         return default_vars
 
     def new_state(self) -> Dict[str, Union[np.ndarray, float]]:
