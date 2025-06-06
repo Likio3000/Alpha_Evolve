@@ -104,14 +104,15 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
 ###############################################################################
 
 def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature changed
-    _sync_evolution_configs_from_config(cfg) 
+    _sync_evolution_configs_from_config(cfg)
+
+    logger = logging.getLogger(__name__)
 
     pop: List[AlphaProgram] = [_random_prog(cfg) for _ in range(cfg.pop_size)]
     gen_eval_times_history: List[float] = []
 
     try:
         for gen in range(cfg.generations):
-            logger = logging.getLogger(__name__)
             logger.info(
                 "Gen %s/%s | Starting evaluation of %s programs",
                 gen + 1,
@@ -128,6 +129,14 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 for i, result in bar:
                     eval_results.append((i, result))
                     pop_fitness_scores[i] = result.fitness
+                    logger.debug(
+                        "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
+                        gen + 1,
+                        i,
+                        result.fitness,
+                        result.mean_ic,
+                        pop[i].size,
+                    )
                     if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
                         valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
                         best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
@@ -137,7 +146,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             if gen_eval_time > 0:
                 gen_eval_times_history.append(gen_eval_time)
 
-            logging.getLogger(__name__).info(
+            logger.info(
                 "Gen %s | Evaluation completed in %.1fs",
                 gen + 1,
                 gen_eval_time,
@@ -158,7 +167,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             print_generation_summary(gen, pop, eval_results)
 
             if not eval_results or eval_results[0][1].fitness <= -float('inf'):
-                logging.getLogger(__name__).info(
+                logger.info(
                     "Gen %s | No valid programs. Restarting population and HOF.",
                     gen + 1,
                 )
@@ -180,7 +189,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             best_fit = best_metrics.fitness
             best_ic = best_metrics.mean_ic
             best_program_obj = pop[best_prog_idx]
-            logging.getLogger(__name__).info(
+            logger.info(
                 "Gen %3d BestThisGenFit %+7.4f MeanIC %+7.4f Ops %2d EvalTime %.1fs%s\n  └─ %s",
                 gen + 1,
                 best_fit,
@@ -191,7 +200,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 best_program_obj.to_string(max_len=100),
             )
 
-            logging.getLogger(__name__).debug(
+            logger.debug(
                 "Gen %s | Building new population from elites and offspring",
                 gen + 1,
             )
@@ -253,14 +262,14 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 new_pop.append(child)
             pop = new_pop
 
-            logging.getLogger(__name__).debug(
+            logger.debug(
                 "Gen %s | Next generation population prepared (%s programs)",
                 gen + 1,
                 len(pop),
             )
 
     except KeyboardInterrupt:
-        logging.getLogger(__name__).info(
+        logger.info(
             "[Ctrl‑C] Evolution stopped early. Processing current HOF..."
         )
     
