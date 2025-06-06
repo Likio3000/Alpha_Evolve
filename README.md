@@ -48,6 +48,15 @@ uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --deb
 Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
 ```
 
+For a longer run using the parameters described in the paper you can simply run
+
+```bash
+sh scripts/recommended_pipeline.sh
+```
+
+The script expands the meta‑hyper‑parameters and adds a few useful flags like
+`--run_baselines`.
+
 The `--debug_prints` flag forwards verbose output to the back-tester.
 
 Logging can be controlled globally via `--log-level` and `--log-file`.  The
