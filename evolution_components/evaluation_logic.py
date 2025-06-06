@@ -214,6 +214,8 @@ def evaluate_program(
     n_stocks = dh_module.get_n_stocks()
     eval_lag = dh_module.get_eval_lag() # Get eval_lag from data_handling
 
+    sector_groups_vec = dh_module.get_sector_groups(stock_symbols).astype(float)
+
     program_state: Dict[str, Any] = prog.new_state() # AlphaProgram's own new_state
     for s_name, s_type in initial_prog_state_vars_config.items():  # Use passed config
         if s_name not in program_state:  # Allow AlphaProgram's new_state to pre-populate
@@ -245,14 +247,17 @@ def evaluate_program(
 
         features_at_t: Dict[str, Any] = {}
         for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
+            if feat_name_template == "sector_id_vector":
+                features_at_t[feat_name_template] = sector_groups_vec
+                continue
             col_name = feat_name_template.replace('_t', '')
             try:
                 feat_vec = np.array([aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols], dtype=float)
-                features_at_t[feat_name_template] = np.nan_to_num(feat_vec, nan=0.0, posinf=0.0, neginf=0.0) # Clean at source
+                features_at_t[feat_name_template] = np.nan_to_num(feat_vec, nan=0.0, posinf=0.0, neginf=0.0)  # Clean at source
             except KeyError:
                 features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
-            except Exception: # Broad exception during feature gathering
-                 features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+            except Exception:  # Broad exception during feature gathering
+                features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
 
 
         for sc_name in SCALAR_FEATURE_NAMES:
