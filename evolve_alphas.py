@@ -61,11 +61,8 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
 
 
 FEATURE_VARS: Dict[str, TypeId] = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
-FEATURE_VARS.update({name: "scalar" for name in SCALAR_FEATURE_NAMES})
-if "const_1" not in FEATURE_VARS:
-    FEATURE_VARS["const_1"] = "scalar"
-if "const_neg_1" not in FEATURE_VARS:
-    FEATURE_VARS["const_neg_1"] = "scalar"
+# Constant scalar features are deliberately excluded to align with the
+# reference paper.  They remain accessible via SCALAR_FEATURE_NAMES if needed.
 
 INITIAL_STATE_VARS: Dict[str, TypeId] = {
     "prev_s1_vec": "vector",
