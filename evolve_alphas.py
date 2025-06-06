@@ -114,6 +114,13 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
 
     try:
         for gen in range(cfg.generations):
+            logger = logging.getLogger(__name__)
+            logger.info(
+                "Gen %s/%s | Starting evaluation of %s programs",
+                gen + 1,
+                cfg.generations,
+                len(pop),
+            )
             t_start_gen = time.perf_counter()
             eval_results: List[Tuple[int, el_module.EvalResult]] = []
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
@@ -132,6 +139,12 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             gen_eval_time = time.perf_counter() - t_start_gen
             if gen_eval_time > 0:
                 gen_eval_times_history.append(gen_eval_time)
+
+            logging.getLogger(__name__).info(
+                "Gen %s | Evaluation completed in %.1fs",
+                gen + 1,
+                gen_eval_time,
+            )
 
             eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
 
@@ -179,6 +192,11 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 gen_eval_time,
                 eta_str,
                 best_program_obj.to_string(max_len=100),
+            )
+
+            logging.getLogger(__name__).debug(
+                "Gen %s | Building new population from elites and offspring",
+                gen + 1,
             )
 
             new_pop: List[AlphaProgram] = []
@@ -237,7 +255,13 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 
                 new_pop.append(child)
             pop = new_pop
-            
+
+            logging.getLogger(__name__).debug(
+                "Gen %s | Next generation population prepared (%s programs)",
+                gen + 1,
+                len(pop),
+            )
+
     except KeyboardInterrupt:
         logging.getLogger(__name__).info(
             "[Ctrl‑C] Evolution stopped early. Processing current HOF..."
