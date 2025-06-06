@@ -8,6 +8,7 @@ from evolution_components.evaluation_logic import (
     evaluate_program,
     initialize_evaluation_cache,
     configure_evaluation,
+    _scale_signal_for_ic,
 )
 from evolution_components import hall_of_fame_manager as hof
 from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
@@ -90,6 +91,9 @@ def test_evaluate_program_basic(monkeypatch):
         def get_eval_lag(self):
             return 1
 
+        def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+            return np.arange(len(self.dfs))
+
     dh = DummyDH()
 
     class DummyHOF:
@@ -136,6 +140,18 @@ class CountingDH:
 
     def get_eval_lag(self):
         return 1
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
 
 
 class DummyHOF:
@@ -203,6 +219,9 @@ class FlatDH:
     def get_eval_lag(self):
         return 1
 
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
 
 class XSCrossFlatDH:
     def __init__(self):
@@ -228,6 +247,9 @@ class XSCrossFlatDH:
     def get_eval_lag(self):
         return 1
 
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
 
 class TemporalFlatDH:
     def __init__(self):
@@ -251,6 +273,9 @@ class TemporalFlatDH:
 
     def get_eval_lag(self):
         return 1
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
 
 
 def test_early_abort_triggered():
@@ -326,4 +351,22 @@ def test_correlation_penalty_applied():
     res2 = evaluate_program(prog, dh, hof, {})
     base_score = 1.0 - 0.002 * prog.size / 32
     assert res2.fitness == pytest.approx(base_score - 0.5)
+
+
+def test_sector_vector_available():
+    class SectorDH(CountingDH):
+        def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+            return np.array([0, 1])
+
+    dh = SectorDH()
+    hof = DummyHOF()
+    prog = AlphaProgram(predict_ops=[
+        Op(FINAL_PREDICTION_VECTOR_NAME, "vec_mul_scalar", ("sector_id_vector", "const_1"))
+    ])
+
+    initialize_evaluation_cache(max_size=2)
+    res = evaluate_program(prog, dh, hof, {})
+
+    expected = _scale_signal_for_ic(np.array([0.0, 1.0]), "zscore")
+    assert np.allclose(res.processed_predictions[0], expected)
 
