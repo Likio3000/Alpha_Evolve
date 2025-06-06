@@ -95,6 +95,8 @@ def add_program_to_hof(
     """
     global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
 
+    logger = logging.getLogger(__name__)
+
     fp = program.fingerprint
 
     # Reject if the new program's predictions are highly correlated with any
@@ -112,9 +114,17 @@ def add_program_to_hof(
                 continue
             corr = abs(_safe_corr(cand_rank, hof_rank))
             if not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
+                logger.debug(
+                    "HOF-reject %s vs %s | corr=%.3f > %.3f",
+                    fp[:8],
+                    hof_fp[:8],
+                    corr,
+                    _corr_penalty_config["cutoff"],
+                )
                 return  # Too correlated – do not add to the HOF
     
     # Logic for adding to _hof_programs_data (main HOF for output)
+    inserted = False
     if not _keep_dupes_in_hof_config and fp in _hof_fingerprints_set:
         existing_idx = -1
         for i, (efp, _, _) in enumerate(_hof_programs_data):
@@ -123,12 +133,15 @@ def add_program_to_hof(
                 break
         if existing_idx != -1 and metrics.fitness > _hof_programs_data[existing_idx][1].fitness:
             _hof_programs_data[existing_idx] = (fp, metrics, program)
+            inserted = True
         elif existing_idx == -1:
             _hof_programs_data.append((fp, metrics, program))
             _hof_fingerprints_set.add(fp)
+            inserted = True
     else:
         _hof_programs_data.append((fp, metrics, program))
         _hof_fingerprints_set.add(fp)
+        inserted = True
 
 
         _hof_programs_data.sort(key=lambda x: x[1].fitness, reverse=True)  # Sort by fitness
@@ -149,6 +162,15 @@ def add_program_to_hof(
             if len(_hof_rank_pred_matrix) > _hof_max_size:
                 _hof_rank_pred_matrix.pop(0)
                 _hof_corr_fingerprints.pop(0)
+
+    if inserted:
+        logger.info(
+            "HOF + %-8s fit=%+.4f  IC=%+.4f  ops=%d",
+            fp[:8],
+            metrics.fitness,
+            metrics.mean_ic,
+            program.size,
+        )
 
 
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
