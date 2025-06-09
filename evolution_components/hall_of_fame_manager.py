@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from typing import TYPE_CHECKING, List, Tuple, Dict, Set # Added Set
+from dataclasses import dataclass
 import textwrap # For printing HoF
 import logging
 
@@ -8,8 +9,15 @@ if TYPE_CHECKING:
     from alpha_framework import AlphaProgram
     from .evaluation_logic import EvalResult
 
+@dataclass
+class HOFEntry:
+    fingerprint: str
+    metrics: 'EvalResult'
+    program: 'AlphaProgram'
+    generation: int
+
 # Module-level state for Hall of Fame
-_hof_programs_data: List[Tuple[str, EvalResult, AlphaProgram]] = []  # fp, metrics, prog
+_hof_programs_data: List[HOFEntry] = []  # Store HOF entries with generation
 _hof_max_size: int = 20
 _hof_fingerprints_set: Set[str] = set() # For quick check of existence
 _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFIG
@@ -85,8 +93,13 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
 def add_program_to_hof(
     program: AlphaProgram,
     metrics: EvalResult,
+    generation: int,
 ):
     """Add ``program`` to the Hall of Fame and update correlation tracking.
+
+    ``generation`` specifies which evolution cycle produced the program. The
+    entry is stored along with this generation value so it can be displayed when
+    printing the Hall of Fame table.
 
     The function keeps the main HOF ordered by fitness and maintains a
     separate list of flattened prediction time series used for correlation
@@ -127,31 +140,31 @@ def add_program_to_hof(
     inserted = False
     if not _keep_dupes_in_hof_config and fp in _hof_fingerprints_set:
         existing_idx = -1
-        for i, (efp, _, _) in enumerate(_hof_programs_data):
-            if efp == fp:
+        for i, entry in enumerate(_hof_programs_data):
+            if entry.fingerprint == fp:
                 existing_idx = i
                 break
-        if existing_idx != -1 and metrics.fitness > _hof_programs_data[existing_idx][1].fitness:
-            _hof_programs_data[existing_idx] = (fp, metrics, program)
+        if existing_idx != -1 and metrics.fitness > _hof_programs_data[existing_idx].metrics.fitness:
+            _hof_programs_data[existing_idx] = HOFEntry(fp, metrics, program, generation)
             inserted = True
         elif existing_idx == -1:
-            _hof_programs_data.append((fp, metrics, program))
+            _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
             _hof_fingerprints_set.add(fp)
             inserted = True
     else:
-        _hof_programs_data.append((fp, metrics, program))
+        _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
         _hof_fingerprints_set.add(fp)
         inserted = True
 
 
-        _hof_programs_data.sort(key=lambda x: x[1].fitness, reverse=True)  # Sort by fitness
+        _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)  # Sort by fitness
     if len(_hof_programs_data) > _hof_max_size:
         removed_prog_data = _hof_programs_data.pop()
         # If we remove a unique program, ensure its fingerprint is also removed from the set
         # This needs care if multiple entries could share an fp (if _keep_dupes_in_hof_config was true)
         # For now, assuming if _keep_dupes_in_hof_config is false, fingerprints in _hof_programs_data are unique.
-        if not any(item[0] == removed_prog_data[0] for item in _hof_programs_data):
-            _hof_fingerprints_set.discard(removed_prog_data[0])
+        if not any(item.fingerprint == removed_prog_data.fingerprint for item in _hof_programs_data):
+            _hof_fingerprints_set.discard(removed_prog_data.fingerprint)
 
 
     # Logic for maintaining the list used for correlation penalty.
@@ -194,17 +207,17 @@ def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
     
     final_list: List[Tuple[AlphaProgram, float]] = []
     if _keep_dupes_in_hof_config:
-        for _, metrics, prog in _hof_programs_data:
-            final_list.append((prog, metrics.mean_ic))
+        for entry in _hof_programs_data:
+            final_list.append((entry.program, entry.metrics.mean_ic))
             if len(final_list) >= _hof_max_size:
                 break
     else:
         # _hof_programs_data is already sorted by fitness and should contain unique FPs if not _keep_dupes
         # (or best version of duplicate FPs)
         unique_output_progs: Dict[str, Tuple[AlphaProgram, float]] = {}
-        for fp, metrics, prog in _hof_programs_data:
-            if fp not in unique_output_progs:  # Add first encountered (best fitness)
-                unique_output_progs[fp] = (prog, metrics.mean_ic)
+        for entry in _hof_programs_data:
+            if entry.fingerprint not in unique_output_progs:  # Add first encountered (best fitness)
+                unique_output_progs[entry.fingerprint] = (entry.program, entry.metrics.mean_ic)
             if len(unique_output_progs) >= _hof_max_size:
                 break
         final_list = list(unique_output_progs.values())
@@ -224,8 +237,6 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     for pop_idx, eval_res in eval_results_sorted[:_TOP_TO_SHOW_PRINT]:
         if eval_res.fitness <= -float("inf"):
             continue  # Skip invalid programs
-        prog = population[pop_idx]
-        fp = prog.fingerprint
 
     # Merge current generation's best with existing static HOF for display purposes
     # This is tricky because add_program_to_hof already updates the static HOF.
@@ -233,20 +244,21 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
 
     logger = logging.getLogger(__name__)
     logger.info("\n★ Generation %s – Top (up to) %s overall from HOF ★", generation+1, _TOP_TO_SHOW_PRINT)
-    hdr = " Rank | Fitness |  IC  | Ops | Finger  | First 90 chars"
+    hdr = " Rank | Fitness |  IC  | Ops | Gen | Finger  | First 90 chars"
     logger.info(hdr)
     logger.info("─" * len(hdr))
     
     # Print from the managed _hof_programs_data
-    for rk, (fp, metrics, prog) in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
-        head = textwrap.shorten(prog.to_string(max_len=300), width=90, placeholder="…")
+    for rk, entry in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
+        head = textwrap.shorten(entry.program.to_string(max_len=300), width=90, placeholder="…")
         logger.info(
-            " %4d | %+7.4f | %+5.3f | %3d | %s | %s",
+            " %4d | %+7.4f | %+5.3f | %3d | %3d | %s | %s",
             rk,
-            metrics.fitness,
-            metrics.mean_ic,
-            prog.size,
-            fp[:8],
+            entry.metrics.fitness,
+            entry.metrics.mean_ic,
+            entry.program.size,
+            entry.generation + 1,
+            entry.fingerprint[:8],
             head,
         )
 def clear_hof():
