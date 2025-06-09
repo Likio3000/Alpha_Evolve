@@ -6,7 +6,7 @@ from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
 
-from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES, SCALAR_FEATURE_NAMES
+from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
 from evolution_components import (
     initialize_data, 
     evaluate_program, 
@@ -159,7 +159,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 best_preds_matrix_this_gen = best_metrics_this_gen.processed_predictions
                 best_program_instance_this_gen = pop[best_prog_idx_this_gen]
 
-                add_program_to_hof(best_program_instance_this_gen, best_metrics_this_gen)
+                add_program_to_hof(best_program_instance_this_gen, best_metrics_this_gen, gen)
 
                 if best_preds_matrix_this_gen is not None:
                     update_correlation_hof(best_program_instance_this_gen.fingerprint, best_preds_matrix_this_gen)
