@@ -1,15 +1,10 @@
-#!/bin/sh
-# Example invocation of run_pipeline.py with every available CLI parameter
-# explicitly set to its default value. Edit any value below to customise the
-# evolution or back-test behaviour.
-
-uv run run_pipeline.py 10 \
+uv run run_pipeline.py 3 \
   --seed 42 \
   --pop_size 100 \
   --tournament_k 10 \
   --p_mut 0.9 \
-  --p_cross 0.0 \
-  --elite_keep 1 \
+  --p_cross 0.3 \
+  --elite_keep 3 \
   --fresh_rate 0.12 \
   --max_ops 87 \
   --max_setup_ops 21 \
@@ -21,16 +16,14 @@ uv run run_pipeline.py 10 \
   --parsimony_penalty 0.0001 \
   --corr_penalty_w 0.35 \
   --corr_cutoff 0.15 \
-  # --keep_dupes_in_hof \  # enable to keep duplicates in the Hall of Fame
-  --xs_flat_guard 0.05 \
-  --t_flat_guard 0.05 \
-  --early_abort_bars 20 \
-  --early_abort_xs 0.05 \
-  --early_abort_t 0.05 \
+  --xs_flat_guard 0.01 \
+  --t_flat_guard 0.01 \
+  --early_abort_bars 40 \
+  --early_abort_xs 0.02 \
+  --early_abort_t 0.02 \
   --hof_size 20 \
   --scale zscore \
-  # --quiet \  # uncomment to suppress most logging output
-  --workers 1 \
+  --workers 2 \
   --eval_cache_size 128 \
   --data_dir ./data \
   --max_lookback_data_option common_1200 \
@@ -39,8 +32,9 @@ uv run run_pipeline.py 10 \
   --top 10 \
   --fee 1.0 \
   --hold 1 \
-  --annualization_factor 1512 \
-  # --debug_prints \  # forward verbose output to the back-tester
-  # --run_baselines \  # additionally train baseline models
-  --log-level INFO \
-  --log-file ""
+  --debug_prints \
+  --run_baselines \
+  # --log-level DEBUG
+  # --log-file
+  # --quiet
+  # --annualization_factor (int)
