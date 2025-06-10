@@ -30,6 +30,10 @@ update `requirements.txt` with:
 sh scripts/update_requirements.sh
 ```
 
+Many examples use `uv`, a fast Python runtime and package manager. Install it
+from <https://github.com/astral-sh/uv> (e.g., `curl -Ls https://astral.sh/uv/install.sh | sh`).
+If `uv` is unavailable you can replace `uv` with `python` in the commands.
+
 ## Running tests
 
 Use `pytest` to run the unit tests after installing the dependencies:
