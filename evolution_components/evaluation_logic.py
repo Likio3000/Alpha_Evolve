@@ -52,6 +52,7 @@ _EVAL_CONFIG = {
     "early_abort_bars": 20,
     "early_abort_xs_threshold": 5e-2,
     "early_abort_t_threshold": 5e-2,
+    "flat_bar_threshold": 0.25,
     "ic_scale_method": "zscore", # from args.scale
     "sharpe_proxy_weight": 0.0,
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
@@ -65,6 +66,7 @@ def configure_evaluation(
     early_abort_bars: int,
     early_abort_xs: float,
     early_abort_t: float,
+    flat_bar_threshold: float,
     scale_method: str,
     sharpe_proxy_weight: float
     ):
@@ -76,6 +78,7 @@ def configure_evaluation(
     _EVAL_CONFIG["early_abort_bars"] = early_abort_bars
     _EVAL_CONFIG["early_abort_xs_threshold"] = early_abort_xs
     _EVAL_CONFIG["early_abort_t_threshold"] = early_abort_t
+    _EVAL_CONFIG["flat_bar_threshold"] = flat_bar_threshold
     _EVAL_CONFIG["ic_scale_method"] = scale_method
     _EVAL_CONFIG["sharpe_proxy_weight"] = sharpe_proxy_weight
     logging.getLogger(__name__).debug(
@@ -298,8 +301,13 @@ def evaluate_program(
             if len(all_raw_predictions_timeseries) == _EVAL_CONFIG["early_abort_bars"]:
                 partial_raw_preds_matrix = np.array(all_raw_predictions_timeseries)
                 mean_xs_std_partial = 0.0
+                flat_fraction = 0.0
+                cross_sectional_stds = np.array([])
                 if partial_raw_preds_matrix.ndim == 2 and partial_raw_preds_matrix.shape[1] > 0:
-                    mean_xs_std_partial = np.mean(partial_raw_preds_matrix.std(axis=1, ddof=0))
+                    cross_sectional_stds = partial_raw_preds_matrix.std(axis=1, ddof=0)
+                    mean_xs_std_partial = np.mean(cross_sectional_stds)
+                    if cross_sectional_stds.size > 0:
+                        flat_fraction = np.mean(cross_sectional_stds < 1e-4)
                 
                 mean_t_std_partial = 0.0
                 if partial_raw_preds_matrix.ndim == 2 and partial_raw_preds_matrix.shape[0] > 1: # If matrix
@@ -315,6 +323,14 @@ def evaluate_program(
                         fp,
                         mean_xs_std_partial,
                         _EVAL_CONFIG["early_abort_xs_threshold"],
+                    )
+                    early_abort = True
+                if flat_fraction > _EVAL_CONFIG["flat_bar_threshold"]:
+                    logger.debug(
+                        "Early abort for %s due to flat bar fraction %.6f > %.6f",
+                        fp,
+                        flat_fraction,
+                        _EVAL_CONFIG["flat_bar_threshold"],
                     )
                     early_abort = True
                 if mean_t_std_partial < _EVAL_CONFIG["early_abort_t_threshold"]:

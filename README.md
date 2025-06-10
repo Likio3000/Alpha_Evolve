@@ -58,6 +58,8 @@ Run the full pipeline for five generations:
 uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
 
 Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
+Baseline metrics are cached next to the data and reused on subsequent runs.
+Pass `--retrain_baselines` to force a fresh training.
 ```
 
 For a longer run using the parameters described in the paper you can simply run
