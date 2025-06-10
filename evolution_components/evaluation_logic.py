@@ -423,6 +423,42 @@ def evaluate_program(
                 )
                 score = -float('inf')
 
+    # Flatness guards on processed predictions
+    if score > -float('inf'):
+        if full_processed_predictions_matrix.ndim == 2 and full_processed_predictions_matrix.shape[1] > 0:
+            proc_xs_stds = full_processed_predictions_matrix.std(axis=1, ddof=0)
+            mean_proc_xs_std = np.mean(proc_xs_stds)
+            if mean_proc_xs_std < _EVAL_CONFIG["xs_flatness_guard_threshold"]:
+                logger.debug(
+                    "Processed cross-sectional flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_proc_xs_std,
+                    _EVAL_CONFIG["xs_flatness_guard_threshold"],
+                )
+                score = -float('inf')
+
+    if score > -float('inf'):
+        if full_processed_predictions_matrix.ndim == 2 and full_processed_predictions_matrix.shape[0] > 1:
+            proc_t_stds = full_processed_predictions_matrix.std(axis=0, ddof=0)
+            mean_proc_t_std = np.mean(proc_t_stds)
+            if mean_proc_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
+                logger.debug(
+                    "Processed temporal flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_proc_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
+                score = -float('inf')
+        elif full_processed_predictions_matrix.ndim == 1 and full_processed_predictions_matrix.shape[0] > 1:
+            mean_proc_t_std = full_processed_predictions_matrix.std(ddof=0)
+            if mean_proc_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
+                logger.debug(
+                    "Processed temporal flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_proc_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
+                score = -float('inf')
 
     # HOF correlation penalty (uses processed predictions)
     if score > -float('inf') and full_processed_predictions_matrix.size > 0:
