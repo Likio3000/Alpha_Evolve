@@ -20,4 +20,5 @@ uv run run_pipeline.py 10 \
   --workers 4 \
   --run_baselines \
   --debug_prints
+  # baseline metrics are cached; use --retrain_baselines to refresh
 
