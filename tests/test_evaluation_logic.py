@@ -278,6 +278,33 @@ class TemporalFlatDH:
         return np.arange(len(self.dfs))
 
 
+class PartialFlatBarsDH:
+    def __init__(self):
+        self.index = pd.RangeIndex(4)
+        self.dfs = OrderedDict({
+            "A": pd.DataFrame({"opens": [1.0, 1.0, 2.0, 3.0], "ret_fwd": [0.0, 0.1, 0.2, 0.3]}, index=self.index),
+            "B": pd.DataFrame({"opens": [1.0, 1.0, 3.0, 4.0], "ret_fwd": [0.0, 0.1, 0.2, 0.3]}, index=self.index),
+        })
+
+    def get_aligned_dfs(self):
+        return self.dfs
+
+    def get_common_time_index(self):
+        return self.index
+
+    def get_stock_symbols(self):
+        return list(self.dfs.keys())
+
+    def get_n_stocks(self):
+        return len(self.dfs)
+
+    def get_eval_lag(self):
+        return 1
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
+
 def test_early_abort_triggered():
     prog = build_simple_program("ea")
     dh = FlatDH()
@@ -290,6 +317,28 @@ def test_early_abort_triggered():
         early_abort_bars=3,
         early_abort_xs=0.05,
         early_abort_t=0.05,
+        flat_bar_threshold=0.25,
+        scale_method="zscore",
+    )
+    initialize_evaluation_cache(max_size=2)
+    res = evaluate_program(prog, dh, hof, {})
+    assert res.fitness == -float("inf")
+    assert res.processed_predictions is None
+
+
+def test_early_abort_flat_bar_fraction():
+    prog = build_simple_program("fb")
+    dh = PartialFlatBarsDH()
+    hof = DummyHOF()
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=3,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        flat_bar_threshold=0.25,
         scale_method="zscore",
     )
     initialize_evaluation_cache(max_size=2)
@@ -310,6 +359,7 @@ def test_flatness_guard_cross_sectional():
         early_abort_bars=100,
         early_abort_xs=0.05,
         early_abort_t=0.05,
+        flat_bar_threshold=0.25,
         scale_method="zscore",
     )
     initialize_evaluation_cache(max_size=2)
@@ -330,6 +380,7 @@ def test_flatness_guard_temporal():
         early_abort_bars=100,
         early_abort_xs=0.05,
         early_abort_t=0.05,
+        flat_bar_threshold=0.25,
         scale_method="zscore",
     )
     initialize_evaluation_cache(max_size=2)
