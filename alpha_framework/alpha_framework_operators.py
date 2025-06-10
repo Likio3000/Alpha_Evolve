@@ -257,7 +257,8 @@ def _vec_mul_scalar(v, s): return v * s
 @safe_op  # safe_op will handle _clean_num for inputs
 def _vec_div_scalar(v, s):
     """Divide vector ``v`` by scalar ``s`` while avoiding zero denominators."""
-    denom = np.sign(s) * max(abs(s), 1e-3)
+    safe_sign = np.sign(s) if abs(s) > 1e-9 else 1.0
+    denom = safe_sign * max(abs(s), 1e-3)
     return v / denom
 
 
