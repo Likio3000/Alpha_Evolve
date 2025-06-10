@@ -99,6 +99,7 @@ Section 4.1 of the reproduction guide:
 * scalar/vector/matrix operand limits **10/16/4**
 * evaluation cache size **128**
 * correlation cutoff for Hall of Fame entries **15 %**
+* annualization factor **365 * 6** (default for 4-hour crypto bars)
 
 ## Data handling
 
