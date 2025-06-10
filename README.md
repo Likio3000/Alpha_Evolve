@@ -102,7 +102,7 @@ Section 4.1 of the reproduction guide:
 
 ## Data handling
 
-Aligned OHLCV data is loaded from a directory of CSV files. The
+Aligned OHLC data is loaded from a directory of CSV files. (I did not have access to the volume data) The
 `full_overlap` strategy is recommended as it keeps the maximum number of
 datapoints shared across all symbols.  After alignment you can obtain
 train/validation/test splits via `evolution_components.get_data_splits`.
