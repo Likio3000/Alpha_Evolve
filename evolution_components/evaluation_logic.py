@@ -69,7 +69,7 @@ def configure_evaluation(
     flat_bar_threshold: float,
     scale_method: str,
     sharpe_proxy_weight: float
-    ):
+):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
     _EVAL_CONFIG["max_ops_for_parsimony"] = max_ops
