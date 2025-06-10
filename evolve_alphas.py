@@ -7,6 +7,8 @@ import numpy as np
 import logging
 
 from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+import alpha_framework.program_logic_generation as plg
+import alpha_framework.program_logic_variation as plv
 from evolution_components import (
     initialize_data, 
     evaluate_program, 
@@ -68,6 +70,11 @@ INITIAL_STATE_VARS: Dict[str, TypeId] = {
     "prev_s1_vec": "vector",
     "rolling_mean_custom": "vector"
 }
+
+# ─── bias random generation and mutation towards vector-returning ops ───
+VECTOR_OPS_BIAS = 0.3
+plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
+plv.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
 
 def _random_prog(cfg: EvoConfig) -> AlphaProgram: # Signature changed
     return AlphaProgram.random_program(

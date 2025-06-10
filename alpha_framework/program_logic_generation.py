@@ -3,6 +3,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 import numpy as np
 
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
+
+# Probability that a newly added op must output a vector.  Can be
+# overridden by callers (e.g. `evolve_alphas`) before program creation.
+VECTOR_OPS_BIAS = 0.0
 from .alpha_framework_op import Op
 
 # Per-stage limits from the paper
@@ -60,6 +64,10 @@ def generate_random_program_logic(
             for op_name, spec in OP_REGISTRY.items():
                 if op_name == "assign_vector" and is_predict and k != how_many - 1:
                     continue          # reserve assign_vector for emergency only
+
+                # ─── bias towards ops that output vectors ───
+                if rng.random() < VECTOR_OPS_BIAS and spec.out_type != "vector":
+                    continue
 
                 inputs_for_spec: List[List[str]] = []
                 ok = True

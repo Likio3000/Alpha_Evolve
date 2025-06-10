@@ -10,6 +10,10 @@ from .alpha_framework_types import (
     SCALAR_FEATURE_NAMES,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
 )
+
+# Probability that a newly added op must output a vector.  Callers may
+# override this (see `evolve_alphas`).
+VECTOR_OPS_BIAS = 0.0
 from .alpha_framework_op import Op
 from .program_logic_generation import (
     MAX_SETUP_OPS,
@@ -76,6 +80,10 @@ def mutate_program_logic(
                 pass
             elif op_n == "assign_vector" and chosen_block_name == "predict" and insertion_idx < len(chosen_block_ops_list):
                  continue
+
+            # ─── bias towards ops that output vectors ───
+            if rng.random() < VECTOR_OPS_BIAS and op_s.out_type != "vector":
+                continue
 
             formable = True
             temp_inputs_sources = []
