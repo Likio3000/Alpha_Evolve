@@ -100,6 +100,8 @@ Section 4.1 of the reproduction guide:
 * setup, predict and update operation limits **21/21/45**
 * scalar/vector/matrix operand limits **10/16/4**
 * evaluation cache size **128**
+* parsimony penalty **0.002**
+* flat bar epsilon **1e-4**, max fraction **25%**
 * correlation cutoff for Hall of Fame entries **15 %**
 * annualization factor **365 * 6** (default for 4-hour crypto bars)
 

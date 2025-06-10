@@ -51,6 +51,8 @@ _EVAL_CONFIG = {
     "early_abort_bars": 20,
     "early_abort_xs_threshold": 5e-2,
     "early_abort_t_threshold": 5e-2,
+    "flat_bar_threshold": 1e-4,
+    "max_flat_bar_fraction": 0.25,
     "ic_scale_method": "zscore", # from args.scale
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
 }
@@ -63,6 +65,8 @@ def configure_evaluation(
     early_abort_bars: int,
     early_abort_xs: float,
     early_abort_t: float,
+    flat_bar_threshold: float,
+    max_flat_bar_fraction: float,
     scale_method: str
     ):
     global _EVAL_CONFIG
@@ -73,6 +77,8 @@ def configure_evaluation(
     _EVAL_CONFIG["early_abort_bars"] = early_abort_bars
     _EVAL_CONFIG["early_abort_xs_threshold"] = early_abort_xs
     _EVAL_CONFIG["early_abort_t_threshold"] = early_abort_t
+    _EVAL_CONFIG["flat_bar_threshold"] = flat_bar_threshold
+    _EVAL_CONFIG["max_flat_bar_fraction"] = max_flat_bar_fraction
     _EVAL_CONFIG["ic_scale_method"] = scale_method
     logging.getLogger(__name__).debug(
         "Evaluation logic configured: %s, %s", scale_method, parsimony_penalty
@@ -302,6 +308,11 @@ def evaluate_program(
                 elif partial_raw_preds_matrix.ndim == 1 and partial_raw_preds_matrix.shape[0] > 1: # If effectively a single series over time (e.g. n_stocks=1)
                      mean_t_std_partial = partial_raw_preds_matrix.std(ddof=0)
 
+                flat_bar_fraction = 0.0
+                if partial_raw_preds_matrix.ndim == 2 and partial_raw_preds_matrix.shape[1] > 0:
+                    xs_stds = partial_raw_preds_matrix.std(axis=1, ddof=0)
+                    flat_bar_fraction = float(np.mean(xs_stds < _EVAL_CONFIG["flat_bar_threshold"]))
+
 
                 early_abort = False
                 if mean_xs_std_partial < _EVAL_CONFIG["early_abort_xs_threshold"]:
@@ -318,6 +329,14 @@ def evaluate_program(
                         fp,
                         mean_t_std_partial,
                         _EVAL_CONFIG["early_abort_t_threshold"],
+                    )
+                    early_abort = True
+                if flat_bar_fraction > _EVAL_CONFIG["max_flat_bar_fraction"]:
+                    logger.debug(
+                        "Early abort for %s due to %.2f flat bars > %.2f",
+                        fp,
+                        flat_bar_fraction,
+                        _EVAL_CONFIG["max_flat_bar_fraction"],
                     )
                     early_abort = True
                 if early_abort:
@@ -362,6 +381,11 @@ def evaluate_program(
                 fp,
                 mean_xs_std,
                 _EVAL_CONFIG["xs_flatness_guard_threshold"],
+            )
+            score = -float('inf')
+        elif float(np.mean(cross_sectional_stds < _EVAL_CONFIG["flat_bar_threshold"])) > _EVAL_CONFIG["max_flat_bar_fraction"]:
+            logger.debug(
+                "Flat bar fraction guard triggered for %s", fp,
             )
             score = -float('inf')
 

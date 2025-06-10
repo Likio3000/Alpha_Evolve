@@ -16,6 +16,7 @@ wheels/
 /evolved_bt_cs_results/
 /backtest_csvs/
 *.pkl
+baseline_metrics.json
 
 # ruff cache
 /.ruff_cache

@@ -62,6 +62,8 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p.add_argument("--early_abort_bars",   type=int,   default=argparse.SUPPRESS)
     p.add_argument("--early_abort_xs",     type=float, default=argparse.SUPPRESS)
     p.add_argument("--early_abort_t",      type=float, default=argparse.SUPPRESS)
+    p.add_argument("--flat_bar_epsilon",   type=float, default=argparse.SUPPRESS)
+    p.add_argument("--max_flat_bar_fraction", type=float, default=argparse.SUPPRESS)
     p.add_argument("--hof_size",           type=int,   default=argparse.SUPPRESS)
     p.add_argument("--scale",              choices=["zscore","rank","sign"],
                                                      default=argparse.SUPPRESS)

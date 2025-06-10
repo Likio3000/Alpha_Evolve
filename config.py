@@ -77,7 +77,7 @@ class EvolutionConfig(DataConfig):
     max_scalar_operands: int = 10
     max_vector_operands: int = 16
     max_matrix_operands: int = 4
-    parsimony_penalty: float = 0.0001
+    parsimony_penalty: float = 0.002
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
     keep_dupes_in_hof: bool = False
@@ -88,6 +88,8 @@ class EvolutionConfig(DataConfig):
     early_abort_bars: int = 20
     early_abort_xs: float = 5e-2
     early_abort_t: float = 5e-2
+    flat_bar_epsilon: float = 1e-4
+    max_flat_bar_fraction: float = 0.25
     scale: str = "zscore"
 
     # evaluation cache
