@@ -1,11 +1,11 @@
-uv run run_pipeline.py 3 \
+uv run run_pipeline.py 15 \
   --seed 42 \
   --pop_size 100 \
   --tournament_k 10 \
   --p_mut 0.9 \
-  --p_cross 0.3 \
-  --elite_keep 3 \
-  --fresh_rate 0.12 \
+  --p_cross 0.4 \
+  --elite_keep 6 \
+  --fresh_rate 0.25 \
   --max_ops 87 \
   --max_setup_ops 21 \
   --max_predict_ops 21 \
@@ -14,13 +14,13 @@ uv run run_pipeline.py 3 \
   --max_vector_operands 16 \
   --max_matrix_operands 4 \
   --parsimony_penalty 0.0001 \
-  --corr_penalty_w 0.35 \
+  --corr_penalty_w 0.25 \
   --corr_cutoff 0.15 \
-  --xs_flat_guard 0.01 \
-  --t_flat_guard 0.01 \
-  --early_abort_bars 40 \
+  --xs_flat_guard 0.02 \
+  --t_flat_guard 0.005 \
+  --early_abort_bars 60 \
   --early_abort_xs 0.02 \
-  --early_abort_t 0.02 \
+  --early_abort_t 0.005 \
   --hof_size 20 \
   --scale zscore \
   --workers 2 \
