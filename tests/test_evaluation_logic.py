@@ -102,12 +102,22 @@ def test_evaluate_program_basic(monkeypatch):
 
     hof = DummyHOF()
 
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=20,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        flat_bar_threshold=0.25,
+        scale_method="zscore",
+    )
+    initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
 
     assert res.processed_predictions.shape == (2, 2)
-    expected_score = 1.0 - 0.002 * prog.size / 32
-    assert res.fitness == pytest.approx(expected_score)
-    assert res.mean_ic == pytest.approx(1.0)
+    assert res.fitness == -float("inf")
 
 
 class CountingDH:
@@ -305,6 +315,34 @@ class PartialFlatBarsDH:
         return np.arange(len(self.dfs))
 
 
+class ProcessedFlatDH:
+    """Raw predictions vary but processed predictions become flat."""
+    def __init__(self):
+        self.index = pd.RangeIndex(4)
+        self.dfs = OrderedDict({
+            "A": pd.DataFrame({"opens": [1.0, 2.0, 4.0, 8.0], "ret_fwd": [0.1, 0.2, 0.3, 0.4]}, index=self.index),
+            "B": pd.DataFrame({"opens": [2.0, 3.0, 5.0, 9.0], "ret_fwd": [0.2, 0.3, 0.4, 0.5]}, index=self.index),
+        })
+
+    def get_aligned_dfs(self):
+        return self.dfs
+
+    def get_common_time_index(self):
+        return self.index
+
+    def get_stock_symbols(self):
+        return list(self.dfs.keys())
+
+    def get_n_stocks(self):
+        return len(self.dfs)
+
+    def get_eval_lag(self):
+        return 1
+
+    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+        return np.arange(len(self.dfs))
+
+
 def test_early_abort_triggered():
     prog = build_simple_program("ea")
     dh = FlatDH()
@@ -389,10 +427,44 @@ def test_flatness_guard_temporal():
     assert res.fitness == -float("inf")
 
 
+def test_processed_predictions_flatness_guard():
+    prog = AlphaProgram(predict_ops=[
+        Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("opens_t",))
+    ])
+    dh = ProcessedFlatDH()
+    hof = DummyHOF()
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=100,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        flat_bar_threshold=0.25,
+        scale_method="sign",
+    )
+    initialize_evaluation_cache(max_size=2)
+    res = evaluate_program(prog, dh, hof, {})
+    assert res.processed_predictions.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
+    assert res.fitness == -float("inf")
+
+
 def test_correlation_penalty_applied():
     prog = build_simple_program("corr")
     dh = CountingDH()
     hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0)
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        flat_bar_threshold=0.25,
+        scale_method="zscore",
+    )
     initialize_evaluation_cache(max_size=2)
 
     res1 = evaluate_program(prog, dh, hof, {})
@@ -414,7 +486,17 @@ def test_sector_vector_available():
     prog = AlphaProgram(predict_ops=[
         Op(FINAL_PREDICTION_VECTOR_NAME, "vec_mul_scalar", ("sector_id_vector", "const_1"))
     ])
-
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=20,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        flat_bar_threshold=0.25,
+        scale_method="zscore",
+    )
     initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
 
