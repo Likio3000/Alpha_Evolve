@@ -77,7 +77,7 @@ class EvolutionConfig(DataConfig):
     max_scalar_operands: int = 10
     max_vector_operands: int = 16
     max_matrix_operands: int = 4
-    parsimony_penalty: float = 0.0001
+    parsimony_penalty: float = 0.002
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
     keep_dupes_in_hof: bool = False
