@@ -89,6 +89,8 @@ class EvolutionConfig(DataConfig):
     early_abort_xs: float = 5e-2
     early_abort_t: float = 5e-2
     scale: str = "zscore"
+    # weight for combining Sharpe proxy with mean IC when scoring
+    sharpe_proxy_w: float = 0.0
 
     # evaluation cache
     eval_cache_size: int = 128

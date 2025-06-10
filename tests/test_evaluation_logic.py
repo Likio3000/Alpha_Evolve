@@ -291,6 +291,7 @@ def test_early_abort_triggered():
         early_abort_xs=0.05,
         early_abort_t=0.05,
         scale_method="zscore",
+        sharpe_proxy_weight=0.0,
     )
     initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
@@ -311,6 +312,7 @@ def test_flatness_guard_cross_sectional():
         early_abort_xs=0.05,
         early_abort_t=0.05,
         scale_method="zscore",
+        sharpe_proxy_weight=0.0,
     )
     initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
@@ -331,6 +333,7 @@ def test_flatness_guard_temporal():
         early_abort_xs=0.05,
         early_abort_t=0.05,
         scale_method="zscore",
+        sharpe_proxy_weight=0.0,
     )
     initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
@@ -351,6 +354,43 @@ def test_correlation_penalty_applied():
     res2 = evaluate_program(prog, dh, hof, {})
     base_score = 1.0 - 0.002 * prog.size / 32
     assert res2.fitness == pytest.approx(base_score - 0.5)
+
+
+def test_sharpe_proxy_weight_changes_score():
+    prog = build_simple_program("sp")
+    dh = CountingDH()
+    hof = DummyHOF()
+
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=20,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        scale_method="zscore",
+        sharpe_proxy_weight=0.0,
+    )
+    initialize_evaluation_cache(max_size=2)
+    res_no = evaluate_program(prog, dh, hof, {})
+
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=5e-3,
+        temporal_flatness_guard=5e-3,
+        early_abort_bars=20,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        scale_method="zscore",
+        sharpe_proxy_weight=1.0,
+    )
+    initialize_evaluation_cache(max_size=2)
+    res_yes = evaluate_program(prog, dh, hof, {})
+
+    expected = res_no.fitness + res_yes.sharpe_proxy
+    assert res_yes.fitness == pytest.approx(expected)
 
 
 def test_sector_vector_available():

@@ -23,6 +23,7 @@ from alpha_framework.alpha_framework_types import ( # Ensure these are correct b
 class EvalResult:
     fitness: float
     mean_ic: float
+    sharpe_proxy: float
     parsimony_penalty: float
     correlation_penalty: float
     processed_predictions: Optional[np.ndarray]
@@ -52,6 +53,7 @@ _EVAL_CONFIG = {
     "early_abort_xs_threshold": 5e-2,
     "early_abort_t_threshold": 5e-2,
     "ic_scale_method": "zscore", # from args.scale
+    "sharpe_proxy_weight": 0.0,
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
 }
 
@@ -63,7 +65,8 @@ def configure_evaluation(
     early_abort_bars: int,
     early_abort_xs: float,
     early_abort_t: float,
-    scale_method: str
+    scale_method: str,
+    sharpe_proxy_weight: float
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -74,6 +77,7 @@ def configure_evaluation(
     _EVAL_CONFIG["early_abort_xs_threshold"] = early_abort_xs
     _EVAL_CONFIG["early_abort_t_threshold"] = early_abort_t
     _EVAL_CONFIG["ic_scale_method"] = scale_method
+    _EVAL_CONFIG["sharpe_proxy_weight"] = sharpe_proxy_weight
     logging.getLogger(__name__).debug(
         "Evaluation logic configured: %s, %s", scale_method, parsimony_penalty
     )
@@ -209,7 +213,7 @@ def evaluate_program(
 
     if not _uses_feature_vector_check(prog):
         logger.debug("Program %s does not use any feature vector", fp)
-        result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, None)
+        result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
         _cache_set(fp, result)
         return result
 
@@ -236,6 +240,7 @@ def evaluate_program(
     all_raw_predictions_timeseries: List[np.ndarray] = []
     all_processed_predictions_timeseries: List[np.ndarray] = []
     daily_ic_values: List[float] = []
+    daily_pnl: List[float] = []
 
     # The common_time_index from data_handling is already sliced appropriately for eval_lag
     # Loop until common_time_index.size - eval_lag -1 (for python 0-indexing)
@@ -245,7 +250,7 @@ def evaluate_program(
     
     num_evaluation_steps = len(common_time_index) - eval_lag
     if num_evaluation_steps <= 0: # Not enough data for even one evaluation
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
         return _eval_cache[fp]
 
     for t_idx in range(num_evaluation_steps):
@@ -321,7 +326,7 @@ def evaluate_program(
                     )
                     early_abort = True
                 if early_abort:
-                    result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, None)
+                    result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
                     _cache_set(fp, result)
                     return result
 
@@ -336,17 +341,27 @@ def evaluate_program(
                 ic_t = _safe_corr_eval(processed_predictions_t, actual_returns_t)
                 daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
 
+            weights = processed_predictions_t
+            abs_sum = np.sum(np.abs(weights))
+            if abs_sum > 1e-9:
+                weights = weights / abs_sum
+            pnl_t = float(np.sum(weights * actual_returns_t))
+            daily_pnl.append(pnl_t)
+
         except Exception: # Broad exception during program's .eval() or IC calculation
-            _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
+            _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
             return _eval_cache[fp]
 
     if not daily_ic_values or not all_raw_predictions_timeseries or not all_processed_predictions_timeseries:
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, None))
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
         return _eval_cache[fp]
 
     mean_daily_ic = float(np.mean(daily_ic_values))
+    mean_pnl = float(np.mean(daily_pnl)) if daily_pnl else 0.0
+    std_pnl = float(np.std(daily_pnl, ddof=0)) if daily_pnl else 0.0
+    sharpe_proxy = mean_pnl / (std_pnl + 1e-9)
     parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * prog.size / _EVAL_CONFIG["max_ops_for_parsimony"]
-    score = mean_daily_ic - parsimony_penalty
+    score = mean_daily_ic + _EVAL_CONFIG["sharpe_proxy_weight"] * sharpe_proxy - parsimony_penalty
     correlation_penalty = 0.0
 
     full_raw_predictions_matrix = np.array(all_raw_predictions_timeseries)
@@ -399,7 +414,7 @@ def evaluate_program(
                 correlation_penalty,
             )
         score -= correlation_penalty
-    result = EvalResult(score, mean_daily_ic, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix)
+    result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix)
     logger.debug(
         "Eval summary %s | fitness %.6f mean_ic %.6f parsimony %.6f correlation %.6f ops %d",
         fp,
