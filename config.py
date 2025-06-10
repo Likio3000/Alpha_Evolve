@@ -88,6 +88,7 @@ class EvolutionConfig(DataConfig):
     early_abort_bars: int = 20
     early_abort_xs: float = 5e-2
     early_abort_t: float = 5e-2
+    flat_bar_threshold: float = 0.25
     scale: str = "zscore"
 
     # evaluation cache
