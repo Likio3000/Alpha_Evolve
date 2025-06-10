@@ -32,10 +32,18 @@ sh scripts/update_requirements.sh
 
 ## Running tests
 
-Use `pytest` to run the unit tests after installing the dependencies:
+Before running tests ensure the Python dependencies are installed.  You can do
+this directly or via the helper script:
 
 ```bash
-pytest
+pip install -r requirements.txt  # or sh scripts/setup_env.sh
+```
+
+Once the environment is ready, run pytest.  The `-q` flag gives a concise
+summary and should complete without failures:
+
+```bash
+pytest -q
 ```
 
 ## Usage
