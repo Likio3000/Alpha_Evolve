@@ -16,7 +16,15 @@ def test_vec_div_scalar_small_negative_denominator():
     v = np.array([1.0, -2.0, 3.0])
     buf = {"v": v, "s": -1e-12}
     Op("out", "vec_div_scalar", ("v", "s")).execute(buf, n_stocks=3)
-    expected = v / -1e-3
+    expected = v / 1e-3
+    assert np.allclose(buf["out"], expected)
+
+
+def test_vec_div_scalar_zero_denominator():
+    v = np.array([1.0, -2.0, 3.0])
+    buf = {"v": v, "s": 0.0}
+    Op("out", "vec_div_scalar", ("v", "s")).execute(buf, n_stocks=3)
+    expected = v / 1e-3
     assert np.allclose(buf["out"], expected)
 
 
