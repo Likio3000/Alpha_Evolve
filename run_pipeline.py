@@ -55,6 +55,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p.add_argument("--parsimony_penalty",  type=float, default=argparse.SUPPRESS)
     p.add_argument("--corr_penalty_w",     type=float, default=argparse.SUPPRESS)
     p.add_argument("--corr_cutoff",        type=float, default=argparse.SUPPRESS)
+    p.add_argument("--sharpe_proxy_w",     type=float, default=argparse.SUPPRESS)
     p.add_argument("--keep_dupes_in_hof", action="store_true",
                    default=argparse.SUPPRESS)
     p.add_argument("--xs_flat_guard",      type=float, default=argparse.SUPPRESS)

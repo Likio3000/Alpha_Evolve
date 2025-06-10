@@ -52,7 +52,8 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
         early_abort_xs=cfg.early_abort_xs,
         early_abort_t=cfg.early_abort_t,
         flat_bar_threshold=cfg.flat_bar_threshold,
-        scale_method=cfg.scale
+        scale_method=cfg.scale,
+        sharpe_proxy_weight=cfg.sharpe_proxy_w
     )
     initialize_hof(
         max_size=cfg.hof_size,

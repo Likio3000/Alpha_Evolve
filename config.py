@@ -80,6 +80,7 @@ class EvolutionConfig(DataConfig):
     parsimony_penalty: float = 0.002
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
+    sharpe_proxy_w: float = 0.0
     keep_dupes_in_hof: bool = False
 
     # evaluation specifics
