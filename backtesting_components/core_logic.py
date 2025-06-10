@@ -68,7 +68,7 @@ def backtest_cross_sectional_alpha(
     scalar_feature_names: List[str], # Pass these from calling script
     cross_sectional_feature_vector_names: List[str], # Pass these
     debug_prints: bool = False, # For optional debug prints
-    annualization_factor: float = (252 * 6) # Default for 4H bars, 252 days
+    annualization_factor: float = (365 * 6) # Default for 4H bars, 365 days (crypto)
 ) -> Dict[str, Any]:
     
     program_state: Dict[str, Any] = prog.new_state()
