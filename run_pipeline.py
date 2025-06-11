@@ -86,6 +86,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
 
     p.add_argument("--fee",                            type=float, default=argparse.SUPPRESS)
     p.add_argument("--hold",                           type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--long_short_n",                   type=int,   default=argparse.SUPPRESS)
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
     p.add_argument("--debug_prints", action="store_true")
     p.add_argument("--run_baselines", action="store_true",
@@ -201,6 +202,7 @@ def main() -> None:
         "--top",   str(bt_cfg.top_to_backtest),
         "--fee",   str(bt_cfg.fee),
         "--hold",  str(bt_cfg.hold),
+        "--long_short_n", str(bt_cfg.long_short_n),
         "--annualization_factor", str(bt_cfg.annualization_factor),
         "--scale", bt_cfg.scale,
         "--lag",   str(bt_cfg.eval_lag),

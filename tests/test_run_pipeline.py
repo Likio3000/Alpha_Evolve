@@ -11,6 +11,7 @@ def test_parse_args_defaults(monkeypatch):
     # check a couple defaults
     assert evo_cfg.seed == 42
     assert bt_cfg.top_to_backtest == 10
+    assert bt_cfg.long_short_n == 0
     assert ns.debug_prints is False
     assert ns.run_baselines is False
 

@@ -32,6 +32,7 @@ uv run run_pipeline.py 15 \
   --top 10 \
   --fee 1.0 \
   --hold 1 \
+  --long_short_n 0 \
   --debug_prints \
   --run_baselines \
   # baseline metrics are cached; use --retrain_baselines to refresh

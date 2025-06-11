@@ -54,6 +54,8 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--data",              dest="data_dir",            default=argparse.SUPPRESS)
     p.add_argument("--fee",               type=float,                 default=argparse.SUPPRESS)
     p.add_argument("--hold",              type=int,                   default=argparse.SUPPRESS)
+    p.add_argument("--long_short_n",      type=int,                   default=argparse.SUPPRESS,
+                   help="trade only top/bottom N symbols")
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
     p.add_argument("--scale",             choices=["zscore", "rank", "sign"],
                                                                   default=argparse.SUPPRESS)
@@ -119,6 +121,7 @@ def main() -> None:
             fee_bps=cfg.fee,
             lag=cfg.eval_lag,
             hold=cfg.hold,
+            long_short_n=cfg.long_short_n,
             scale_method=cfg.scale,
             initial_state_vars_config={"prev_s1_vec": "vector"},
             scalar_feature_names=SCALAR_FEATURE_NAMES,

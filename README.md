@@ -87,6 +87,8 @@ This convenience script mirrors all defaults from `config.py` so you can easily
 edit any knob.
 
 The `--debug_prints` flag forwards verbose output to the back-tester.
+Use `--long_short_n` to trade only the top/bottom N ranked symbols in each
+period.  Set it to `0` (default) to use all available symbols.
 
 Logging can be controlled globally via `--log-level` and `--log-file`.  The
 `--quiet` and `--debug_prints` flags lower or raise the log verbosity when
@@ -108,6 +110,7 @@ Section 4.1 of the reproduction guide:
 * correlation cutoff for Hall of Fame entries **15 %**
 * Sharpe proxy weight **0**
 * annualization factor **365 * 6** (default for 4-hour crypto bars)
+* long/short universe size **0** (use all symbols)
 
 ## Data handling
 

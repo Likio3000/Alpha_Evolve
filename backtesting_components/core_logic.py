@@ -66,6 +66,7 @@ def backtest_cross_sectional_alpha(
     lag: int, 
     hold: int, 
     scale_method: str,
+    long_short_n: int,
     initial_state_vars_config: Dict[str, str], # e.g. {"prev_s1_vec": "vector"}
     scalar_feature_names: List[str], # Pass these from calling script
     cross_sectional_feature_vector_names: List[str], # Pass these
@@ -121,6 +122,15 @@ def backtest_cross_sectional_alpha(
     target_positions_matrix = np.zeros_like(signal_matrix)
     for t in range(signal_matrix.shape[0]):
         scaled_signal_t = _scale_signal_cross_sectionally(signal_matrix[t, :], scale_method)
+        if long_short_n > 0:
+            k = min(long_short_n, n_stocks // 2)
+            order = np.argsort(scaled_signal_t)
+            long_idx = order[-k:]
+            short_idx = order[:k]
+            ls_vector = np.zeros_like(scaled_signal_t)
+            ls_vector[long_idx] = 1.0
+            ls_vector[short_idx] = -1.0
+            scaled_signal_t = ls_vector
         mean_signal_t = np.mean(scaled_signal_t)
         centered_signal_t = scaled_signal_t - mean_signal_t
         sum_abs_centered_signal = np.sum(np.abs(centered_signal_t))
