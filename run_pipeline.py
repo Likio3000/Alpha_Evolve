@@ -104,10 +104,13 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     ns = p.parse_args()
     d = vars(ns)
 
-    evo_cfg = EvolutionConfig(**{k: v for k, v in d.items()
-                                 if k in EvolutionConfig.__annotations__})
-    bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
-                                 if k in BacktestConfig.__annotations__})
+    from dataclasses import fields
+
+    evo_fields = {f.name for f in fields(EvolutionConfig)}
+    bt_fields = {f.name for f in fields(BacktestConfig)}
+
+    evo_cfg = EvolutionConfig(**{k: v for k, v in d.items() if k in evo_fields})
+    bt_cfg = BacktestConfig(**{k: v for k, v in d.items() if k in bt_fields})
 
     return evo_cfg, bt_cfg, ns
 
