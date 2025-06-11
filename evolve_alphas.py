@@ -1,7 +1,8 @@
 from __future__ import annotations
 import random
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Deque
+from collections import deque
 from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
@@ -128,6 +129,11 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
 
     pop: List[AlphaProgram] = [_random_prog(cfg) for _ in range(cfg.pop_size)]
     gen_eval_times_history: List[float] = []
+
+    p_mut = cfg.p_mut
+    p_cross = cfg.p_cross
+    fitness_window: Deque[float] = deque(maxlen=5)
+    improvement_threshold = 1e-3
 
     try:
         for gen in range(cfg.generations):
@@ -264,7 +270,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 parent_a, parent_b = pop[parent1_idx], pop[parent2_idx]
 
                 child: AlphaProgram
-                if random.random() < cfg.p_cross:
+                if random.random() < p_cross:
                     child = parent_a.crossover(
                         parent_b,
                         max_setup_ops=cfg.max_setup_ops,
@@ -274,7 +280,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 else:
                     child = parent_a.copy() if random.random() < 0.5 else parent_b.copy()
                 
-                if random.random() < cfg.p_mut:
+                if random.random() < p_mut:
                     child = _mutate_prog(child, cfg)
                 
                 new_pop.append(child)
@@ -285,6 +291,27 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 gen + 1,
                 len(pop),
             )
+
+            fitness_window.append(best_fit)
+            if len(fitness_window) == fitness_window.maxlen:
+                improvement = fitness_window[-1] - fitness_window[0]
+                if cfg.adaptive_mutation:
+                    if improvement < improvement_threshold:
+                        p_mut = min(p_mut * 1.1, 0.95)
+                    else:
+                        p_mut = max(p_mut * 0.9, 0.01)
+                if cfg.adaptive_crossover:
+                    if improvement < improvement_threshold:
+                        inc = p_cross * 1.1 if p_cross > 0 else 0.1
+                        p_cross = min(inc, 0.95)
+                    else:
+                        p_cross = max(p_cross * 0.9, 0.0)
+                logger.info(
+                    "Gen %s | Adaptive probabilities -> p_mut=%.3f p_cross=%.3f",
+                    gen + 1,
+                    p_mut,
+                    p_cross,
+                )
 
     except KeyboardInterrupt:
         logger.info(
