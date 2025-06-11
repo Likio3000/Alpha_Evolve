@@ -22,6 +22,8 @@ def test_load_and_align_internal_success():
     assert len(common_idx) == 4
     for df in aligned.values():
         assert list(df.index) == list(common_idx)
+        assert "ret_1d" in df.columns
+        assert "range_rel" in df.columns
 
 
 def test_load_and_align_for_backtest_success():
@@ -32,6 +34,8 @@ def test_load_and_align_for_backtest_success():
     assert len(common_idx) == 4
     for df in aligned.values():
         assert list(df.index) == list(common_idx)
+        assert "ret_1d" in df.columns
+        assert "range_rel" in df.columns
 
 
 def test_internal_missing_columns_raises():
