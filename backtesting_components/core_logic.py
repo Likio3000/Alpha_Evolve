@@ -168,6 +168,17 @@ def backtest_cross_sectional_alpha(
     abs_pos_diff_sum = np.sum(np.abs(pos_diff), axis=1)
     transaction_costs = (fee_bps * 1e-4) * abs_pos_diff_sum
     daily_portfolio_returns_net = daily_portfolio_returns - transaction_costs
+
+    if not np.any(actual_positions) or not np.any(daily_portfolio_returns_net):
+        return {
+            "Sharpe": 0.0,
+            "AnnReturn": 0.0,
+            "AnnVol": 0.0,
+            "MaxDD": 0.0,
+            "Turnover": 0.0,
+            "Bars": len(daily_portfolio_returns_net),
+            "Error": "No trades executed",
+        }
     
     if debug_prints and len(daily_portfolio_returns_net) > 0:
         mean_ret_calc = np.mean(daily_portfolio_returns_net)

@@ -148,7 +148,7 @@ def main() -> None:
         df = pd.DataFrame(results).sort_values("Sharpe", ascending=False)
         summary = Path(cli.outdir) / f"backtest_summary_top{cfg.top_to_backtest}.csv"
         df.to_csv(summary, index=False, float_format="%.4f")
-        print(df.drop(columns=["Program", "Error"], errors="ignore").to_string(index=False))
+        print(df.drop(columns=["Program"], errors="ignore").to_string(index=False))
         print(f"\nBack-test summary written → {summary}")
 
 
