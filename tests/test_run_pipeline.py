@@ -14,6 +14,7 @@ def test_parse_args_defaults(monkeypatch):
     assert bt_cfg.long_short_n == 0
     assert ns.debug_prints is False
     assert ns.run_baselines is False
+    assert ns.count_logs is False
 
 
 def test_parse_args_debug_flag(monkeypatch):
@@ -29,6 +30,13 @@ def test_parse_args_run_baselines(monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     _, _, ns = parse_args()
     assert ns.run_baselines is True
+
+
+def test_parse_args_count_logs(monkeypatch):
+    argv = ["run_pipeline.py", "3", "--count_logs"]
+    monkeypatch.setattr(sys, "argv", argv)
+    _, _, ns = parse_args()
+    assert ns.count_logs is True
 
 
 def test_train_baselines_logs(tmp_path, caplog):
