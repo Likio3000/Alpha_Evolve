@@ -23,6 +23,8 @@ def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
         df[f"ma{w}"] = df["close"].rolling(w, min_periods=1).mean()
         df[f"vol{w}"] = df["close"].rolling(w, min_periods=1).std(ddof=0)
     df["range"] = df["high"] - df["low"]
+    df["ret_1d"] = df["close"].pct_change().fillna(0.0)
+    df["range_rel"] = (df["high"] - df["low"]) / df["close"]
     df["ret_fwd"] = df["close"].pct_change(periods=1).shift(-1) # Shift by -1 for ret_fwd
     return df
 

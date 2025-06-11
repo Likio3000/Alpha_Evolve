@@ -12,7 +12,8 @@ export const OP_REGISTRY_KEYS: string[] = [
 export const CROSS_SECTIONAL_FEATURE_VECTOR_NAMES_CONST: string[] = [
     "opens_t", "highs_t", "lows_t", "closes_t", "ranges_t",
     "ma5_t", "ma10_t", "ma20_t", "ma30_t",
-    "vol5_t", "vol10_t", "vol20_t", "vol30_t"
+    "vol5_t", "vol10_t", "vol20_t", "vol30_t",
+    "ret1d_t", "range_rel_t"
 ];
 
 export const SCALAR_FEATURE_NAMES_CONST: string[] = ["const_1", "const_neg_1"];
