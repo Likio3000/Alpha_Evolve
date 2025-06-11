@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 import pytest
+from evolution_components import data_handling
 
 from evolution_components.evaluation_logic import (
     _safe_corr_eval,
@@ -102,6 +103,9 @@ def test_evaluate_program_basic(monkeypatch):
         def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
             return np.arange(len(self.dfs))
 
+        def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+            return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
+
     dh = DummyDH()
 
     class DummyHOF:
@@ -162,14 +166,9 @@ class CountingDH:
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
 
-    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
-        return np.arange(len(self.dfs))
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
-    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
-        return np.arange(len(self.dfs))
-
-    def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
-        return np.arange(len(self.dfs))
 
 
 class DummyHOF:
@@ -239,6 +238,8 @@ class FlatDH:
 
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
 
 class XSCrossFlatDH:
@@ -267,6 +268,8 @@ class XSCrossFlatDH:
 
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
 
 class TemporalFlatDH:
@@ -295,6 +298,8 @@ class TemporalFlatDH:
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
 
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
 class PartialFlatBarsDH:
     def __init__(self):
@@ -321,6 +326,8 @@ class PartialFlatBarsDH:
 
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
 
 class ProcessedFlatDH:
@@ -349,6 +356,8 @@ class ProcessedFlatDH:
 
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
 
 def test_early_abort_triggered():
@@ -571,6 +580,8 @@ class SharpeDH:
 
     def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
         return np.arange(len(self.dfs))
+    def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+        return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
 
 
 def test_sharpe_proxy_weight_alters_fitness():

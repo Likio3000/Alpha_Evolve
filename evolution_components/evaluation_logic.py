@@ -263,27 +263,9 @@ def evaluate_program(
     for t_idx in range(num_evaluation_steps):
         timestamp = common_time_index[t_idx]
 
-        features_at_t: Dict[str, Any] = {}
-        for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
-            if feat_name_template == "sector_id_vector":
-                features_at_t[feat_name_template] = sector_groups_vec
-                continue
-            col_name = feat_name_template.replace('_t', '')
-            try:
-                feat_vec = np.array([aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols], dtype=float)
-                features_at_t[feat_name_template] = np.nan_to_num(feat_vec, nan=0.0, posinf=0.0, neginf=0.0)  # Clean at source
-            except KeyError:
-                features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
-            except Exception:  # Broad exception during feature gathering
-                features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
-
-
-        for sc_name in SCALAR_FEATURE_NAMES:
-            if sc_name == "const_1":
-                features_at_t[sc_name] = 1.0
-            elif sc_name == "const_neg_1":
-                features_at_t[sc_name] = -1.0
-            # Add other scalar features if any
+        features_at_t = dh_module.get_features_at_time(
+            timestamp, aligned_dfs, stock_symbols, sector_groups_vec
+        )
 
         try:
             # prog.eval uses n_stocks for internal vector shaping/broadcasting.

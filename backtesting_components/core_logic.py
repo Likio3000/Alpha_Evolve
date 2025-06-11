@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd  # For DataFrame rolling in hold period
 from typing import TYPE_CHECKING, Dict, List, Any, OrderedDict as OrderedDictType
 
-from evolution_components.data_handling import get_sector_groups
+from evolution_components.data_handling import get_sector_groups, get_features_at_time
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram # Use the actual class from the framework
@@ -97,30 +97,9 @@ def backtest_cross_sectional_alpha(
         if t_idx == len(common_time_index) - 1:
             break
 
-        features_at_t: Dict[str, Any] = {}
-        for feat_template in cross_sectional_feature_vector_names:
-            if feat_template == "sector_id_vector":
-                features_at_t[feat_template] = sector_groups_vec
-                continue
-
-            col_name = feat_template.replace('_t', '')
-            try:
-                feature_vector = np.array([
-                    aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols
-                ], dtype=float)
-                features_at_t[feat_template] = np.nan_to_num(
-                    feature_vector, nan=0.0, posinf=0.0, neginf=0.0
-                )
-            except KeyError:
-                features_at_t[feat_template] = np.zeros(n_stocks, dtype=float)
-            except Exception:
-                features_at_t[feat_template] = np.zeros(n_stocks, dtype=float)
-
-        for scalar_feat_name in scalar_feature_names:
-            if scalar_feat_name == "const_1":
-                features_at_t[scalar_feat_name] = 1.0
-            elif scalar_feat_name == "const_neg_1":
-                features_at_t[scalar_feat_name] = -1.0
+        features_at_t = get_features_at_time(
+            timestamp, aligned_dfs, stock_symbols, sector_groups_vec
+        )
         
         try:
             signal_vector_t = prog.eval(features_at_t, program_state, n_stocks)
