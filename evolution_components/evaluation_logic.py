@@ -262,9 +262,12 @@ def evaluate_program(
     for t_idx in range(num_evaluation_steps):
         timestamp = common_time_index[t_idx]
 
-        features_at_t = dh_module.get_features_at_time(
-            timestamp, aligned_dfs, stock_symbols, sector_groups_vec
-        )
+        if hasattr(dh_module, "get_features_cached"):
+            features_at_t = dh_module.get_features_cached(timestamp)
+        else:
+            features_at_t = dh_module.get_features_at_time(
+                timestamp, aligned_dfs, stock_symbols, sector_groups_vec
+            )
 
         try:
             # prog.eval uses n_stocks for internal vector shaping/broadcasting.

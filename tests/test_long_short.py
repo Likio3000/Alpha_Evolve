@@ -104,7 +104,6 @@ def test_long_short_n_trades_only_requested_symbols():
     )
     manual_pos, manual_ret = manual_backtest(signals, rets[:-1], 1)
     assert all(np.count_nonzero(p) == 2 for p in manual_pos)
-    equity = np.cumprod(1 + manual_ret)
     mean_ret = manual_ret.mean()
     std_ret = manual_ret.std(ddof=0)
     sharpe = (mean_ret / (std_ret + 1e-9)) * np.sqrt(365 * 6)
