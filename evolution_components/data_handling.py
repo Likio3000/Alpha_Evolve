@@ -24,6 +24,7 @@ _STOCK_SYMBOLS: Optional[List[str]] = None
 _N_STOCKS: Optional[int] = None
 _EVAL_LAG_CACHE: int = 1 # Default, will be set by initialize_data
 _FEATURE_CACHE: Dict[pd.Timestamp, Dict[str, np.ndarray]] = {}
+_FEATURE_SCALE_METHOD: str = "zscore"
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -35,6 +36,33 @@ def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     df["range_rel"] = (df["high"] - df["low"]) / df["close"]
     df["ret_fwd"] = df["close"].pct_change(periods=1).shift(-1) # Shift by -1 for ret_fwd
     return df
+
+def _scale_feature_vector(raw_vector: np.ndarray, method: str) -> np.ndarray:
+    """Scale a numeric feature vector cross-sectionally."""
+    if raw_vector.size == 0:
+        return raw_vector
+
+    clean = np.nan_to_num(raw_vector, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if method == "sign":
+        scaled = np.sign(clean)
+    elif method == "rank":
+        if clean.size <= 1:
+            scaled = np.zeros_like(clean)
+        else:
+            temp = clean.argsort()
+            ranks = np.empty_like(temp, dtype=float)
+            ranks[temp] = np.arange(len(clean))
+            scaled = (ranks / (len(clean) - 1 + 1e-9)) * 2.0 - 1.0
+    else:  # Default z-score
+        mu = np.nanmean(clean)
+        sd = np.nanstd(clean)
+        if sd < 1e-9:
+            scaled = np.zeros_like(clean)
+        else:
+            scaled = (clean - mu) / sd
+
+    return scaled
 
 def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_common_points_param: int, eval_lag: int) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
     raw_dfs: Dict[str, pd.DataFrame] = {}
@@ -150,7 +178,11 @@ def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_l
         sector_groups_vec = get_sector_groups(_STOCK_SYMBOLS)
         for ts in _COMMON_TIME_INDEX:
             _FEATURE_CACHE[ts] = get_features_at_time(
-                ts, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec
+                ts,
+                _ALIGNED_DFS,
+                _STOCK_SYMBOLS,
+                sector_groups_vec,
+                _FEATURE_SCALE_METHOD,
             )
 
     logger.info(
@@ -268,7 +300,13 @@ def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tup
 
     return tuple(slices)  # type: ignore[return-value]
 
-def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+def get_features_at_time(
+    timestamp,
+    aligned_dfs,
+    stock_symbols,
+    sector_groups_vec,
+    scale_method: str | None = None,
+):
     """Return feature dict for a given timestamp.
 
     Parameters
@@ -284,6 +322,7 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
     """
     features_at_t = {}
     n_stocks = len(stock_symbols)
+    method = _FEATURE_SCALE_METHOD if scale_method is None else scale_method
 
     for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
         if feat_name_template == "sector_id_vector":
@@ -291,16 +330,18 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
             continue
         col_name = feat_name_template.replace("_t", "")
         try:
-            vec = np.array([
-                aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols
-            ], dtype=float)
-            features_at_t[feat_name_template] = np.nan_to_num(
-                vec, nan=0.0, posinf=0.0, neginf=0.0
+            vec = np.array(
+                [aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols],
+                dtype=float,
             )
+            vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+            features_at_t[feat_name_template] = _scale_feature_vector(vec, method)
         except KeyError:
-            features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+            vec = np.zeros(n_stocks, dtype=float)
+            features_at_t[feat_name_template] = _scale_feature_vector(vec, method)
         except Exception:
-            features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+            vec = np.zeros(n_stocks, dtype=float)
+            features_at_t[feat_name_template] = _scale_feature_vector(vec, method)
 
     for sc_name in SCALAR_FEATURE_NAMES:
         if sc_name == "const_1":
@@ -318,11 +359,23 @@ def get_features_cached(timestamp) -> Dict[str, np.ndarray]:
     if _ALIGNED_DFS is None or _STOCK_SYMBOLS is None:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     sector_groups_vec = get_sector_groups(_STOCK_SYMBOLS)
-    features = get_features_at_time(timestamp, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec)
+    features = get_features_at_time(
+        timestamp,
+        _ALIGNED_DFS,
+        _STOCK_SYMBOLS,
+        sector_groups_vec,
+        _FEATURE_SCALE_METHOD,
+    )
     _FEATURE_CACHE[timestamp] = features
     return features
 
 
 def clear_feature_cache() -> None:
     """Clear the precomputed feature cache."""
+    _FEATURE_CACHE.clear()
+
+def configure_feature_scaling(method: str) -> None:
+    """Set the cross-sectional scaling method for feature vectors."""
+    global _FEATURE_SCALE_METHOD
+    _FEATURE_SCALE_METHOD = method
     _FEATURE_CACHE.clear()

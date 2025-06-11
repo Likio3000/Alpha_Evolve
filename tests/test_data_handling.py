@@ -1,10 +1,15 @@
 import pytest
+import numpy as np
+import pandas as pd
+from collections import OrderedDict
 
 from evolution_components.data_handling import (
     _load_and_align_data_internal,
     get_data_splits,
     initialize_data,
     get_sector_groups,
+    get_features_at_time,
+    configure_feature_scaling,
 )
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
@@ -83,3 +88,18 @@ def test_get_sector_groups_example_symbols():
         DEFAULT_CRYPTO_SECTOR_MAPPING["BONK"],
     ]
     assert list(groups) == expected
+
+
+def test_feature_vector_scaling_zscore():
+    index = pd.RangeIndex(2)
+    aligned = OrderedDict({
+        "A": pd.DataFrame({"opens": [1.0, 2.0]}, index=index),
+        "B": pd.DataFrame({"opens": [2.0, 3.0]}, index=index),
+    })
+    symbols = list(aligned.keys())
+    sector_vec = np.array([0, 1])
+    configure_feature_scaling("zscore")
+    feats = get_features_at_time(index[0], aligned, symbols, sector_vec)
+    opens = feats["opens_t"]
+    assert np.allclose(opens.mean(), 0.0)
+    assert np.allclose(opens.std(ddof=0), 1.0)
