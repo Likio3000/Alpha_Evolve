@@ -36,14 +36,19 @@ If `uv` is unavailable you can replace `uv` with `python` in the commands.
 
 ## Running tests
 
-Before running tests ensure the Python dependencies are installed.  You can do
-this directly or via the helper script:
+Before running `pytest` you **must** install the project's dependencies:
 
 ```bash
-pip install -r requirements.txt  # or sh scripts/setup_env.sh
+pip install -r requirements.txt
 ```
 
-Once the environment is ready, run pytest.  The `-q` flag gives a concise
+If you prefer, you can run the helper script instead:
+
+```bash
+sh scripts/setup_env.sh
+```
+
+Once the environment is ready, run `pytest`.  The `-q` flag gives a concise
 summary and should complete without failures:
 
 ```bash
