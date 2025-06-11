@@ -108,6 +108,7 @@ class BacktestConfig(DataConfig):
     fee: float = 1.0                      # round-trip commission (bps)
     hold: int = 1                         # holding period (bars)
     scale: str = "zscore"
+    long_short_n: int = 0                 # 0 → use all symbols
     # For 4 hour bars on 24/7 crypto data use 365 days × 6 bars/day
     annualization_factor: float = 365 * 6
     seed: int = 42

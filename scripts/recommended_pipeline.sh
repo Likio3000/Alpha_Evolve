@@ -17,6 +17,7 @@ uv run run_pipeline.py 10 \
   --eval_cache_size 128 \
   --corr_cutoff 0.15 \
   --fee 0.5 \
+  --long_short_n 0 \
   --workers 4 \
   --run_baselines \
   --debug_prints
