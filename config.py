@@ -48,6 +48,8 @@ class DataConfig:
     sector_mapping: Dict[str, int] = field(
         default_factory=lambda: DEFAULT_CRYPTO_SECTOR_MAPPING.copy()
     )
+    # How numeric feature vectors are scaled cross-sectionally when extracted
+    feature_scale_method: str = "zscore"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

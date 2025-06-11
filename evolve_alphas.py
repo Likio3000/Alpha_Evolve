@@ -43,6 +43,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
         min_common_points=cfg.min_common_points,
         eval_lag=cfg.eval_lag
     )
+    dh_module.configure_feature_scaling(cfg.feature_scale_method)
     el_module.configure_evaluation(
         parsimony_penalty=cfg.parsimony_penalty,
         max_ops=cfg.max_ops,
