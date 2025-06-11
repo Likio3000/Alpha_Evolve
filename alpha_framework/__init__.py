@@ -9,6 +9,7 @@ from .alpha_framework_types import (
     OpSpec,
     OP_REGISTRY,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
     SCALAR_FEATURE_NAMES,
     FINAL_PREDICTION_VECTOR_NAME,
     SAFE_MAX
@@ -18,7 +19,7 @@ from .alpha_framework_program import AlphaProgram
 
 __all__ = [
     "TypeId", "OpSpec", "OP_REGISTRY",
-    "CROSS_SECTIONAL_FEATURE_VECTOR_NAMES", "SCALAR_FEATURE_NAMES",
+    "CROSS_SECTIONAL_FEATURE_VECTOR_NAMES", "CROSS_SECTIONAL_FEATURE_MATRIX_NAMES", "SCALAR_FEATURE_NAMES",
     "FINAL_PREDICTION_VECTOR_NAME", "SAFE_MAX",
     "Op", "AlphaProgram", "alpha_framework_operators",
 ]

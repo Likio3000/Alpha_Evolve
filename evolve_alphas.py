@@ -6,7 +6,12 @@ from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
 
-from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+from alpha_framework import (
+    AlphaProgram,
+    TypeId,
+    CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
+)
 import alpha_framework.program_logic_generation as plg
 import alpha_framework.program_logic_variation as plv
 from evolution_components import (
@@ -65,7 +70,10 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
     initialize_evaluation_cache(cfg.eval_cache_size)
 
 
-FEATURE_VARS: Dict[str, TypeId] = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
+FEATURE_VARS: Dict[str, TypeId] = {
+    name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+}
+FEATURE_VARS.update({name: "matrix" for name in CROSS_SECTIONAL_FEATURE_MATRIX_NAMES})
 # Constant scalar features are deliberately excluded to align with the
 # reference paper.  They remain accessible via SCALAR_FEATURE_NAMES if needed.
 

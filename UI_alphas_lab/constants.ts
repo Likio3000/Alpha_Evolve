@@ -16,6 +16,10 @@ export const CROSS_SECTIONAL_FEATURE_VECTOR_NAMES_CONST: string[] = [
     "ret1d_t", "range_rel_t"
 ];
 
+export const CROSS_SECTIONAL_FEATURE_MATRIX_NAMES_CONST: string[] = [
+    "sector_mask_matrix"
+];
+
 export const SCALAR_FEATURE_NAMES_CONST: string[] = ["const_1", "const_neg_1"];
 export const FINAL_PREDICTION_VECTOR_NAME_CONST = "s1_predictions_vector";
 

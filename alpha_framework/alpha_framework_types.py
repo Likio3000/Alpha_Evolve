@@ -13,7 +13,11 @@ CROSS_SECTIONAL_FEATURE_VECTOR_NAMES = [
     "ma5_t", "ma10_t", "ma20_t", "ma30_t",
     "vol5_t", "vol10_t", "vol20_t", "vol30_t",
     "ret1d_t", "range_rel_t",
-    "sector_id_vector",
+]
+
+# Additional cross‑sectional features that return matrices
+CROSS_SECTIONAL_FEATURE_MATRIX_NAMES = [
+    "sector_mask_matrix",
 ]
 SCALAR_FEATURE_NAMES = ["const_1", "const_neg_1"]
 

@@ -56,7 +56,10 @@ def test_heaviside_op():
 def test_relation_ops():
     v = np.array([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
     groups = np.array([0, 0, 0, 1, 1, 1])
-    buf = {"v": v, "g": groups}
+    mask = np.zeros((len(groups), 2))
+    mask[groups == 0, 0] = 1.0
+    mask[groups == 1, 1] = 1.0
+    buf = {"v": v, "g": mask}
     Op("rank_out", "relation_rank", ("v", "g")).execute(buf, n_stocks=6)
     Op("demean_out", "relation_demean", ("v", "g")).execute(buf, n_stocks=6)
     expected_rank = np.array([-1.0, 0.0, 1.0, -1.0, 0.0, 1.0])
@@ -68,7 +71,11 @@ def test_relation_ops():
 def test_relation_ops_realistic_groups():
     v = np.array([10.0, 20.0, 30.0, 100.0, 80.0, 5.0, 15.0, 25.0])
     groups = np.array([1, 1, 1, 2, 2, 3, 3, 3])
-    buf = {"v": v, "g": groups}
+    uniq = np.unique(groups)
+    mask = np.zeros((len(groups), len(uniq)))
+    for idx, g in enumerate(uniq):
+        mask[groups == g, idx] = 1.0
+    buf = {"v": v, "g": mask}
     Op("rank_out", "relation_rank", ("v", "g")).execute(buf, n_stocks=8)
     Op("demean_out", "relation_demean", ("v", "g")).execute(buf, n_stocks=8)
     expected_rank = np.array([-1.0, 0.0, 1.0, 1.0, -1.0, -1.0, 0.0, 1.0])

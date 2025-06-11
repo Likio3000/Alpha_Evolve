@@ -13,6 +13,7 @@ from config import BacktestConfig                # ← NEW
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
     SCALAR_FEATURE_NAMES,
     OP_REGISTRY,
 )
@@ -23,7 +24,11 @@ from backtesting_components import (
 
 def _derive_state_vars(prog: AlphaProgram) -> Dict[str, str]:
     """Infer required state variables from the program structure."""
-    feature_vars = set(SCALAR_FEATURE_NAMES) | set(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
+    feature_vars = (
+        set(SCALAR_FEATURE_NAMES)
+        | set(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
+        | set(CROSS_SECTIONAL_FEATURE_MATRIX_NAMES)
+    )
     defined = set(feature_vars)
     state_vars: Dict[str, str] = {}
 
@@ -148,6 +153,7 @@ def main() -> None:
             initial_state_vars_config=_derive_state_vars(prog),
             scalar_feature_names=SCALAR_FEATURE_NAMES,
             cross_sectional_feature_vector_names=CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+            cross_sectional_feature_matrix_names=CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
             debug_prints=cli.debug_prints,
             annualization_factor=cli.annualization_factor_override
                                    if cli.annualization_factor_override is not None

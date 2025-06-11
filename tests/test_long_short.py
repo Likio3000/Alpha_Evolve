@@ -101,6 +101,7 @@ def test_long_short_n_trades_only_requested_symbols():
         initial_state_vars_config={},
         scalar_feature_names=[],
         cross_sectional_feature_vector_names=[],
+        cross_sectional_feature_matrix_names=[],
     )
     manual_pos, manual_ret = manual_backtest(signals, rets[:-1], 1)
     assert all(np.count_nonzero(p) == 2 for p in manual_pos)

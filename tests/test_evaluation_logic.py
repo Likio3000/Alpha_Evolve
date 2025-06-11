@@ -521,7 +521,8 @@ def test_sector_vector_available():
     dh = SectorDH()
     hof = DummyHOF()
     prog = AlphaProgram(predict_ops=[
-        Op(FINAL_PREDICTION_VECTOR_NAME, "vec_mul_scalar", ("sector_id_vector", "const_1"))
+        Op("sector_one", "get_stock_vector", ("sector_mask_matrix", "const_1")),
+        Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("sector_one",)),
     ])
     configure_evaluation(
         parsimony_penalty=0.002,
