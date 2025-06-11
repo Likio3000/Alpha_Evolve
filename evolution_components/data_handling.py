@@ -9,10 +9,13 @@ from collections import OrderedDict
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING, DataConfig
 import numpy as np
 import pandas as pd
+import logging
 from alpha_framework.alpha_framework_types import (
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
     SCALAR_FEATURE_NAMES,
 )
+
+logger = logging.getLogger(__name__)
 
 # Module-level state for loaded data
 _ALIGNED_DFS: Optional[OrderedDictType[str, pd.DataFrame]] = None
@@ -69,7 +72,9 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
     common_index: Optional[pd.DatetimeIndex] = None
     for sym_name, df_sym in raw_dfs.items(): # Iterate to find common index
         if df_sym.index.has_duplicates:
-            print(f"Warning: Duplicate timestamps found in {sym_name}. Keeping first.")
+            logger.warning(
+                "Duplicate timestamps found in %s. Keeping first.", sym_name
+            )
             df_sym = df_sym[~df_sym.index.duplicated(keep='first')]
             raw_dfs[sym_name] = df_sym
 
@@ -106,8 +111,11 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
         
         # Final check for NaNs after alignment (should be rare if common_index logic is robust)
         if reindexed_df.isnull().values.any():
-             print(f"Warning: DataFrame for {sym} still contains NaNs after ffill/bfill on common_index. This might indicate issues with source data or alignment logic.")
-             # Potentially drop this symbol or handle NaNs further, for now, we proceed.
+            logger.warning(
+                "DataFrame for %s still contains NaNs after ffill/bfill on common_index. This might indicate issues with source data or alignment logic.",
+                sym,
+            )
+            # Potentially drop this symbol or handle NaNs further, for now, we proceed.
         aligned_dfs_ordered[sym] = reindexed_df
 
     stock_symbols = list(aligned_dfs_ordered.keys())
@@ -119,10 +127,16 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
 def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_lag: int):
     global _ALIGNED_DFS, _COMMON_TIME_INDEX, _STOCK_SYMBOLS, _N_STOCKS, _EVAL_LAG_CACHE
     if _ALIGNED_DFS is not None:
-        print("Data already initialized.")
+        logger.info("Data already initialized.")
         return
 
-    print(f"Loading and aligning data: dir='{data_dir}', strategy='{strategy}', min_points='{min_common_points}', eval_lag='{eval_lag}'")
+    logger.info(
+        "Loading and aligning data: dir='%s', strategy='%s', min_points='%s', eval_lag='%s'",
+        data_dir,
+        strategy,
+        min_common_points,
+        eval_lag,
+    )
     
     _ALIGNED_DFS, _COMMON_TIME_INDEX, _STOCK_SYMBOLS = _load_and_align_data_internal(
         data_dir, strategy, min_common_points, eval_lag
@@ -130,9 +144,17 @@ def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_l
     _N_STOCKS = len(_STOCK_SYMBOLS)
     _EVAL_LAG_CACHE = eval_lag
 
-    print(f"Data initialized: {_N_STOCKS} symbols, {_COMMON_TIME_INDEX.size if _COMMON_TIME_INDEX is not None else 0} common time steps.")
+    logger.info(
+        "Data initialized: %s symbols, %s common time steps.",
+        _N_STOCKS,
+        _COMMON_TIME_INDEX.size if _COMMON_TIME_INDEX is not None else 0,
+    )
     if _COMMON_TIME_INDEX is not None:
-         print(f"Data spans from {_COMMON_TIME_INDEX.min()} to {_COMMON_TIME_INDEX.max()}.")
+        logger.info(
+            "Data spans from %s to %s.",
+            _COMMON_TIME_INDEX.min(),
+            _COMMON_TIME_INDEX.max(),
+        )
 
 
 def get_aligned_dfs() -> OrderedDictType[str, pd.DataFrame]:
