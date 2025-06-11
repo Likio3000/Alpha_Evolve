@@ -26,6 +26,7 @@ from config import EvolutionConfig, BacktestConfig
 import evolve_alphas as ae
 import backtest_evolved_alphas as bt
 from utils.logging_setup import setup_logging
+from utils.log_counter import CountingHandler
 
 BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 
@@ -97,6 +98,8 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
                    help="Logging level (DEBUG, INFO, WARNING, ERROR)")
     p.add_argument("--log-file", default=None,
                    help="File to additionally write logs to")
+    p.add_argument("--count_logs", action="store_true",
+                   help="Enable log counting during the pipeline run")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -185,7 +188,11 @@ def main() -> None:
     elif getattr(cli, "quiet", False):
         level = logging.WARNING
 
-    setup_logging(level=level, log_file=cli.log_file)
+    counter: CountingHandler | None = None
+    if getattr(cli, "count_logs", False):
+        counter = setup_logging(level=level, log_file=cli.log_file, log_counter=True)
+    else:
+        setup_logging(level=level, log_file=cli.log_file)
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
     run_dir = (BASE_OUTPUT_DIR /
@@ -229,6 +236,8 @@ def main() -> None:
                          retrain=getattr(cli, "retrain_baselines", False))
 
     logger.info(f"\n✔  Pipeline finished – artefacts in  {run_dir}")
+    if counter is not None:
+        counter.dump_summary(run_dir / "log_summary.txt")
 
 
 if __name__ == "__main__":
