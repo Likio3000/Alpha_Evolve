@@ -2,12 +2,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Dict, List, Optional
 import numpy as np
 
+from .alpha_framework_op import Op
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
 
 # Probability that a newly added op must output a vector.  Can be
 # overridden by callers (e.g. `evolve_alphas`) before program creation.
 VECTOR_OPS_BIAS = 0.0
-from .alpha_framework_op import Op
 
 # Per-stage limits from the paper
 MAX_SETUP_OPS = 21
