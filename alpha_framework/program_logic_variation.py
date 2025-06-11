@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Dict, Optional
+import sys
 import numpy as np
 import copy # For crossover, specifically deepcopy of other's predict_ops
 
@@ -39,12 +40,30 @@ def mutate_program_logic(
     max_setup_ops: int = MAX_SETUP_OPS,
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
+    max_scalar_operands: int = sys.maxsize,
+    max_vector_operands: int = sys.maxsize,
+    max_matrix_operands: int = sys.maxsize,
 ) -> AlphaProgram:
     """
     Core logic for AlphaProgram.mutate method.
     """
     rng = rng or np.random.default_rng()
     new_prog = self_prog.copy()
+
+    def _count_outputs(prog: 'AlphaProgram'):
+        counts = {"scalar": 0, "vector": 0, "matrix": 0}
+        current = {**feature_vars, **state_vars}
+        for op in prog.setup + prog.predict_ops + prog.update_ops:
+            spec = OP_REGISTRY[op.opcode]
+            out_t = spec.out_type
+            if spec.is_elementwise and out_t == "scalar":
+                if any(current.get(i) == "vector" for i in op.inputs):
+                    out_t = "vector"
+            counts[out_t] += 1
+            current[op.out] = out_t
+        return counts
+
+    counts = _count_outputs(new_prog)
 
     block_name_choices = ["predict"] * 6 + ["setup"] * 2 + ["update"] * 2
     chosen_block_name = rng.choice(block_name_choices)
@@ -119,24 +138,36 @@ def mutate_program_logic(
                 candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
 
         if candidate_ops_for_add:
-            choice_index = rng.integers(len(candidate_ops_for_add))
-            sel_op_n, sel_op_s, sel_sources = candidate_ops_for_add[choice_index]
-            chosen_ins = tuple(rng.choice(s_list) for s_list in sel_sources)
+            rng.shuffle(candidate_ops_for_add)
+            while candidate_ops_for_add:
+                choice_index = rng.integers(len(candidate_ops_for_add))
+                sel_op_n, sel_op_s, sel_sources = candidate_ops_for_add.pop(choice_index)
+                chosen_ins = tuple(rng.choice(s_list) for s_list in sel_sources)
 
-            actual_out_t = sel_op_s.out_type
-            if sel_op_s.is_elementwise and sel_op_s.out_type == "scalar":
-                 if any(temp_current_vars.get(inp_n) == "vector" for inp_n in chosen_ins):
-                    actual_out_t = "vector"
+                actual_out_t = sel_op_s.out_type
+                if sel_op_s.is_elementwise and sel_op_s.out_type == "scalar":
+                    if any(temp_current_vars.get(inp_n) == "vector" for inp_n in chosen_ins):
+                        actual_out_t = "vector"
 
-            out_n = ""
-            if chosen_block_name == "predict" and insertion_idx == len(chosen_block_ops_list) and actual_out_t == "vector":
-                out_n = FINAL_PREDICTION_VECTOR_NAME
-            else:
-                tmp_idx_mut = rng.integers(10000, 20000)
-                out_n = f"m{tmp_idx_mut}_{actual_out_t[0]}"
+                if actual_out_t == "scalar" and counts["scalar"] >= max_scalar_operands:
+                    continue
+                if actual_out_t == "vector" and counts["vector"] >= max_vector_operands:
+                    continue
+                if actual_out_t == "matrix" and counts["matrix"] >= max_matrix_operands:
+                    continue
 
-            new_op_to_insert = Op(out_n, sel_op_n, chosen_ins)
-            chosen_block_ops_list.insert(insertion_idx, new_op_to_insert)
+                out_n = ""
+                if chosen_block_name == "predict" and insertion_idx == len(chosen_block_ops_list) and actual_out_t == "vector":
+                    out_n = FINAL_PREDICTION_VECTOR_NAME
+                else:
+                    tmp_idx_mut = rng.integers(10000, 20000)
+                    out_n = f"m{tmp_idx_mut}_{actual_out_t[0]}"
+
+                new_op_to_insert = Op(out_n, sel_op_n, chosen_ins)
+                chosen_block_ops_list.insert(insertion_idx, new_op_to_insert)
+                counts[actual_out_t] += 1
+                break
+
 
     elif mutation_type == "remove":
         if chosen_block_ops_list:
@@ -150,14 +181,34 @@ def mutate_program_logic(
                 can_remove = False
 
             if can_remove and not is_final_pred_op_targeted :
-                chosen_block_ops_list.pop(idx_to_remove)
+                op_removed = chosen_block_ops_list.pop(idx_to_remove)
+                spec_r = OP_REGISTRY[op_removed.opcode]
+                out_t = spec_r.out_type
+                if spec_r.is_elementwise and out_t == "scalar":
+                    vars_before = new_prog.get_vars_at_point(chosen_block_name, idx_to_remove, feature_vars, state_vars)
+                    if any(vars_before.get(i) == "vector" for i in op_removed.inputs):
+                        out_t = "vector"
+                counts[out_t] -= 1
             elif can_remove and is_final_pred_op_targeted and len(chosen_block_ops_list)>1:
-                 chosen_block_ops_list.pop(idx_to_remove)
+                 op_removed = chosen_block_ops_list.pop(idx_to_remove)
+                 spec_r = OP_REGISTRY[op_removed.opcode]
+                 out_t = spec_r.out_type
+                 if spec_r.is_elementwise and out_t == "scalar":
+                     vars_before = new_prog.get_vars_at_point(chosen_block_name, idx_to_remove, feature_vars, state_vars)
+                     if any(vars_before.get(i) == "vector" for i in op_removed.inputs):
+                         out_t = "vector"
+                 counts[out_t] -= 1
 
 
     elif mutation_type == "change_op" and chosen_block_ops_list:
         op_idx_to_change = rng.integers(0, len(chosen_block_ops_list))
         original_op = chosen_block_ops_list[op_idx_to_change]
+        vars_before_change = new_prog.get_vars_at_point(chosen_block_name, op_idx_to_change, feature_vars, state_vars)
+        orig_spec = OP_REGISTRY[original_op.opcode]
+        orig_out = orig_spec.out_type
+        if orig_spec.is_elementwise and orig_spec.out_type == "scalar":
+            if any(vars_before_change.get(i) == "vector" for i in original_op.inputs):
+                orig_out = "vector"
 
         is_final_predict_op = chosen_block_name == "predict" and \
                               original_op.out == FINAL_PREDICTION_VECTOR_NAME and \
@@ -173,8 +224,25 @@ def mutate_program_logic(
                     compatible_ops.append(op_n)
 
         if compatible_ops:
-            new_opcode = rng.choice(compatible_ops)
-            chosen_block_ops_list[op_idx_to_change] = Op(original_op.out, new_opcode, original_op.inputs)
+            rng.shuffle(compatible_ops)
+            while compatible_ops:
+                new_opcode = compatible_ops.pop()
+                spec_new = OP_REGISTRY[new_opcode]
+                new_out = spec_new.out_type
+                if spec_new.is_elementwise and spec_new.out_type == "scalar":
+                    if any(vars_before_change.get(i) == "vector" for i in original_op.inputs):
+                        new_out = "vector"
+                if new_out == "scalar" and counts["scalar"] >= max_scalar_operands and new_out != orig_out:
+                    continue
+                if new_out == "vector" and counts["vector"] >= max_vector_operands and new_out != orig_out:
+                    continue
+                if new_out == "matrix" and counts["matrix"] >= max_matrix_operands and new_out != orig_out:
+                    continue
+                chosen_block_ops_list[op_idx_to_change] = Op(original_op.out, new_opcode, original_op.inputs)
+                if new_out != orig_out:
+                    counts[orig_out] -= 1
+                    counts[new_out] += 1
+                break
 
     elif mutation_type == "change_inputs" and chosen_block_ops_list:
         op_idx_to_change = rng.integers(0, len(chosen_block_ops_list))
@@ -216,10 +284,35 @@ def mutate_program_logic(
             eligible_candidates = [vn for vn, vt in vars_at_op.items() if vt == required_type and vn != original_input_name]
 
         if eligible_candidates:
-            new_input_name = rng.choice(eligible_candidates)
-            new_inputs_tuple = list(op_to_mutate.inputs)
-            new_inputs_tuple[input_idx_to_change] = new_input_name
-            chosen_block_ops_list[op_idx_to_change] = Op(op_to_mutate.out, op_to_mutate.opcode, tuple(new_inputs_tuple))
+            rng.shuffle(eligible_candidates)
+            while eligible_candidates:
+                new_input_name = eligible_candidates.pop()
+                new_inputs_tuple = list(op_to_mutate.inputs)
+                new_inputs_tuple[input_idx_to_change] = new_input_name
+                new_inputs_tuple_tuple = tuple(new_inputs_tuple)
+                out_t_old = OP_REGISTRY[op_to_mutate.opcode].out_type
+                if OP_REGISTRY[op_to_mutate.opcode].is_elementwise and out_t_old == "scalar":
+                    if any(vars_at_op.get(inp_n) == "vector" for idx_tmp, inp_n in enumerate(op_to_mutate.inputs) if idx_tmp != input_idx_to_change) or vars_at_op.get(new_input_name) == "vector":
+                        new_out_t = "vector"
+                    else:
+                        new_out_t = "scalar"
+                else:
+                    new_out_t = out_t_old
+                orig_out = out_t_old
+                if OP_REGISTRY[op_to_mutate.opcode].is_elementwise and out_t_old == "scalar":
+                    if any(vars_at_op.get(inp_n) == "vector" for inp_n in op_to_mutate.inputs):
+                        orig_out = "vector"
+                if new_out_t == "scalar" and counts["scalar"] >= max_scalar_operands and new_out_t != orig_out:
+                    continue
+                if new_out_t == "vector" and counts["vector"] >= max_vector_operands and new_out_t != orig_out:
+                    continue
+                if new_out_t == "matrix" and counts["matrix"] >= max_matrix_operands and new_out_t != orig_out:
+                    continue
+                chosen_block_ops_list[op_idx_to_change] = Op(op_to_mutate.out, op_to_mutate.opcode, new_inputs_tuple_tuple)
+                if new_out_t != orig_out:
+                    counts[orig_out] -= 1
+                    counts[new_out_t] += 1
+                break
 
     # Ensure predict block ends with a vector named FINAL_PREDICTION_VECTOR_NAME
     if new_prog.predict_ops:
@@ -289,6 +382,9 @@ def crossover_program_logic(
     max_setup_ops: int = MAX_SETUP_OPS,
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
+    max_scalar_operands: int = sys.maxsize,
+    max_vector_operands: int = sys.maxsize,
+    max_matrix_operands: int = sys.maxsize,
 ) -> AlphaProgram:
     """
     Core logic for AlphaProgram.crossover method.

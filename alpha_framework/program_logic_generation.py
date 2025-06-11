@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Dict, List, Optional
 import numpy as np
+import sys
 
 from .alpha_framework_op import Op
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
@@ -27,6 +28,9 @@ def generate_random_program_logic(
     max_setup_ops: int = MAX_SETUP_OPS,
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
+    max_scalar_operands: int = sys.maxsize,
+    max_vector_operands: int = sys.maxsize,
+    max_matrix_operands: int = sys.maxsize,
 ) -> AlphaProgram:
     """
     Build a random but type-correct AlphaProgram.
@@ -45,6 +49,9 @@ def generate_random_program_logic(
     n_update_ops = min(n_update_ops, max_update_ops)
 
     tmp_idx = 0
+    scalar_count = 0
+    vector_count = 0
+    matrix_count = 0
     def _new_tmp(t: TypeId) -> str:
         nonlocal tmp_idx
         tmp_idx += 1
@@ -56,6 +63,7 @@ def generate_random_program_logic(
                  how_many: int,
                  is_predict: bool) -> None:
 
+        nonlocal scalar_count, vector_count, matrix_count
         current = in_vars.copy()
 
         for k in range(how_many):
@@ -102,9 +110,16 @@ def generate_random_program_logic(
                     if spec.is_elementwise and out_t == "scalar":
                         if any(current[i] == "vector" for i in ins):
                             out_t = "vector"
-                    if out_t == "vector":
-                        chosen_name, chosen_spec, chosen_ins = op_name, spec, ins
-                        break
+                    if out_t != "vector":
+                        continue
+                    if out_t == "scalar" and scalar_count >= max_scalar_operands:
+                        continue
+                    if out_t == "vector" and vector_count >= max_vector_operands:
+                        continue
+                    if out_t == "matrix" and matrix_count >= max_matrix_operands:
+                        continue
+                    chosen_name, chosen_spec, chosen_ins = op_name, spec, ins
+                    break
 
                 if chosen_name is None:
                     # <-- this is the NEW behaviour (May-2025 change in original file)
@@ -113,13 +128,24 @@ def generate_random_program_logic(
                         "operation for the final predict slot"
                     )
             else:
-                idx = rng.integers(len(candidates))      # ← pick index
-                chosen_name, chosen_spec, pools = candidates[idx]
-                chosen_ins = tuple(rng.choice(p) for p in pools)
-                out_t = chosen_spec.out_type
-                if chosen_spec.is_elementwise and out_t == "scalar":
-                    if any(current[i] == "vector" for i in chosen_ins):
-                        out_t = "vector"
+                rng.shuffle(candidates)
+                while candidates:
+                    idx = rng.integers(len(candidates))      # ← pick index
+                    chosen_name, chosen_spec, pools = candidates.pop(idx)
+                    chosen_ins = tuple(rng.choice(p) for p in pools)
+                    out_t = chosen_spec.out_type
+                    if chosen_spec.is_elementwise and out_t == "scalar":
+                        if any(current[i] == "vector" for i in chosen_ins):
+                            out_t = "vector"
+                    if out_t == "scalar" and scalar_count >= max_scalar_operands:
+                        continue
+                    if out_t == "vector" and vector_count >= max_vector_operands:
+                        continue
+                    if out_t == "matrix" and matrix_count >= max_matrix_operands:
+                        continue
+                    break
+                else:
+                    break
 
             # 3. emit op
             out_name = (FINAL_PREDICTION_VECTOR_NAME
@@ -127,6 +153,12 @@ def generate_random_program_logic(
                         else _new_tmp(out_t)) # type: ignore
             block.append(Op(out_name, chosen_name, chosen_ins)) # type: ignore
             current[out_name] = out_t # type: ignore
+            if out_t == "scalar":
+                scalar_count += 1
+            elif out_t == "vector":
+                vector_count += 1
+            else:
+                matrix_count += 1
 
     # ────────────────── actually build the three blocks ──────────────────
     _add_ops(prog.setup,   {**feature_vars, **state_vars},           n_setup_ops,   False)
