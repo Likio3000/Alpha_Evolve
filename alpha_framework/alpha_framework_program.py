@@ -23,6 +23,13 @@ from .program_logic_variation import mutate_program_logic, crossover_program_log
 
 @dataclass
 class AlphaProgram:
+    """Container for a single alpha trading program.
+
+    The program is split into three ordered lists of :class:`Op` instances:
+    a setup block, a predict block and an update block.  The predict block is
+    expected to end with an operation that produces the
+    :data:`FINAL_PREDICTION_VECTOR_NAME` vector.
+    """
     setup: List[Op] = field(default_factory=list)
     predict_ops: List[Op] = field(default_factory=list)
     update_ops: List[Op] = field(default_factory=list)
@@ -51,6 +58,26 @@ class AlphaProgram:
 
     def get_vars_at_point(self, block_name: Literal["setup", "predict", "update"], op_index: int,
                           feature_vars: Dict[str, TypeId], state_vars: Dict[str, TypeId]) -> Dict[str, TypeId]:
+        """Return variables available before a given operation.
+
+        Parameters
+        ----------
+        block_name:
+            Which block to inspect (``"setup"``, ``"predict"`` or ``"update"``).
+        op_index:
+            Index of the operation within that block.
+        feature_vars:
+            Mapping of feature variable names to types.
+        state_vars:
+            Mapping of state variable names to types.
+
+        Returns
+        -------
+        Dict[str, TypeId]
+            Combined dictionary of the base variables and those defined up to the
+            specified point.
+        """
+
         available_vars = {}
         base_vars = {**feature_vars, **state_vars}
 
@@ -79,6 +106,25 @@ class AlphaProgram:
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
     ) -> "AlphaProgram":
+        """Create a random, type-correct program.
+
+        Parameters
+        ----------
+        feature_vars, state_vars:
+            Dictionaries mapping variable names to their types.
+        max_total_ops:
+            Maximum number of operations across all blocks.
+        rng:
+            Optional random number generator used for reproducibility.
+        max_setup_ops, max_predict_ops, max_update_ops:
+            Per-block limits overriding the defaults from the paper.
+
+        Returns
+        -------
+        AlphaProgram
+            Newly generated program instance.
+        """
+
         return generate_random_program_logic(
             cls,
             feature_vars,
@@ -91,6 +137,8 @@ class AlphaProgram:
         )
 
     def copy(self) -> "AlphaProgram":
+        """Return a deep copy of this program."""
+
         new_prog = AlphaProgram(
             setup=copy.deepcopy(self.setup),
             predict_ops=copy.deepcopy(self.predict_ops),
@@ -107,6 +155,8 @@ class AlphaProgram:
                max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
                max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
                max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS) -> "AlphaProgram":
+        """Return a mutated copy of this program."""
+
         return mutate_program_logic(
             self,
             feature_vars,
@@ -130,6 +180,8 @@ class AlphaProgram:
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
     ) -> "AlphaProgram":
+        """Create offspring from this program and ``other``."""
+
         return crossover_program_logic(
             self,
             other,
@@ -141,19 +193,43 @@ class AlphaProgram:
 
     @staticmethod
     def _get_default_feature_vars() -> Dict[str, TypeId]:
+        """Return a mapping of default feature names to ``"vector"`` type."""
+
         default_vars = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
         # Do not include constant scalar features by default.  They are still
         # available via SCALAR_FEATURE_NAMES if callers need them explicitly.
         return default_vars
 
     def new_state(self) -> Dict[str, Union[np.ndarray, float]]:
-        # Basic implementation, can be overridden or extended if programs need complex initial state
+        """Return the initial program state.
+
+        Override in subclasses if more complex state is required.
+        """
+
         return {}
 
     def eval(self, features_at_t: Dict[str, Union[np.ndarray, float]],
                state: Dict[str, Union[np.ndarray, float]],
                n_stocks: int) -> np.ndarray:
-        self._vars_info_cache = None # Clear cache at start of eval
+        """Execute the program for one timestep.
+
+        Parameters
+        ----------
+        features_at_t:
+            Current feature values keyed by variable name.
+        state:
+            Mutable state dictionary that will be updated in-place.
+        n_stocks:
+            Number of stocks for vector operations.
+
+        Returns
+        -------
+        np.ndarray
+            Prediction vector of length ``n_stocks``. Invalid executions result
+            in a vector of ``NaN`` values.
+        """
+
+        self._vars_info_cache = None  # Clear cache at start of eval
 
         buf: Dict[str, Union[np.ndarray, float]] = {**features_at_t, **state}
 
@@ -225,9 +301,13 @@ class AlphaProgram:
 
     @property
     def size(self) -> int:
+        """Total number of operations across all blocks."""
+
         return len(self.setup) + len(self.predict_ops) + len(self.update_ops)
 
     def to_string(self, max_len: int = 1000) -> str:
+        """Return a short text representation of the program."""
+
         txt_parts = []
         if self.setup:
             txt_parts.append(f"S[{';'.join(map(str, self.setup))}]")
@@ -241,6 +321,8 @@ class AlphaProgram:
 
     @property
     def fingerprint(self) -> str:
+        """Stable hash representing the program structure."""
+
         serial = {
             "setup": [(o.out, o.opcode, o.inputs) for o in self.setup],
             "predict": [(o.out, o.opcode, o.inputs) for o in self.predict_ops],
@@ -250,6 +332,10 @@ class AlphaProgram:
 
     def prune(self) -> "AlphaProgram":
         """Remove operations whose outputs are never used."""
+
+        # Walk blocks backwards to track which variables are required
+        # for producing the final prediction vector.  Any operation that does
+        # not contribute to that set is discarded.
         useful = {FINAL_PREDICTION_VECTOR_NAME}
 
         def _prune_block(block):

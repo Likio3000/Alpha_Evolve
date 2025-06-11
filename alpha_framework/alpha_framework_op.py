@@ -16,7 +16,11 @@ class Op:
     opcode: str
     inputs: Tuple[str, ...]
 
-    def execute(self, buf: Dict[str, Union[np.ndarray, float]], n_stocks: int): # Adjusted buf type hint
+    """Single operation used by :class:`AlphaProgram`."""
+
+    def execute(self, buf: Dict[str, Union[np.ndarray, float]], n_stocks: int):
+        """Execute this operation, updating ``buf`` in-place."""
+
         spec = OP_REGISTRY[self.opcode]
 
         processed_args = []
