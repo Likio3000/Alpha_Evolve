@@ -14,11 +14,33 @@ from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
     SCALAR_FEATURE_NAMES,
+    OP_REGISTRY,
 )
 from backtesting_components import (
     load_and_align_data_for_backtest,
     backtest_cross_sectional_alpha,
 )
+
+def _derive_state_vars(prog: AlphaProgram) -> Dict[str, str]:
+    """Infer required state variables from the program structure."""
+    feature_vars = set(SCALAR_FEATURE_NAMES) | set(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
+    defined = set(feature_vars)
+    state_vars: Dict[str, str] = {}
+
+    for op in prog.setup + prog.predict_ops + prog.update_ops:
+        spec = OP_REGISTRY[op.opcode]
+        for idx, inp in enumerate(op.inputs):
+            if inp not in defined and inp not in state_vars:
+                arg_type = spec.in_types[idx]
+                if spec.is_elementwise and arg_type == "scalar":
+                    arg_type = "vector"
+                state_vars[inp] = arg_type
+        defined.add(op.out)
+
+    # Always include defaults expected during evolution
+    state_vars.setdefault("prev_s1_vec", "vector")
+    state_vars.setdefault("rolling_mean_custom", "vector")
+    return state_vars
 
 # --------------------------------------------------------------------------- #
 #  helpers                                                                    #
@@ -123,7 +145,7 @@ def main() -> None:
             hold=cfg.hold,
             long_short_n=cfg.long_short_n,
             scale_method=cfg.scale,
-            initial_state_vars_config={"prev_s1_vec": "vector"},
+            initial_state_vars_config=_derive_state_vars(prog),
             scalar_feature_names=SCALAR_FEATURE_NAMES,
             cross_sectional_feature_vector_names=CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
             debug_prints=cli.debug_prints,
