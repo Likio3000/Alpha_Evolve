@@ -11,9 +11,8 @@ import numpy as np
 from .alpha_framework_types import (
     TypeId,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
-    SCALAR_FEATURE_NAMES,
     FINAL_PREDICTION_VECTOR_NAME,
-    OP_REGISTRY # Required for OpSpec access
+    OP_REGISTRY,  # Required for OpSpec access
 )
 from .alpha_framework_op import Op
 from . import program_logic_generation
@@ -142,8 +141,7 @@ class AlphaProgram:
     @staticmethod
     def _get_default_feature_vars() -> Dict[str, TypeId]:
         default_vars = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
-        # Do not include constant scalar features by default.  They are still
-        # available via SCALAR_FEATURE_NAMES if callers need them explicitly.
+        # Do not include constant scalar features by default.
         return default_vars
 
     def new_state(self) -> Dict[str, Union[np.ndarray, float]]:

@@ -1,5 +1,3 @@
-import pytest
-
 from config import EvolutionConfig
 from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 import evolve_alphas

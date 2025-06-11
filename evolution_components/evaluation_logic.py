@@ -11,10 +11,9 @@ if TYPE_CHECKING:
     from evolution_components import data_handling # To access data
     from evolution_components import hall_of_fame_manager as hof_manager # To get HOF penalty
 
-from alpha_framework.alpha_framework_types import ( # Ensure these are correct based on where AlphaProgram is defined
+from alpha_framework.alpha_framework_types import (  # Ensure these are correct based on where AlphaProgram is defined
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
-    SCALAR_FEATURE_NAMES,
-    FINAL_PREDICTION_VECTOR_NAME
+    FINAL_PREDICTION_VECTOR_NAME,
 )
 
 
