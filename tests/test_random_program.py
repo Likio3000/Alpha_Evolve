@@ -3,6 +3,7 @@ import numpy as np
 from alpha_framework import (
     AlphaProgram,
     FINAL_PREDICTION_VECTOR_NAME,
+    OP_REGISTRY,
 )
 from alpha_framework.program_logic_generation import (
     MAX_SETUP_OPS,
@@ -47,3 +48,38 @@ def test_random_program_respects_block_limits():
     assert len(prog.setup) <= MAX_SETUP_OPS
     assert len(prog.predict_ops) <= MAX_PREDICT_OPS
     assert len(prog.update_ops) <= MAX_UPDATE_OPS
+
+
+def _count_output_types(prog: AlphaProgram, f_vars, s_vars):
+    counts = {"scalar": 0, "vector": 0, "matrix": 0}
+    current = {**f_vars, **s_vars}
+    for op in prog.setup + prog.predict_ops + prog.update_ops:
+        spec = OP_REGISTRY[op.opcode]
+        out_t = spec.out_type
+        if spec.is_elementwise and out_t == "scalar" and any(current[i] == "vector" for i in op.inputs):
+            out_t = "vector"
+        counts[out_t] += 1
+        current[op.out] = out_t
+    return counts
+
+
+def test_random_program_operand_limits():
+    feature_vars = AlphaProgram._get_default_feature_vars()
+    feature_vars.update({"const_1": "scalar", "const_neg_1": "scalar"})
+    state_vars = {"dummy": "scalar"}
+
+    rng = np.random.default_rng(2)
+    prog = AlphaProgram.random_program(
+        feature_vars,
+        state_vars,
+        max_total_ops=20,
+        rng=rng,
+        max_scalar_operands=2,
+        max_vector_operands=5,
+        max_matrix_operands=1,
+    )
+
+    counts = _count_output_types(prog, feature_vars, state_vars)
+    assert counts["scalar"] <= 2
+    assert counts["vector"] <= 5
+    assert counts["matrix"] <= 1

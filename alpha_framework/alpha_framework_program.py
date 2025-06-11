@@ -6,6 +6,7 @@ import json
 import textwrap
 from typing import Dict, List, Literal, Optional, Union
 import numpy as np
+import sys
 
 # Imports from other framework modules
 from .alpha_framework_types import (
@@ -104,6 +105,9 @@ class AlphaProgram:
         max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+        max_scalar_operands: int = sys.maxsize,
+        max_vector_operands: int = sys.maxsize,
+        max_matrix_operands: int = sys.maxsize,
     ) -> "AlphaProgram":
         """Create a random, type-correct program.
 
@@ -133,6 +137,9 @@ class AlphaProgram:
             max_setup_ops,
             max_predict_ops,
             max_update_ops,
+            max_scalar_operands,
+            max_vector_operands,
+            max_matrix_operands,
         )
 
     def copy(self) -> "AlphaProgram":
@@ -153,7 +160,10 @@ class AlphaProgram:
                rng: Optional[np.random.Generator] = None,
                max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
                max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
-               max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS) -> "AlphaProgram":
+               max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+               max_scalar_operands: int = sys.maxsize,
+               max_vector_operands: int = sys.maxsize,
+               max_matrix_operands: int = sys.maxsize) -> "AlphaProgram":
         """Return a mutated copy of this program."""
 
         return mutate_program_logic(
@@ -169,6 +179,9 @@ class AlphaProgram:
             max_setup_ops,
             max_predict_ops,
             max_update_ops,
+            max_scalar_operands,
+            max_vector_operands,
+            max_matrix_operands,
         )
 
     def crossover(
@@ -178,6 +191,9 @@ class AlphaProgram:
         max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+        max_scalar_operands: int = sys.maxsize,
+        max_vector_operands: int = sys.maxsize,
+        max_matrix_operands: int = sys.maxsize,
     ) -> "AlphaProgram":
         """Create offspring from this program and ``other``."""
 
@@ -188,6 +204,9 @@ class AlphaProgram:
             max_setup_ops,
             max_predict_ops,
             max_update_ops,
+            max_scalar_operands,
+            max_vector_operands,
+            max_matrix_operands,
         )
 
     @staticmethod

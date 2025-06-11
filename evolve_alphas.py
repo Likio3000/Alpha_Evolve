@@ -96,6 +96,9 @@ def _random_prog(cfg: EvoConfig) -> AlphaProgram: # Signature changed
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
+        max_scalar_operands=cfg.max_scalar_operands,
+        max_vector_operands=cfg.max_vector_operands,
+        max_matrix_operands=cfg.max_matrix_operands,
     )
 
 def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature changed
@@ -106,6 +109,9 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature c
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
+        max_scalar_operands=cfg.max_scalar_operands,
+        max_vector_operands=cfg.max_vector_operands,
+        max_matrix_operands=cfg.max_matrix_operands,
     )
 
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
