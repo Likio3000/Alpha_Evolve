@@ -1,7 +1,9 @@
 from __future__ import annotations
 import numpy as np
-import pandas as pd # For DataFrame rolling in hold period
+import pandas as pd  # For DataFrame rolling in hold period
 from typing import TYPE_CHECKING, Dict, List, Any, OrderedDict as OrderedDictType
+
+from evolution_components.data_handling import get_sector_groups
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram # Use the actual class from the framework
@@ -83,19 +85,32 @@ def backtest_cross_sectional_alpha(
 
     raw_signals_over_time: List[np.ndarray] = []
 
+    # sector ids are constant across time; compute once for efficiency
+    sector_groups_vec = get_sector_groups(stock_symbols).astype(float)
+    if np.all(sector_groups_vec == 0):
+        raise RuntimeError("sector_id_vector is all zeros – check data handling")
+
     # For reproducibility of AlphaProgram.eval if it has stochastic elements (unlikely for these ops)
     # np.random.seed(current_seed) # Seed is usually handled at a higher level (main script)
 
     for t_idx, timestamp in enumerate(common_time_index):
-        if t_idx == len(common_time_index) - 1: 
-            break 
+        if t_idx == len(common_time_index) - 1:
+            break
 
         features_at_t: Dict[str, Any] = {}
         for feat_template in cross_sectional_feature_vector_names:
+            if feat_template == "sector_id_vector":
+                features_at_t[feat_template] = sector_groups_vec
+                continue
+
             col_name = feat_template.replace('_t', '')
             try:
-                feature_vector = np.array([aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols], dtype=float)
-                features_at_t[feat_template] = np.nan_to_num(feature_vector, nan=0.0, posinf=0.0, neginf=0.0)
+                feature_vector = np.array([
+                    aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols
+                ], dtype=float)
+                features_at_t[feat_template] = np.nan_to_num(
+                    feature_vector, nan=0.0, posinf=0.0, neginf=0.0
+                )
             except KeyError:
                 features_at_t[feat_template] = np.zeros(n_stocks, dtype=float)
             except Exception:
