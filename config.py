@@ -70,6 +70,10 @@ class EvolutionConfig(DataConfig):
     p_cross: float = 0.0
     fresh_rate: float = 0.12
 
+    # adaptive probabilities
+    adaptive_mutation: bool = False
+    adaptive_crossover: bool = False
+
     # complexity / similarity guards
     # operation limits (Section 4.1 of the paper)
     max_ops: int = 87
