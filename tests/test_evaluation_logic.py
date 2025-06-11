@@ -23,6 +23,14 @@ def build_simple_program(suffix: str = ""):
     return AlphaProgram(setup=[], predict_ops=ops, update_ops=[])
 
 
+def build_zero_program() -> AlphaProgram:
+    ops = [
+        Op("zero_scalar", "sub", ("const_1", "const_1")),
+        Op(FINAL_PREDICTION_VECTOR_NAME, "vec_mul_scalar", ("opens_t", "zero_scalar")),
+    ]
+    return AlphaProgram(predict_ops=ops)
+
+
 def test_safe_corr_eval_normal():
     a = np.array([1.0, 2.0, 3.0])
     b = np.array([1.0, 2.0, 3.0])
@@ -447,6 +455,26 @@ def test_processed_predictions_flatness_guard():
     initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
     assert res.processed_predictions.shape == (len(dh.index) - dh.get_eval_lag(), dh.get_n_stocks())
+    assert res.fitness == -float("inf")
+
+
+def test_all_zero_predictions_rejected():
+    prog = build_zero_program()
+    dh = CountingDH()
+    hof = DummyHOF()
+    configure_evaluation(
+        parsimony_penalty=0.002,
+        max_ops=32,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.05,
+        early_abort_t=0.05,
+        flat_bar_threshold=0.25,
+        scale_method="zscore",
+    )
+    initialize_evaluation_cache(max_size=2)
+    res = evaluate_program(prog, dh, hof, {})
     assert res.fitness == -float("inf")
 
 

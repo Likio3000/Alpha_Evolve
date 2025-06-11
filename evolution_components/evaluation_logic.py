@@ -397,6 +397,10 @@ def evaluate_program(
     full_raw_predictions_matrix = np.array(all_raw_predictions_timeseries)
     full_processed_predictions_matrix = np.array(all_processed_predictions_timeseries)
 
+    if np.all(full_processed_predictions_matrix == 0):
+        logger.debug("All-zero predictions – rejected")
+        score = -float('inf')
+
     # Flatness guards (on raw predictions)
     if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[1] > 0: # XS check
         cross_sectional_stds = full_raw_predictions_matrix.std(axis=1, ddof=0)
