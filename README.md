@@ -95,6 +95,8 @@ Logging can be controlled globally via `--log-level` and `--log-file`.  The
 running the pipeline.
 
 Back-test summaries now include an `Ops` column showing the operation count of each alpha.
+Generation summaries from the Hall of Fame now display `Pars` and `Corr` columns
+listing the parsimony and correlation penalties applied to each program.
 
 ## Default hyperparameters
 

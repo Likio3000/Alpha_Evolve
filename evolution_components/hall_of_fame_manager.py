@@ -245,7 +245,7 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
 
     logger = logging.getLogger(__name__)
     logger.info("\n★ Generation %s – Top (up to) %s overall from HOF ★", generation+1, _TOP_TO_SHOW_PRINT)
-    hdr = " Rank | Fitness |  IC  | Ops | Gen | Finger  | First 90 chars"
+    hdr = " Rank | Fitness |  IC  | Pars | Corr | Ops | Gen | Finger  | First 90 chars"
     logger.info(hdr)
     logger.info("─" * len(hdr))
     
@@ -253,10 +253,12 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     for rk, entry in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
         head = textwrap.shorten(entry.program.to_string(max_len=300), width=90, placeholder="…")
         logger.info(
-            " %4d | %+7.4f | %+5.3f | %3d | %3d | %s | %s",
+            " %4d | %+7.4f | %+5.3f | %+5.3f | %+5.3f | %3d | %3d | %s | %s",
             rk,
             entry.metrics.fitness,
             entry.metrics.mean_ic,
+            entry.metrics.parsimony_penalty,
+            entry.metrics.correlation_penalty,
             entry.program.size,
             entry.generation + 1,
             entry.fingerprint[:8],

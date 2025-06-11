@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import logging
 
 from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 from evolution_components import hall_of_fame_manager as hof
@@ -37,4 +38,20 @@ def test_rank_matrix_updates_and_penalty():
     assert len(hof._hof_rank_pred_matrix) == 1
     penalty = hof.get_correlation_penalty_with_hof(preds.ravel())
     assert penalty == pytest.approx(0.5)
+    hof.clear_hof()
+
+
+def test_print_generation_summary_includes_penalties(caplog):
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.1, corr_cutoff=0.0)
+    prog = make_prog("print")
+    eval_res = EvalResult(1.0, 0.1, 0.0, 0.005, 0.02, np.array([[1.0, 2.0], [3.0, 4.0]]))
+    hof.add_program_to_hof(prog, eval_res, 0)
+
+    caplog.set_level(logging.INFO)
+    hof.print_generation_summary(0, [prog], [(0, eval_res)])
+    logged = "\n".join(r.message for r in caplog.records)
+
+    assert "Pars" in logged and "Corr" in logged
+    assert f"{eval_res.parsimony_penalty:+.3f}" in logged
+    assert f"{eval_res.correlation_penalty:+.3f}" in logged
     hof.clear_hof()
