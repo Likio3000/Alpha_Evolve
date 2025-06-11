@@ -6,6 +6,7 @@ from alpha_framework import (
     FINAL_PREDICTION_VECTOR_NAME,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
     SCALAR_FEATURE_NAMES,
+    OP_REGISTRY,
 )
 from alpha_framework.program_logic_variation import (
     mutate_program_logic,
@@ -42,6 +43,19 @@ def make_feature_vars():
     return feature_vars
 
 
+def _count_output_types(prog: AlphaProgram, f_vars, s_vars):
+    counts = {"scalar": 0, "vector": 0, "matrix": 0}
+    current = {**f_vars, **s_vars}
+    for op in prog.setup + prog.predict_ops + prog.update_ops:
+        spec = OP_REGISTRY[op.opcode]
+        out_t = spec.out_type
+        if spec.is_elementwise and out_t == "scalar" and any(current[i] == "vector" for i in op.inputs):
+            out_t = "vector"
+        counts[out_t] += 1
+        current[op.out] = out_t
+    return counts
+
+
 def test_mutate_and_crossover_eval():
     n = 4
     features = make_feature_dict(n)
@@ -66,3 +80,35 @@ def test_mutate_and_crossover_eval():
     assert pred_c.shape == (n,)
     vars_after_c = crossed.get_vars_at_point("predict", len(crossed.predict_ops), feature_vars, state_vars)
     assert vars_after_c[FINAL_PREDICTION_VECTOR_NAME] == "vector"
+
+
+def test_mutate_respects_operand_limits():
+    feature_vars = make_feature_vars()
+    state_vars = {}
+
+    rng = np.random.default_rng(2)
+    base = AlphaProgram.random_program(
+        feature_vars,
+        state_vars,
+        max_total_ops=20,
+        rng=rng,
+        max_scalar_operands=2,
+        max_vector_operands=5,
+        max_matrix_operands=1,
+    )
+
+    rng_m = np.random.default_rng(3)
+    mutated = base.mutate(
+        feature_vars,
+        state_vars,
+        rng=rng_m,
+        max_total_ops=20,
+        max_scalar_operands=2,
+        max_vector_operands=5,
+        max_matrix_operands=1,
+    )
+
+    counts = _count_output_types(mutated, feature_vars, state_vars)
+    assert counts["scalar"] <= 2
+    assert counts["vector"] <= 5
+    assert counts["matrix"] <= 1
