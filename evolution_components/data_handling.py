@@ -9,6 +9,10 @@ from collections import OrderedDict
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING, DataConfig
 import numpy as np
 import pandas as pd
+from alpha_framework.alpha_framework_types import (
+    CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    SCALAR_FEATURE_NAMES,
+)
 
 # Module-level state for loaded data
 _ALIGNED_DFS: Optional[OrderedDictType[str, pd.DataFrame]] = None
@@ -232,3 +236,45 @@ def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tup
         start += size
 
     return tuple(slices)  # type: ignore[return-value]
+
+def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+    """Return feature dict for a given timestamp.
+
+    Parameters
+    ----------
+    timestamp : Any
+        Timestamp at which to collect features.
+    aligned_dfs : Mapping[str, pd.DataFrame]
+        Aligned data frames keyed by symbol.
+    stock_symbols : Sequence[str]
+        Symbols to pull data for.
+    sector_groups_vec : np.ndarray
+        Precomputed sector id vector for ``stock_symbols``.
+    """
+    features_at_t = {}
+    n_stocks = len(stock_symbols)
+
+    for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
+        if feat_name_template == "sector_id_vector":
+            features_at_t[feat_name_template] = sector_groups_vec
+            continue
+        col_name = feat_name_template.replace("_t", "")
+        try:
+            vec = np.array([
+                aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols
+            ], dtype=float)
+            features_at_t[feat_name_template] = np.nan_to_num(
+                vec, nan=0.0, posinf=0.0, neginf=0.0
+            )
+        except KeyError:
+            features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+        except Exception:
+            features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+
+    for sc_name in SCALAR_FEATURE_NAMES:
+        if sc_name == "const_1":
+            features_at_t[sc_name] = 1.0
+        elif sc_name == "const_neg_1":
+            features_at_t[sc_name] = -1.0
+
+    return features_at_t
