@@ -4,6 +4,7 @@ from alpha_framework import (
     FINAL_PREDICTION_VECTOR_NAME,
     SCALAR_FEATURE_NAMES,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
 )
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
 from backtesting_components.core_logic import backtest_cross_sectional_alpha
@@ -34,5 +35,6 @@ def test_constant_signal_no_trades():
         initial_state_vars_config={"prev_s1_vec": "vector"},
         scalar_feature_names=SCALAR_FEATURE_NAMES,
         cross_sectional_feature_vector_names=CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+        cross_sectional_feature_matrix_names=CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
     )
     assert metrics.get("Error") == "No trades executed"

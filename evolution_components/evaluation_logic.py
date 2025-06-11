@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from alpha_framework.alpha_framework_types import (  # Ensure these are correct based on where AlphaProgram is defined
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
     FINAL_PREDICTION_VECTOR_NAME,
 )
 
@@ -153,7 +154,10 @@ def _uses_feature_vector_check(prog: AlphaProgram) -> bool:
             continue
         visited_vars.add(current_var_name)
 
-        if current_var_name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
+        if (
+            current_var_name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+            or current_var_name in CROSS_SECTIONAL_FEATURE_MATRIX_NAMES
+        ):
             return True # Found a dependency on a feature vector
 
         # If current_var_name is an initial state var that might be a vector,
@@ -229,7 +233,7 @@ def evaluate_program(
     n_stocks = dh_module.get_n_stocks()
     eval_lag = dh_module.get_eval_lag() # Get eval_lag from data_handling
 
-    sector_groups_vec = dh_module.get_sector_groups(stock_symbols).astype(float)
+    sector_groups_vec = dh_module.get_sector_groups(stock_symbols)
 
     program_state: Dict[str, Any] = prog.new_state() # AlphaProgram's own new_state
     for s_name, s_type in initial_prog_state_vars_config.items():  # Use passed config

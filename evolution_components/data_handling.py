@@ -12,6 +12,7 @@ import pandas as pd
 import logging
 from alpha_framework.alpha_framework_types import (
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+    CROSS_SECTIONAL_FEATURE_MATRIX_NAMES,
     SCALAR_FEATURE_NAMES,
 )
 
@@ -236,6 +237,25 @@ def get_sector_groups(
     return np.array(groups, dtype=int)
 
 
+def get_sector_onehot_matrix(
+    symbols: Optional[List[str]] = None,
+    mapping: Dict[str, int] | None = None,
+    cfg: Optional[DataConfig] = None,
+) -> np.ndarray:
+    """Return a one‑hot matrix for sector membership.
+
+    Each row corresponds to a symbol and each column to a unique sector id.
+    """
+    groups = get_sector_groups(symbols, mapping, cfg)
+    if groups.size == 0:
+        return np.zeros((0, 0), dtype=float)
+    uniq = np.unique(groups)
+    matrix = np.zeros((groups.size, uniq.size), dtype=float)
+    for col, g in enumerate(uniq):
+        matrix[groups == g, col] = 1.0
+    return matrix
+
+
 def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tuple[
     OrderedDictType[str, pd.DataFrame],
     OrderedDictType[str, pd.DataFrame],
@@ -286,9 +306,6 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
     n_stocks = len(stock_symbols)
 
     for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
-        if feat_name_template == "sector_id_vector":
-            features_at_t[feat_name_template] = sector_groups_vec
-            continue
         col_name = feat_name_template.replace("_t", "")
         try:
             vec = np.array([
@@ -301,6 +318,16 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
             features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
         except Exception:
             features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+
+    for matrix_feat in CROSS_SECTIONAL_FEATURE_MATRIX_NAMES:
+        if matrix_feat == "sector_mask_matrix":
+            uniq = np.unique(sector_groups_vec)
+            mask = np.zeros((n_stocks, uniq.size), dtype=float)
+            for col, g in enumerate(uniq):
+                mask[sector_groups_vec == g, col] = 1.0
+            features_at_t[matrix_feat] = mask
+        else:
+            features_at_t[matrix_feat] = np.zeros((n_stocks, n_stocks), dtype=float)
 
     for sc_name in SCALAR_FEATURE_NAMES:
         if sc_name == "const_1":

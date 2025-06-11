@@ -216,10 +216,14 @@ def _cs_rank(v):
 @register_op("cs_demean", in_types=("vector",), out="vector")
 def _cs_demean(v): return v - (_cs_mean(v) if v.size > 0 else 0.0)
 
-@register_op("relation_rank", in_types=("vector", "vector"), out="vector")
+@register_op("relation_rank", in_types=("vector", "matrix"), out="vector")
 def _relation_rank(v, groups):
     v_arr = np.asarray(v, dtype=float)
-    grp_arr = np.asarray(groups, dtype=int)
+    grp_arr = np.asarray(groups)
+    if grp_arr.ndim == 2:
+        grp_arr = np.argmax(grp_arr, axis=1)
+    else:
+        grp_arr = grp_arr.astype(int)
     result = np.zeros_like(v_arr, dtype=float)
     for g in np.unique(grp_arr):
         mask = grp_arr == g
@@ -233,10 +237,14 @@ def _relation_rank(v, groups):
         result[mask] = (ranks / (vals.size - 1 + 1e-9)) * 2.0 - 1.0
     return result
 
-@register_op("relation_demean", in_types=("vector", "vector"), out="vector")
+@register_op("relation_demean", in_types=("vector", "matrix"), out="vector")
 def _relation_demean(v, groups):
     v_arr = np.asarray(v, dtype=float)
-    grp_arr = np.asarray(groups, dtype=int)
+    grp_arr = np.asarray(groups)
+    if grp_arr.ndim == 2:
+        grp_arr = np.argmax(grp_arr, axis=1)
+    else:
+        grp_arr = grp_arr.astype(int)
     result = np.zeros_like(v_arr, dtype=float)
     for g in np.unique(grp_arr):
         mask = grp_arr == g

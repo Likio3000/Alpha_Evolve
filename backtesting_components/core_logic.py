@@ -3,7 +3,11 @@ import numpy as np
 import pandas as pd  # For DataFrame rolling in hold period
 from typing import TYPE_CHECKING, Dict, List, Any, OrderedDict as OrderedDictType
 
-from evolution_components.data_handling import get_sector_groups, get_features_at_time
+from evolution_components.data_handling import (
+    get_sector_groups,
+    get_sector_onehot_matrix,
+    get_features_at_time,
+)
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram # Use the actual class from the framework
@@ -70,6 +74,7 @@ def backtest_cross_sectional_alpha(
     initial_state_vars_config: Dict[str, str], # e.g. {"prev_s1_vec": "vector"}
     scalar_feature_names: List[str], # Pass these from calling script
     cross_sectional_feature_vector_names: List[str], # Pass these
+    cross_sectional_feature_matrix_names: List[str],
     debug_prints: bool = False, # For optional debug prints
     annualization_factor: float = (365 * 6) # Default for 4H bars, 365 days (crypto)
 ) -> Dict[str, Any]:
@@ -87,9 +92,10 @@ def backtest_cross_sectional_alpha(
     raw_signals_over_time: List[np.ndarray] = []
 
     # sector ids are constant across time; compute once for efficiency
-    sector_groups_vec = get_sector_groups(stock_symbols).astype(float)
-    if np.all(sector_groups_vec == 0):
-        raise RuntimeError("sector_id_vector is all zeros – check data handling")
+    sector_groups_vec = get_sector_groups(stock_symbols)
+    sector_mask_matrix = get_sector_onehot_matrix(stock_symbols).astype(float)
+    if not np.any(sector_mask_matrix):
+        raise RuntimeError("sector_mask_matrix is all zeros – check data handling")
 
     # For reproducibility of AlphaProgram.eval if it has stochastic elements (unlikely for these ops)
     # np.random.seed(current_seed) # Seed is usually handled at a higher level (main script)
