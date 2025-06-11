@@ -1,5 +1,5 @@
 {
-  "name": "alphagen-pipeline-explorer",
+  "name": "alpha-evolve-pipeline-runner-ui",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,10 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "@google/genai": "^1.0.1",
-    "marked": "^12.0.2"
+    "react": "^19.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

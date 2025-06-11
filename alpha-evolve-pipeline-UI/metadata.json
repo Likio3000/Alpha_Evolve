@@ -1,0 +1,5 @@
+{
+  "name": "Alpha Evolve Pipeline Runner UI",
+  "description": "A user interface to configure and generate the command for running the run_pipeline_all_args.sh script from the Alpha Evolve project. Allows modification of various parameters related to evolutionary search, data handling, and backtesting.",
+  "requestFramePermissions": []
+}

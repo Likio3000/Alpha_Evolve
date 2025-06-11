@@ -1,6 +1,0 @@
-{
-  "name": "AlphaGen Pipeline Explorer",
-  "description": "A web application to explore, simulate, and understand a Python-based algorithmic trading alpha generation pipeline using Gemini API for insights.",
-  "requestFramePermissions": [],
-  "prompt": ""
-}
