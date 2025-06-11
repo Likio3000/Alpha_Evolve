@@ -23,6 +23,7 @@ _COMMON_TIME_INDEX: Optional[pd.DatetimeIndex] = None
 _STOCK_SYMBOLS: Optional[List[str]] = None
 _N_STOCKS: Optional[int] = None
 _EVAL_LAG_CACHE: int = 1 # Default, will be set by initialize_data
+_FEATURE_CACHE: Dict[pd.Timestamp, Dict[str, np.ndarray]] = {}
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -143,6 +144,14 @@ def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_l
     )
     _N_STOCKS = len(_STOCK_SYMBOLS)
     _EVAL_LAG_CACHE = eval_lag
+    _FEATURE_CACHE.clear()
+
+    if _COMMON_TIME_INDEX is not None:
+        sector_groups_vec = get_sector_groups(_STOCK_SYMBOLS)
+        for ts in _COMMON_TIME_INDEX:
+            _FEATURE_CACHE[ts] = get_features_at_time(
+                ts, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec
+            )
 
     logger.info(
         "Data initialized: %s symbols, %s common time steps.",
@@ -300,3 +309,20 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
             features_at_t[sc_name] = -1.0
 
     return features_at_t
+
+
+def get_features_cached(timestamp) -> Dict[str, np.ndarray]:
+    """Return cached features for ``timestamp``."""
+    if timestamp in _FEATURE_CACHE:
+        return _FEATURE_CACHE[timestamp]
+    if _ALIGNED_DFS is None or _STOCK_SYMBOLS is None:
+        raise RuntimeError("Data not initialized. Call initialize_data() first.")
+    sector_groups_vec = get_sector_groups(_STOCK_SYMBOLS)
+    features = get_features_at_time(timestamp, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec)
+    _FEATURE_CACHE[timestamp] = features
+    return features
+
+
+def clear_feature_cache() -> None:
+    """Clear the precomputed feature cache."""
+    _FEATURE_CACHE.clear()

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Tuple, Dict, Set # Added Set
 from dataclasses import dataclass
 import textwrap # For printing HoF
 import logging
+from . import data_handling
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram
@@ -268,4 +269,5 @@ def clear_hof():
     _hof_fingerprints_set = set()
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
+    data_handling.clear_feature_cache()
     logging.getLogger(__name__).info("Hall of Fame cleared.")
