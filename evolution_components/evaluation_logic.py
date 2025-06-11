@@ -346,6 +346,16 @@ def evaluate_program(
                     )
                     early_abort = True
                 if early_abort:
+                    logger.debug(
+                        "Early abort stats %s | mean_xs_std_partial %.6f (< %.6f) flat_fraction %.6f (> %.6f) mean_t_std_partial %.6f (< %.6f)",
+                        fp,
+                        mean_xs_std_partial,
+                        _EVAL_CONFIG["early_abort_xs_threshold"],
+                        flat_fraction,
+                        _EVAL_CONFIG["flat_bar_threshold"],
+                        mean_t_std_partial,
+                        _EVAL_CONFIG["early_abort_t_threshold"],
+                    )
                     result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
                     _cache_set(fp, result)
                     return result
@@ -398,6 +408,12 @@ def evaluate_program(
                 mean_xs_std,
                 _EVAL_CONFIG["xs_flatness_guard_threshold"],
             )
+            logger.debug(
+                "Flatness stats %s | mean_xs_std %.6f (< %.6f)",
+                fp,
+                mean_xs_std,
+                _EVAL_CONFIG["xs_flatness_guard_threshold"],
+            )
             score = -float('inf')
 
     if score > -float('inf'): # Temporal check only if not already penalized to -inf
@@ -411,12 +427,24 @@ def evaluate_program(
                     mean_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
                 )
+                logger.debug(
+                    "Flatness stats %s | mean_t_std %.6f (< %.6f)",
+                    fp,
+                    mean_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
                 score = -float('inf')
         elif full_raw_predictions_matrix.ndim == 1 and full_raw_predictions_matrix.shape[0] > 1: # Single series case
             mean_t_std = full_raw_predictions_matrix.std(ddof=0)
             if mean_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
                 logger.debug(
                     "Temporal flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
+                logger.debug(
+                    "Flatness stats %s | mean_t_std %.6f (< %.6f)",
                     fp,
                     mean_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
@@ -435,6 +463,12 @@ def evaluate_program(
                     mean_proc_xs_std,
                     _EVAL_CONFIG["xs_flatness_guard_threshold"],
                 )
+                logger.debug(
+                    "Flatness stats %s | mean_proc_xs_std %.6f (< %.6f)",
+                    fp,
+                    mean_proc_xs_std,
+                    _EVAL_CONFIG["xs_flatness_guard_threshold"],
+                )
                 score = -float('inf')
 
     if score > -float('inf'):
@@ -448,12 +482,24 @@ def evaluate_program(
                     mean_proc_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
                 )
+                logger.debug(
+                    "Flatness stats %s | mean_proc_t_std %.6f (< %.6f)",
+                    fp,
+                    mean_proc_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
                 score = -float('inf')
         elif full_processed_predictions_matrix.ndim == 1 and full_processed_predictions_matrix.shape[0] > 1:
             mean_proc_t_std = full_processed_predictions_matrix.std(ddof=0)
             if mean_proc_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
                 logger.debug(
                     "Processed temporal flatness guard triggered for %s: %.6f < %.6f",
+                    fp,
+                    mean_proc_t_std,
+                    _EVAL_CONFIG["temporal_flatness_guard_threshold"],
+                )
+                logger.debug(
+                    "Flatness stats %s | mean_proc_t_std %.6f (< %.6f)",
                     fp,
                     mean_proc_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
