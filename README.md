@@ -1,6 +1,6 @@
 # Alpha Evolve
 
-[![Tests](https://github.com/YOUR_GITHUB_USERNAME/Alpha_Evolve/actions/workflows/python.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/Alpha_Evolve/actions/workflows/python.yml)
+[![Tests](https://github.com/Likio3000/Alpha_Evolve/actions/workflows/python.yml/badge.svg)](https://github.com/Likio3000/Alpha_Evolve/actions/workflows/python.yml)
 
 Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
@@ -8,6 +8,7 @@ Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
 - Python 3.12 or higher
 - See `requirements.txt` for Python package dependencies
+- Node.js for the optional [pipeline UI](alpha-evolve-pipeline-UI/README.md) which helps configure pipeline parameters
 
 ## Setup
 
@@ -33,6 +34,21 @@ sh scripts/update_requirements.sh
 Many examples use `uv`, a fast Python runtime and package manager. Install it
 from <https://github.com/astral-sh/uv> (e.g., `curl -Ls https://astral.sh/uv/install.sh | sh`).
 If `uv` is unavailable you can replace `uv` with `python` in the commands.
+
+## Data Setup
+
+Place your historical OHLC data in the `data` directory at the project root.
+Each CSV must contain the columns `time`, `open`, `high`, `low` and `close`. The
+`time` column should be Unix epoch seconds.  Store one symbol per file, for
+example:
+
+```text
+data/
+└── BTC.csv
+```
+
+You can override the location with the `--data-dir` option when running the
+pipeline.
 
 ## Running tests
 
@@ -128,6 +144,10 @@ train/validation/test splits via `evolution_components.get_data_splits`.
 The current implementation handles datasets without volume information. While the pipeline runs end-to-end, both the parameters and helper code are tuned to the author's private dataset (e.g. a numeric sector column) and fall short of the low alpha correlations reported in the paper. Increasing the quantity and diversity of data is a focus for future iterations.
 
 The dataset itself cannot be shared due to provider restrictions. In limited experiments the evolved alphas outperformed baseline methods such as the RankLSTM and GA tree, but the results remain below the paper's benchmarks. This project has been an enjoyable learning experience and may be revisited with improved tools and data.
+
+## Further Reading
+
+`Alpha_evolve_paper.pdf` is a reproduction guide describing the original experiment and how to replicate it with this code (kinda).
 
 ## License
 
