@@ -61,11 +61,15 @@ Run the full pipeline for five generations:
 
 ```bash
 uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
+```
 
 Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
 Baseline metrics are cached next to the data and reused on subsequent runs.
 Pass `--retrain_baselines` to force a fresh training.
-```
+
+Call `run_pipeline.py` directly for quick experiments or when overriding just a
+few options.  Any parameter not supplied on the command line falls back to the
+defaults defined in [`config.py`](config.py).
 
 For a longer run using the parameters described in the paper you can simply run
 
@@ -84,7 +88,7 @@ sh scripts/run_pipeline_all_args.sh
 ```
 
 This convenience script mirrors all defaults from `config.py` so you can easily
-edit any knob.
+edit any knob or use it as a template for your own custom command.
 
 The `--debug_prints` flag forwards verbose output to the back-tester.
 Use `--long_short_n` to trade only the top/bottom N ranked symbols in each
