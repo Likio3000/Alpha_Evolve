@@ -119,6 +119,12 @@ Aligned OHLC data is loaded from a directory of CSV files. (I did not have acces
 datapoints shared across all symbols.  After alignment you can obtain
 train/validation/test splits via `evolution_components.get_data_splits`.
 
+## Limitations and Future Work
+
+The current implementation handles datasets without volume information. While the pipeline runs end-to-end, both the parameters and helper code are tuned to the author's private dataset (e.g. a numeric sector column) and fall short of the low alpha correlations reported in the paper. Increasing the quantity and diversity of data is a focus for future iterations.
+
+The dataset itself cannot be shared due to provider restrictions. In limited experiments the evolved alphas outperformed baseline methods such as the RankLSTM and GA tree, but the results remain below the paper's benchmarks. This project has been an enjoyable learning experience and may be revisited with improved tools and data.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
