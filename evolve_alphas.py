@@ -53,7 +53,9 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
         early_abort_t=cfg.early_abort_t,
         flat_bar_threshold=cfg.flat_bar_threshold,
         scale_method=cfg.scale,
-        sharpe_proxy_weight=cfg.sharpe_proxy_w
+        sharpe_proxy_weight=cfg.sharpe_proxy_w,
+        ic_std_penalty_weight=cfg.ic_std_penalty_w,
+        turnover_penalty_weight=cfg.turnover_penalty_w,
     )
     initialize_hof(
         max_size=cfg.hof_size,
@@ -125,6 +127,9 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
 
     try:
         for gen in range(cfg.generations):
+            # Reset per-generation evaluation stats for clearer diagnostics
+            if hasattr(el_module, "reset_eval_stats"):
+                el_module.reset_eval_stats()
             logger.info(
                 "Gen %s/%s | Starting evaluation of %s programs",
                 gen + 1,
@@ -135,10 +140,31 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
             eval_results: List[Tuple[int, el_module.EvalResult]] = []
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
 
-            with Pool(processes=cfg.workers or cpu_count()) as pool:
-                results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
-                bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
-                for i, result in bar:
+            # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1
+            if (cfg.workers or 0) > 1:
+                with Pool(processes=cfg.workers or cpu_count()) as pool:
+                    results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
+                    bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
+                    for i, result in bar:
+                        eval_results.append((i, result))
+                        pop_fitness_scores[i] = result.fitness
+                        logger.debug(
+                            "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
+                            gen + 1,
+                            i,
+                            result.fitness,
+                            result.mean_ic,
+                            pop[i].size,
+                        )
+                        if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
+                            valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
+                            best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
+                            bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+            else:
+                # Sequential evaluation
+                iterator = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
+                for i in iterator:
+                    _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
                     pop_fitness_scores[i] = result.fitness
                     logger.debug(
@@ -149,10 +175,10 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                         result.mean_ic,
                         pop[i].size,
                     )
-                    if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
+                    if not cfg.quiet and hasattr(iterator, 'set_postfix_str'):
                         valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
                         best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
-                        bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+                        iterator.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
             
             gen_eval_time = time.perf_counter() - t_start_gen
             if gen_eval_time > 0:
@@ -163,6 +189,22 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                 gen + 1,
                 gen_eval_time,
             )
+
+            # Emit evaluation diagnostics
+            if hasattr(el_module, "get_eval_stats"):
+                stats = el_module.get_eval_stats()
+                logger.debug(
+                    "Eval stats g%d | cache hits %d, misses %d, no_feat %d, nan_inf %d, all_zero %d, early_xs %d, early_t %d, early_flatbar %d",
+                    gen + 1,
+                    stats.get("cache_hits", 0),
+                    stats.get("cache_misses", 0),
+                    stats.get("rejected_no_feature_vec", 0),
+                    stats.get("rejected_nan_or_inf", 0),
+                    stats.get("rejected_all_zero", 0),
+                    stats.get("early_abort_xs", 0),
+                    stats.get("early_abort_t", 0),
+                    stats.get("early_abort_flatbar", 0),
+                )
 
             eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
 

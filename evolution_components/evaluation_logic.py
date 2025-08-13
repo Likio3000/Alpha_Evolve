@@ -54,8 +54,29 @@ _EVAL_CONFIG = {
     "flat_bar_threshold": 0.25,
     "ic_scale_method": "zscore", # from args.scale
     "sharpe_proxy_weight": 0.0,
+    "ic_std_penalty_weight": 0.0,
+    "turnover_penalty_weight": 0.0,
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
 }
+
+# Lightweight, per-process evaluation stats for visibility during evolution
+_EVAL_STATS = {
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "rejected_no_feature_vec": 0,
+    "rejected_nan_or_inf": 0,
+    "rejected_all_zero": 0,
+    "early_abort_xs": 0,
+    "early_abort_t": 0,
+    "early_abort_flatbar": 0,
+}
+
+def reset_eval_stats() -> None:
+    for k in _EVAL_STATS:
+        _EVAL_STATS[k] = 0
+
+def get_eval_stats() -> dict:
+    return dict(_EVAL_STATS)
 
 def configure_evaluation(
     parsimony_penalty: float,
@@ -67,7 +88,9 @@ def configure_evaluation(
     early_abort_t: float,
     flat_bar_threshold: float,
     scale_method: str,
-    sharpe_proxy_weight: float = 0.0
+    sharpe_proxy_weight: float = 0.0,
+    ic_std_penalty_weight: float = 0.0,
+    turnover_penalty_weight: float = 0.0
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -80,11 +103,15 @@ def configure_evaluation(
     _EVAL_CONFIG["flat_bar_threshold"] = flat_bar_threshold
     _EVAL_CONFIG["ic_scale_method"] = scale_method
     _EVAL_CONFIG["sharpe_proxy_weight"] = sharpe_proxy_weight
+    _EVAL_CONFIG["ic_std_penalty_weight"] = ic_std_penalty_weight
+    _EVAL_CONFIG["turnover_penalty_weight"] = turnover_penalty_weight
     logging.getLogger(__name__).debug(
-        "Evaluation logic configured: %s, %s, sharpe_w=%s",
+        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s",
         scale_method,
         parsimony_penalty,
-        sharpe_proxy_weight
+        sharpe_proxy_weight,
+        ic_std_penalty_weight,
+        turnover_penalty_weight,
     )
 
 
@@ -199,6 +226,33 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
     return np.clip(centered_scaled, -1, 1)
 
 
+def _average_rank_ties(x: np.ndarray) -> np.ndarray:
+    """Compute average ranks [0..n-1] with tie handling.
+
+    Uses stable sort and assigns each equal-value run the mean of its index range.
+    """
+    n = x.size
+    if n == 0:
+        return x.astype(float)
+    order = np.argsort(x, kind="mergesort")
+    ranks = np.empty(n, dtype=float)
+    xs = x[order]
+    # boundaries mask has True at run starts and at the sentinel end
+    boundaries = np.empty(n + 1, dtype=bool)
+    boundaries[0] = True
+    if n > 1:
+        boundaries[1:-1] = xs[1:] != xs[:-1]
+    else:
+        boundaries[1:-1] = False
+    boundaries[-1] = True
+    idx = np.flatnonzero(boundaries)
+    for i in range(len(idx) - 1):
+        start, end = idx[i], idx[i + 1]
+        avg = (start + end - 1) / 2.0
+        ranks[order[start:end]] = avg
+    return ranks
+
+
 def evaluate_program(
     prog: AlphaProgram,
     dh_module: data_handling, # Pass the data_handling module for access
@@ -214,11 +268,15 @@ def evaluate_program(
     if fp in _eval_cache:
         _eval_cache.move_to_end(fp)
         cached = _eval_cache[fp]
+        _EVAL_STATS["cache_hits"] += 1
         logger.debug("Cache hit for %s with fitness %.6f", fp, cached.fitness)
         return cached
+    else:
+        _EVAL_STATS["cache_misses"] += 1
 
     if not _uses_feature_vector_check(prog):
         logger.debug("Program %s does not use any feature vector", fp)
+        _EVAL_STATS["rejected_no_feature_vec"] += 1
         result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
         _cache_set(fp, result)
         return result
@@ -276,6 +334,7 @@ def evaluate_program(
 
             if np.any(np.isnan(raw_predictions_t)) or np.any(np.isinf(raw_predictions_t)):
                 # print(f"Program {fp} yielded NaN/Inf at t_idx {t_idx}. Aborting eval for this prog.")
+                _EVAL_STATS["rejected_nan_or_inf"] += 1
                 _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
                 return _eval_cache[fp]
             
@@ -313,6 +372,7 @@ def evaluate_program(
                         mean_xs_std_partial,
                         _EVAL_CONFIG["early_abort_xs_threshold"],
                     )
+                    _EVAL_STATS["early_abort_xs"] += 1
                     early_abort = True
                 if flat_fraction > _EVAL_CONFIG["flat_bar_threshold"]:
                     logger.debug(
@@ -321,6 +381,7 @@ def evaluate_program(
                         flat_fraction,
                         _EVAL_CONFIG["flat_bar_threshold"],
                     )
+                    _EVAL_STATS["early_abort_flatbar"] += 1
                     early_abort = True
                 if mean_t_std_partial < _EVAL_CONFIG["early_abort_t_threshold"]:
                     logger.debug(
@@ -329,6 +390,7 @@ def evaluate_program(
                         mean_t_std_partial,
                         _EVAL_CONFIG["early_abort_t_threshold"],
                     )
+                    _EVAL_STATS["early_abort_t"] += 1
                     early_abort = True
                 if early_abort:
                     logger.debug(
@@ -354,14 +416,10 @@ def evaluate_program(
                 daily_ic_values.append(0.0)
                 daily_pnl = 0.0
             else:
-                # rank both sides for Spearman IC
-                def _rank(z):
-                    order = np.argsort(z)
-                    r = np.empty_like(order, dtype=float)
-                    r[order] = np.arange(z.size)
-                    return r
-
-                ic_t = _safe_corr_eval(_rank(processed_predictions_t), _rank(actual_returns_t))                
+                # rank both sides for Spearman IC (tie-aware)
+                r_pred = _average_rank_ties(processed_predictions_t)
+                r_rets = _average_rank_ties(actual_returns_t)
+                ic_t = _safe_corr_eval(r_pred, r_rets)
                 daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
                 daily_pnl = float(np.mean(processed_predictions_t * actual_returns_t))
 
@@ -381,9 +439,21 @@ def evaluate_program(
     var_pnl = pnl_sq_sum / num_evaluation_steps - mean_pnl ** 2
     std_pnl = var_pnl ** 0.5 if var_pnl > 0 else 0.0
     sharpe_proxy = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
+    ic_std = float(np.std(daily_ic_values, ddof=0)) if daily_ic_values else 0.0
+    # Turnover proxy: mean absolute change of processed predictions across time
+    turnover_proxy = 0.0
+    if len(all_processed_predictions_timeseries) > 1:
+        ppm = np.array(all_processed_predictions_timeseries)
+        turnover_proxy = float(np.mean(np.abs(np.diff(ppm, axis=0))))
 
     parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * prog.size / _EVAL_CONFIG["max_ops_for_parsimony"]
-    score = mean_daily_ic + _EVAL_CONFIG.get("sharpe_proxy_weight", 0.0) * sharpe_proxy - parsimony_penalty
+    score = (
+        mean_daily_ic
+        + _EVAL_CONFIG.get("sharpe_proxy_weight", 0.0) * sharpe_proxy
+        - _EVAL_CONFIG.get("ic_std_penalty_weight", 0.0) * ic_std
+        - _EVAL_CONFIG.get("turnover_penalty_weight", 0.0) * turnover_proxy
+        - parsimony_penalty
+    )
     correlation_penalty = 0.0
 
     full_raw_predictions_matrix = np.array(all_raw_predictions_timeseries)
@@ -391,6 +461,7 @@ def evaluate_program(
 
     if np.all(full_processed_predictions_matrix == 0):
         logger.debug("All-zero predictions – rejected")
+        _EVAL_STATS["rejected_all_zero"] += 1
         score = -float('inf')
 
     # Flatness guards (on raw predictions)
@@ -514,10 +585,12 @@ def evaluate_program(
         score -= correlation_penalty
     result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix if return_preds else None)
     logger.debug(
-        "Eval summary %s | fitness %.6f mean_ic %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
+        "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
         fp,
         result.fitness,
         result.mean_ic,
+        ic_std,
+        turnover_proxy,
         result.sharpe_proxy,
         result.parsimony_penalty,
         result.correlation_penalty,
