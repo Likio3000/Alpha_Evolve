@@ -107,6 +107,7 @@ EXCLUDED_FILES = {
     "yarn.lock",
     "composer.lock",
     "pythonCode.ts",
+    "tests",
 }
 EXCLUDED_FILES = {f.lower() for f in EXCLUDED_FILES}
 

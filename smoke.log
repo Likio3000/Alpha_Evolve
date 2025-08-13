@@ -1,0 +1,157 @@
+2025-08-13 17:47:35,503 [INFO] 
+— Evolution: 2 generations  (seed 42)
+2025-08-13 17:47:35,504 [INFO] Loading and aligning data: dir='./data', strategy='common_1200', min_points='1200', eval_lag='1'
+2025-08-13 17:47:40,141 [INFO] Data initialized: 14 symbols, 1201 common time steps.
+2025-08-13 17:47:40,142 [INFO] Data spans from 2023-05-11 16:00:00 to 2023-11-27 16:00:00.
+2025-08-13 17:47:40,142 [DEBUG] Evaluation logic configured: zscore, 0.002, sharpe_w=0.0
+2025-08-13 17:47:40,142 [INFO] Hall of Fame initialized: max_size=20, keep_dupes=False, corr_penalty_w=0.35, corr_cutoff=0.15
+2025-08-13 17:47:40,143 [DEBUG] Evaluation cache cleared and initialized.
+2025-08-13 17:47:40,400 [INFO] Gen 1/2 | Starting evaluation of 12 programs
+2025-08-13 17:47:40,565 [DEBUG] Early abort for ff768502afc5e7440e764d6d96495bdd04b038f9 due to XS flatness 0.000000 < 0.050000
+2025-08-13 17:47:40,565 [DEBUG] Early abort for ff768502afc5e7440e764d6d96495bdd04b038f9 due to flat bar fraction 1.000000 > 0.250000
+2025-08-13 17:47:40,565 [DEBUG] Early abort for ff768502afc5e7440e764d6d96495bdd04b038f9 due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:47:40,566 [DEBUG] Early abort stats ff768502afc5e7440e764d6d96495bdd04b038f9 | mean_xs_std_partial 0.000000 (< 0.050000) flat_fraction 1.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:47:40,568 [DEBUG] g1 p000 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:40,699 [DEBUG] Early abort for 7c2c36fe518eeba4d905e037f12365346821d6fc due to temporal flatness 0.007848 < 0.050000
+2025-08-13 17:47:40,699 [DEBUG] Early abort stats 7c2c36fe518eeba4d905e037f12365346821d6fc | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.007848 (< 0.050000)
+2025-08-13 17:47:40,702 [DEBUG] g1 p001 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:40,835 [DEBUG] Early abort for 393937dd363648d7d68c6e7ff34d82888923eede due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:47:40,836 [DEBUG] Early abort stats 393937dd363648d7d68c6e7ff34d82888923eede | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:47:40,836 [DEBUG] g1 p002 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:44,574 [DEBUG] Eval summary dec4a6a0a3c0fa11201ad41eb0685da9b4a9ab80 | fitness 0.033805 mean_ic 0.034908 sharpe -0.008338 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:47:44,575 [DEBUG] g1 p003 fit=+0.0338 IC=+0.0349 ops=48
+2025-08-13 17:47:44,669 [DEBUG] Early abort for 3d3b913480e42cf556b253841842b45a2026ab0d due to XS flatness 0.000000 < 0.050000
+2025-08-13 17:47:44,669 [DEBUG] Early abort for 3d3b913480e42cf556b253841842b45a2026ab0d due to flat bar fraction 1.000000 > 0.250000
+2025-08-13 17:47:44,669 [DEBUG] Early abort for 3d3b913480e42cf556b253841842b45a2026ab0d due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:47:44,669 [DEBUG] Early abort stats 3d3b913480e42cf556b253841842b45a2026ab0d | mean_xs_std_partial 0.000000 (< 0.050000) flat_fraction 1.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:47:44,676 [DEBUG] g1 p004 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:44,788 [DEBUG] Early abort for 06103706d64e95a0e546e48c114f49deb8bfc8b2 due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:47:44,789 [DEBUG] Early abort stats 06103706d64e95a0e546e48c114f49deb8bfc8b2 | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:47:44,789 [DEBUG] g1 p005 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:44,872 [DEBUG] Early abort for beed1b61be6cacfdfbf89d989c15be311e7e4199 due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:47:44,872 [DEBUG] Early abort stats beed1b61be6cacfdfbf89d989c15be311e7e4199 | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:47:44,873 [DEBUG] g1 p006 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:44,976 [DEBUG] Early abort for 6d08545039748e53a75d7b871f250e270e84fafb due to temporal flatness 0.029595 < 0.050000
+2025-08-13 17:47:44,976 [DEBUG] Early abort stats 6d08545039748e53a75d7b871f250e270e84fafb | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.029595 (< 0.050000)
+2025-08-13 17:47:44,978 [DEBUG] g1 p007 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:49,039 [DEBUG] Processed temporal flatness guard triggered for 03e2a15d054ab0fdfb2eebd47eaa503a34e23ff8: 0.021932 < 0.050000
+2025-08-13 17:47:49,039 [DEBUG] Flatness stats 03e2a15d054ab0fdfb2eebd47eaa503a34e23ff8 | mean_proc_t_std 0.021932 (< 0.050000)
+2025-08-13 17:47:49,039 [DEBUG] Eval summary 03e2a15d054ab0fdfb2eebd47eaa503a34e23ff8 | fitness -inf mean_ic 0.039154 sharpe -0.037552 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:47:49,040 [DEBUG] g1 p008 fit=-inf IC=+0.0392 ops=48
+2025-08-13 17:47:52,188 [DEBUG] Processed temporal flatness guard triggered for 6f402be710de62495c2864ce0568091b43b0cad4: 0.002381 < 0.050000
+2025-08-13 17:47:52,189 [DEBUG] Flatness stats 6f402be710de62495c2864ce0568091b43b0cad4 | mean_proc_t_std 0.002381 (< 0.050000)
+2025-08-13 17:47:52,189 [DEBUG] Eval summary 6f402be710de62495c2864ce0568091b43b0cad4 | fitness -inf mean_ic 0.039429 sharpe -0.036287 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:47:52,190 [DEBUG] g1 p009 fit=-inf IC=+0.0394 ops=48
+2025-08-13 17:47:52,191 [DEBUG] Program 13add8bd795e955328616bb7c0728309f418dd24 does not use any feature vector
+2025-08-13 17:47:52,192 [DEBUG] g1 p010 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:52,281 [DEBUG] Early abort for ef314d4fe21176c11a5c4f7464e5a37418b38995 due to temporal flatness 0.018583 < 0.050000
+2025-08-13 17:47:52,281 [DEBUG] Early abort stats ef314d4fe21176c11a5c4f7464e5a37418b38995 | mean_xs_std_partial 0.581087 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.018583 (< 0.050000)
+2025-08-13 17:47:52,285 [DEBUG] g1 p011 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:47:52,296 [INFO] Gen 1 | Evaluation completed in 11.9s
+2025-08-13 17:57:32,765 [INFO] 
+— Evolution: 2 generations  (seed 42)
+2025-08-13 17:57:32,765 [INFO] Loading and aligning data: dir='./data', strategy='common_1200', min_points='1200', eval_lag='1'
+2025-08-13 17:57:38,219 [INFO] Data initialized: 14 symbols, 1201 common time steps.
+2025-08-13 17:57:38,220 [INFO] Data spans from 2023-05-11 16:00:00 to 2023-11-27 16:00:00.
+2025-08-13 17:57:38,220 [DEBUG] Evaluation logic configured: zscore, 0.002, sharpe_w=0.0
+2025-08-13 17:57:38,220 [INFO] Hall of Fame initialized: max_size=20, keep_dupes=False, corr_penalty_w=0.35, corr_cutoff=0.15
+2025-08-13 17:57:38,220 [DEBUG] Evaluation cache cleared and initialized.
+2025-08-13 17:57:38,385 [INFO] Gen 1/2 | Starting evaluation of 12 programs
+2025-08-13 17:57:38,517 [DEBUG] Early abort for ff768502afc5e7440e764d6d96495bdd04b038f9 due to XS flatness 0.000000 < 0.050000
+2025-08-13 17:57:38,518 [DEBUG] Early abort for ff768502afc5e7440e764d6d96495bdd04b038f9 due to flat bar fraction 1.000000 > 0.250000
+2025-08-13 17:57:38,518 [DEBUG] Early abort for ff768502afc5e7440e764d6d96495bdd04b038f9 due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:57:38,518 [DEBUG] Early abort stats ff768502afc5e7440e764d6d96495bdd04b038f9 | mean_xs_std_partial 0.000000 (< 0.050000) flat_fraction 1.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:57:38,524 [DEBUG] g1 p000 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:38,665 [DEBUG] Early abort for 7c2c36fe518eeba4d905e037f12365346821d6fc due to temporal flatness 0.007848 < 0.050000
+2025-08-13 17:57:38,665 [DEBUG] Early abort stats 7c2c36fe518eeba4d905e037f12365346821d6fc | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.007848 (< 0.050000)
+2025-08-13 17:57:38,667 [DEBUG] g1 p001 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:38,778 [DEBUG] Early abort for 393937dd363648d7d68c6e7ff34d82888923eede due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:57:38,778 [DEBUG] Early abort stats 393937dd363648d7d68c6e7ff34d82888923eede | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:57:38,779 [DEBUG] g1 p002 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:42,201 [DEBUG] Eval summary dec4a6a0a3c0fa11201ad41eb0685da9b4a9ab80 | fitness 0.033805 mean_ic 0.034908 sharpe -0.008338 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:57:42,202 [DEBUG] g1 p003 fit=+0.0338 IC=+0.0349 ops=48
+2025-08-13 17:57:42,290 [DEBUG] Early abort for 3d3b913480e42cf556b253841842b45a2026ab0d due to XS flatness 0.000000 < 0.050000
+2025-08-13 17:57:42,290 [DEBUG] Early abort for 3d3b913480e42cf556b253841842b45a2026ab0d due to flat bar fraction 1.000000 > 0.250000
+2025-08-13 17:57:42,290 [DEBUG] Early abort for 3d3b913480e42cf556b253841842b45a2026ab0d due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:57:42,290 [DEBUG] Early abort stats 3d3b913480e42cf556b253841842b45a2026ab0d | mean_xs_std_partial 0.000000 (< 0.050000) flat_fraction 1.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:57:42,296 [DEBUG] g1 p004 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:42,412 [DEBUG] Early abort for 06103706d64e95a0e546e48c114f49deb8bfc8b2 due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:57:42,412 [DEBUG] Early abort stats 06103706d64e95a0e546e48c114f49deb8bfc8b2 | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:57:42,413 [DEBUG] g1 p005 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:42,502 [DEBUG] Early abort for beed1b61be6cacfdfbf89d989c15be311e7e4199 due to temporal flatness 0.000000 < 0.050000
+2025-08-13 17:57:42,502 [DEBUG] Early abort stats beed1b61be6cacfdfbf89d989c15be311e7e4199 | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.000000 (< 0.050000)
+2025-08-13 17:57:42,503 [DEBUG] g1 p006 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:42,613 [DEBUG] Early abort for 6d08545039748e53a75d7b871f250e270e84fafb due to temporal flatness 0.029595 < 0.050000
+2025-08-13 17:57:42,613 [DEBUG] Early abort stats 6d08545039748e53a75d7b871f250e270e84fafb | mean_xs_std_partial 0.620174 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.029595 (< 0.050000)
+2025-08-13 17:57:42,614 [DEBUG] g1 p007 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:46,585 [DEBUG] Processed temporal flatness guard triggered for 03e2a15d054ab0fdfb2eebd47eaa503a34e23ff8: 0.021932 < 0.050000
+2025-08-13 17:57:46,586 [DEBUG] Flatness stats 03e2a15d054ab0fdfb2eebd47eaa503a34e23ff8 | mean_proc_t_std 0.021932 (< 0.050000)
+2025-08-13 17:57:46,586 [DEBUG] Eval summary 03e2a15d054ab0fdfb2eebd47eaa503a34e23ff8 | fitness -inf mean_ic 0.039154 sharpe -0.037552 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:57:46,587 [DEBUG] g1 p008 fit=-inf IC=+0.0392 ops=48
+2025-08-13 17:57:49,789 [DEBUG] Processed temporal flatness guard triggered for 6f402be710de62495c2864ce0568091b43b0cad4: 0.002381 < 0.050000
+2025-08-13 17:57:49,790 [DEBUG] Flatness stats 6f402be710de62495c2864ce0568091b43b0cad4 | mean_proc_t_std 0.002381 (< 0.050000)
+2025-08-13 17:57:49,790 [DEBUG] Eval summary 6f402be710de62495c2864ce0568091b43b0cad4 | fitness -inf mean_ic 0.039429 sharpe -0.036287 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:57:49,791 [DEBUG] g1 p009 fit=-inf IC=+0.0394 ops=48
+2025-08-13 17:57:49,791 [DEBUG] Program 13add8bd795e955328616bb7c0728309f418dd24 does not use any feature vector
+2025-08-13 17:57:49,792 [DEBUG] g1 p010 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:49,877 [DEBUG] Early abort for ef314d4fe21176c11a5c4f7464e5a37418b38995 due to temporal flatness 0.018583 < 0.050000
+2025-08-13 17:57:49,877 [DEBUG] Early abort stats ef314d4fe21176c11a5c4f7464e5a37418b38995 | mean_xs_std_partial 0.581087 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.018583 (< 0.050000)
+2025-08-13 17:57:49,878 [DEBUG] g1 p011 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:49,887 [INFO] Gen 1 | Evaluation completed in 11.5s
+2025-08-13 17:57:53,095 [DEBUG] Eval summary dec4a6a0a3c0fa11201ad41eb0685da9b4a9ab80 | fitness 0.033805 mean_ic 0.034908 sharpe -0.008338 parsimony 0.001103 correlation 0.000000 ops 48
+2025-08-13 17:57:53,097 [INFO] HOF + dec4a6a0 fit=+0.0338  IC=+0.0349  ops=48
+2025-08-13 17:57:53,097 [INFO] 
+★ Generation 1 – Top (up to) 10 overall from HOF ★
+2025-08-13 17:57:53,097 [INFO]  Rank | Fitness |  IC  | Ops | Gen | Finger  | First 90 chars
+2025-08-13 17:57:53,097 [INFO] ─────────────────────────────────────────────────────────────
+2025-08-13 17:57:53,098 [INFO]     1 | +0.0338 | +0.035 |  48 |   1 | dec4a6a0 | S[s1 = cs_std(ma20_t);s2 = sin(s1);s3 = cs_std(highs_t);s4 = log(s1);s5 = cos(s4);v6 =…
+2025-08-13 17:57:53,099 [INFO] Gen   1 BestThisGenFit +0.0338 MeanIC +0.0349 Ops 48 EvalTime 11.5s | ETA 00h00m11s
+  └─ S[s1 = cs_std(ma20_t);s2 = sin(s1);s3 = cs_std(highs_t);s4 = log(s1);s5 = cos(s4);v6 =...
+2025-08-13 17:57:53,099 [DEBUG] Gen 1 | Building new population from elites and offspring
+2025-08-13 17:57:53,140 [DEBUG] Gen 1 | Next generation population prepared (12 programs)
+2025-08-13 17:57:53,141 [INFO] Gen 2/2 | Starting evaluation of 12 programs
+2025-08-13 17:57:53,155 [DEBUG] Cache hit for dec4a6a0a3c0fa11201ad41eb0685da9b4a9ab80 with fitness 0.033805
+2025-08-13 17:57:53,161 [DEBUG] g2 p000 fit=+0.0338 IC=+0.0349 ops=48
+2025-08-13 17:57:54,367 [DEBUG] Correlation penalty for e5336de8d3a732c22f8ac9babe8b5d0c608524f6: 0.350000
+2025-08-13 17:57:54,367 [DEBUG] Eval summary e5336de8d3a732c22f8ac9babe8b5d0c608524f6 | fitness -0.315115 mean_ic 0.034908 sharpe -0.008338 parsimony 0.000023 correlation 0.350000 ops 1
+2025-08-13 17:57:54,368 [DEBUG] Cache hit for e5336de8d3a732c22f8ac9babe8b5d0c608524f6 with fitness -0.315115
+2025-08-13 17:57:54,368 [DEBUG] g2 p001 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:54,369 [DEBUG] Cache hit for dec4a6a0a3c0fa11201ad41eb0685da9b4a9ab80 with fitness 0.033805
+2025-08-13 17:57:54,374 [DEBUG] Cache hit for e5336de8d3a732c22f8ac9babe8b5d0c608524f6 with fitness -0.315115
+2025-08-13 17:57:54,369 [DEBUG] g2 p002 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:54,375 [DEBUG] Cache hit for e5336de8d3a732c22f8ac9babe8b5d0c608524f6 with fitness -0.315115
+2025-08-13 17:57:54,375 [DEBUG] g2 p003 fit=+0.0338 IC=+0.0349 ops=48
+2025-08-13 17:57:54,375 [DEBUG] Program c2d1a063b05c4d8eee45a109cef95082066d3a96 does not use any feature vector
+2025-08-13 17:57:54,376 [DEBUG] g2 p004 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:54,382 [DEBUG] g2 p005 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:54,387 [DEBUG] g2 p006 fit=-inf IC=+0.0000 ops=48
+2025-08-13 17:57:55,598 [DEBUG] Processed temporal flatness guard triggered for 651eeecd961ba01cb9c08ec1c197290f3d69e146: 0.021932 < 0.050000
+2025-08-13 17:57:55,598 [DEBUG] Flatness stats 651eeecd961ba01cb9c08ec1c197290f3d69e146 | mean_proc_t_std 0.021932 (< 0.050000)
+2025-08-13 17:57:55,598 [DEBUG] Eval summary 651eeecd961ba01cb9c08ec1c197290f3d69e146 | fitness -inf mean_ic 0.039154 sharpe -0.037552 parsimony 0.000023 correlation 0.000000 ops 1
+2025-08-13 17:57:55,600 [DEBUG] Cache hit for e5336de8d3a732c22f8ac9babe8b5d0c608524f6 with fitness -0.315115
+2025-08-13 17:57:55,600 [DEBUG] g2 p007 fit=-inf IC=+0.0392 ops=1
+2025-08-13 17:57:55,602 [DEBUG] g2 p008 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:55,631 [DEBUG] Early abort for 86fd66469b29d10ea6569e2311d21941ba429083 due to XS flatness 0.032915 < 0.050000
+2025-08-13 17:57:55,631 [DEBUG] Early abort for 86fd66469b29d10ea6569e2311d21941ba429083 due to temporal flatness 0.015878 < 0.050000
+2025-08-13 17:57:55,631 [DEBUG] Early abort stats 86fd66469b29d10ea6569e2311d21941ba429083 | mean_xs_std_partial 0.032915 (< 0.050000) flat_fraction 0.000000 (> 0.250000) mean_t_std_partial 0.015878 (< 0.050000)
+2025-08-13 17:57:55,634 [DEBUG] Cache hit for e5336de8d3a732c22f8ac9babe8b5d0c608524f6 with fitness -0.315115
+2025-08-13 17:57:55,635 [DEBUG] Cache hit for e5336de8d3a732c22f8ac9babe8b5d0c608524f6 with fitness -0.315115
+2025-08-13 17:57:55,635 [DEBUG] g2 p009 fit=-inf IC=+0.0000 ops=1
+2025-08-13 17:57:55,636 [DEBUG] g2 p010 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:55,637 [DEBUG] g2 p011 fit=-0.3151 IC=+0.0349 ops=1
+2025-08-13 17:57:55,646 [INFO] Gen 2 | Evaluation completed in 2.5s
+2025-08-13 17:57:55,648 [DEBUG] Cache hit for dec4a6a0a3c0fa11201ad41eb0685da9b4a9ab80 with fitness 0.033805
+2025-08-13 17:57:55,653 [INFO] 
+★ Generation 2 – Top (up to) 10 overall from HOF ★
+2025-08-13 17:57:55,655 [INFO]  Rank | Fitness |  IC  | Ops | Gen | Finger  | First 90 chars
+2025-08-13 17:57:55,655 [INFO] ─────────────────────────────────────────────────────────────
+2025-08-13 17:57:55,657 [INFO]     1 | +0.0338 | +0.035 |  48 |   1 | dec4a6a0 | S[s1 = cs_std(ma20_t);s2 = sin(s1);s3 = cs_std(highs_t);s4 = log(s1);s5 = cos(s4);v6 =…
+2025-08-13 17:57:55,659 [INFO] Gen   2 BestThisGenFit +0.0338 MeanIC +0.0349 Ops 48 EvalTime 2.5s
+  └─ S[s1 = cs_std(ma20_t);s2 = sin(s1);s3 = cs_std(highs_t);s4 = log(s1);s5 = cos(s4);v6 =...
+2025-08-13 17:57:55,661 [DEBUG] Gen 2 | Building new population from elites and offspring
+2025-08-13 17:57:55,718 [DEBUG] Gen 2 | Next generation population prepared (12 programs)
+2025-08-13 17:57:55,724 [INFO] Saved 1 programmes → pipeline_runs_cs/run_g2_seed42_common_1200_20250813_175732/pickles/evolved_top20_2g_common_1200_20250813_175755.pkl
+2025-08-13 17:57:55,725 [INFO] 
+— Back-testing …
+2025-08-13 17:58:01,588 [INFO] 
+✔  Pipeline finished – artefacts in  pipeline_runs_cs/run_g2_seed42_common_1200_20250813_175732

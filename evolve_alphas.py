@@ -78,7 +78,7 @@ VECTOR_OPS_BIAS = 0.3
 plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
 plv.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
 
-def _random_prog(cfg: EvoConfig) -> AlphaProgram: # Signature changed
+def _random_prog(cfg: EvoConfig, rng: np.random.Generator) -> AlphaProgram:
     return AlphaProgram.random_program(
         FEATURE_VARS,
         INITIAL_STATE_VARS,
@@ -86,9 +86,10 @@ def _random_prog(cfg: EvoConfig) -> AlphaProgram: # Signature changed
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
+        rng=rng,
     )
 
-def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature changed
+def _mutate_prog(p: AlphaProgram, cfg: EvoConfig, rng: np.random.Generator) -> AlphaProgram:
     return p.mutate(
         FEATURE_VARS,
         INITIAL_STATE_VARS,
@@ -96,6 +97,7 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram: # Signature c
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
+        rng=rng,
     )
 
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
@@ -112,12 +114,13 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
 # EVOLVE LOOP ##############################################################
 ###############################################################################
 
-def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature changed
+def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: 
     _sync_evolution_configs_from_config(cfg)
 
     logger = logging.getLogger(__name__)
 
-    pop: List[AlphaProgram] = [_random_prog(cfg) for _ in range(cfg.pop_size)]
+    rng = np.random.default_rng(cfg.seed)
+    pop: List[AlphaProgram] = [_random_prog(cfg, rng) for _ in range(cfg.pop_size)]
     gen_eval_times_history: List[float] = []
 
     try:
@@ -164,9 +167,18 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
             eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
 
             if eval_results and eval_results[0][1].fitness > -np.inf:
-                best_prog_idx_this_gen, best_metrics_this_gen = eval_results[0]
-                best_preds_matrix_this_gen = best_metrics_this_gen.processed_predictions
+                best_prog_idx_this_gen, _ = eval_results[0]
                 best_program_instance_this_gen = pop[best_prog_idx_this_gen]
+                # Re-evaluate winner once with predictions so we can update the HOF correlation store.
+                best_metrics_this_gen = el_module.evaluate_program(
+                    best_program_instance_this_gen,
+                    dh_module,
+                    hof_module,
+                    INITIAL_STATE_VARS,
+                    return_preds=True,
+                )
+                best_preds_matrix_this_gen = best_metrics_this_gen.processed_predictions
+
 
                 add_program_to_hof(best_program_instance_this_gen, best_metrics_this_gen, gen)
 
@@ -180,7 +192,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                     "Gen %s | No valid programs. Restarting population and HOF.",
                     gen + 1,
                 )
-                pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
+                pop = [_random_prog(cfg, rng) for _ in range(cfg.pop_size)]
                 initialize_evaluation_cache(cfg.eval_cache_size)
                 clear_hof()
                 gen_eval_times_history.clear()
@@ -232,13 +244,13 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                  new_pop.append(pop[eval_results[0][0]].copy())
 
             while len(new_pop) < cfg.pop_size:
-                if random.random() < cfg.fresh_rate:
-                    new_pop.append(_random_prog(cfg))
+                if rng.random() < cfg.fresh_rate:
+                    new_pop.append(_random_prog(cfg, rng))
                     continue
                 
                 valid_indices_for_tournament = [k_idx for k_idx, s_k in enumerate(pop_fitness_scores) if s_k > -np.inf]
                 if not valid_indices_for_tournament: 
-                    new_pop.extend([_random_prog(cfg) for _ in range(cfg.pop_size - len(new_pop))])
+                    new_pop.extend([_random_prog(cfg, rng) for _ in range(cfg.pop_size - len(new_pop))])
                     break
 
                 num_to_sample = cfg.tournament_k * 2
@@ -247,7 +259,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 elif len(valid_indices_for_tournament) >= num_to_sample:
                     tournament_indices_pool = random.sample(valid_indices_for_tournament, num_to_sample)
                 else: 
-                    new_pop.append(_random_prog(cfg))
+                    new_pop.append(_random_prog(cfg, rng))
                     continue
 
                 parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=lambda i_tour: pop_fitness_scores[i_tour])
@@ -255,18 +267,19 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: # Signature chan
                 parent_a, parent_b = pop[parent1_idx], pop[parent2_idx]
 
                 child: AlphaProgram
-                if random.random() < cfg.p_cross:
+                if rng.random() < cfg.p_cross:
                     child = parent_a.crossover(
                         parent_b,
                         max_setup_ops=cfg.max_setup_ops,
                         max_predict_ops=cfg.max_predict_ops,
                         max_update_ops=cfg.max_update_ops,
+                        rng=rng
                     )
                 else:
-                    child = parent_a.copy() if random.random() < 0.5 else parent_b.copy()
+                    child = parent_a.copy() if rng.random() < 0.5 else parent_b.copy()
                 
-                if random.random() < cfg.p_mut:
-                    child = _mutate_prog(child, cfg)
+                if rng.random() < cfg.p_mut:
+                    child = _mutate_prog(child, cfg, rng)
                 
                 new_pop.append(child)
             pop = new_pop

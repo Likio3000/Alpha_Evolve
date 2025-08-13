@@ -203,7 +203,8 @@ def evaluate_program(
     prog: AlphaProgram,
     dh_module: data_handling, # Pass the data_handling module for access
     hof_module: hof_manager,  # Pass the hall_of_fame_manager module
-    initial_prog_state_vars_config: Dict[str, Any] # e.g. evolve_alphas.INITIAL_STATE_VARS
+    initial_prog_state_vars_config: Dict[str, Any], # e.g. evolve_alphas.INITIAL_STATE_VARS
+    return_preds: bool = False
 ) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
@@ -353,7 +354,14 @@ def evaluate_program(
                 daily_ic_values.append(0.0)
                 daily_pnl = 0.0
             else:
-                ic_t = _safe_corr_eval(processed_predictions_t, actual_returns_t)
+                # rank both sides for Spearman IC
+                def _rank(z):
+                    order = np.argsort(z)
+                    r = np.empty_like(order, dtype=float)
+                    r[order] = np.arange(z.size)
+                    return r
+
+                ic_t = _safe_corr_eval(_rank(processed_predictions_t), _rank(actual_returns_t))                
                 daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
                 daily_pnl = float(np.mean(processed_predictions_t * actual_returns_t))
 
@@ -504,7 +512,7 @@ def evaluate_program(
                 correlation_penalty,
             )
         score -= correlation_penalty
-    result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix)
+    result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix if return_preds else None)
     logger.debug(
         "Eval summary %s | fitness %.6f mean_ic %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
         fp,

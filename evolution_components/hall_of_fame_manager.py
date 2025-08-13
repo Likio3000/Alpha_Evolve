@@ -178,6 +178,9 @@ def add_program_to_hof(
                 _hof_corr_fingerprints.pop(0)
 
     if inserted:
+        # Always keep HOF sorted by fitness, even on in-place updates
+        _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)
+        
         logger.info(
             "HOF + %-8s fit=%+.4f  IC=%+.4f  ops=%d",
             fp[:8],

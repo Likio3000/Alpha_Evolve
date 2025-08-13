@@ -107,11 +107,12 @@ def generate_random_program_logic(
                         break
 
                 if chosen_name is None:
-                    # <-- this is the NEW behaviour (May-2025 change in original file)
-                    raise RuntimeError(
-                        "random_program(): could not find a vector-typed "
-                        "operation for the final predict slot"
-                    )
+                    # Emergency fallback: take any available vector input
+                    fallback = next((vn for vn, vt in current.items() if vt == "vector"), None)
+                    if fallback is None:
+                        fallback = "opens_t"
+                    block.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (fallback,)))
+                    return prog
             else:
                 idx = rng.integers(len(candidates))      # ← pick index
                 chosen_name, chosen_spec, pools = candidates[idx]
