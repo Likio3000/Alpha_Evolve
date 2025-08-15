@@ -24,6 +24,7 @@ from evolution_components import (
 from evolution_components import data_handling as dh_module
 from evolution_components import hall_of_fame_manager as hof_module
 from evolution_components import evaluation_logic as el_module
+from evolution_components import diagnostics as diag
 
 from config import EvoConfig # New import
 
@@ -56,6 +57,11 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature
         sharpe_proxy_weight=cfg.sharpe_proxy_w,
         ic_std_penalty_weight=cfg.ic_std_penalty_w,
         turnover_penalty_weight=cfg.turnover_penalty_w,
+        use_train_val_splits=cfg.use_train_val_splits,
+        train_points=cfg.train_points,
+        val_points=cfg.val_points,
+        sector_neutralize=cfg.sector_neutralize,
+        winsor_p=cfg.winsor_p,
     )
     initialize_hof(
         max_size=cfg.hof_size,
@@ -127,9 +133,11 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
 
     try:
         for gen in range(cfg.generations):
-            # Reset per-generation evaluation stats for clearer diagnostics
+            # Reset per-generation diagnostics for clearer inspection
             if hasattr(el_module, "reset_eval_stats"):
                 el_module.reset_eval_stats()
+            if hasattr(el_module, "reset_eval_events"):
+                el_module.reset_eval_events()
             logger.info(
                 "Gen %s/%s | Starting evaluation of %s programs",
                 gen + 1,
@@ -193,7 +201,8 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
             # Emit evaluation diagnostics
             if hasattr(el_module, "get_eval_stats"):
                 stats = el_module.get_eval_stats()
-                logger.debug(
+                # Emit a concise INFO summary for quick loop feedback
+                logger.info(
                     "Eval stats g%d | cache hits %d, misses %d, no_feat %d, nan_inf %d, all_zero %d, early_xs %d, early_t %d, early_flatbar %d",
                     gen + 1,
                     stats.get("cache_hits", 0),
@@ -205,6 +214,22 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     stats.get("early_abort_t", 0),
                     stats.get("early_abort_flatbar", 0),
                 )
+                # Record richer diagnostics for optional post-run analysis
+                try:
+                    events = el_module.get_eval_events() if hasattr(el_module, "get_eval_events") else []
+                    best_fit = eval_results[0][1].fitness if eval_results else float('-inf')
+                    best_idx = eval_results[0][0] if eval_results else -1
+                    best_ic = eval_results[0][1].mean_ic if eval_results else 0.0
+                    best_ops = pop[best_idx].size if best_idx >= 0 else 0
+                    best_fp = pop[best_idx].fingerprint if best_idx >= 0 else None
+                    diag.record_generation(
+                        generation=gen + 1,
+                        eval_stats=stats,
+                        eval_events=events,
+                        best={"fitness": best_fit, "mean_ic": best_ic, "ops": best_ops, "fingerprint": best_fp},
+                    )
+                except Exception:
+                    pass
 
             eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
 

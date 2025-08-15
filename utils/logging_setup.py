@@ -16,8 +16,7 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
         handlers.append(logging.FileHandler(log_file))
     logging.basicConfig(
         level=level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d | %(message)s",
         handlers=handlers,
         force=True,
     )
-

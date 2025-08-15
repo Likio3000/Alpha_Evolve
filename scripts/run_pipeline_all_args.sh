@@ -22,7 +22,13 @@ uv run run_pipeline.py 15 \
   --early_abort_xs 0.02 \
   --early_abort_t 0.005 \
   --hof_size 20 \
-  --scale zscore \
+  --scale madz \
+  --sector_neutralize \
+  --use_train_val_splits \
+  --train_points 840 \
+  --val_points 360 \
+  --ic_std_penalty_w 0.10 \
+  --turnover_penalty_w 0.05 \
   --workers 2 \
   --eval_cache_size 128 \
   --data_dir ./data \

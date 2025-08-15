@@ -81,8 +81,11 @@ class EvolutionConfig(DataConfig):
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
     sharpe_proxy_w: float = 0.0
-    ic_std_penalty_w: float = 0.0
-    turnover_penalty_w: float = 0.0
+    ic_std_penalty_w: float = 0.10
+    turnover_penalty_w: float = 0.05
+    use_train_val_splits: bool = True
+    train_points: int = 840
+    val_points: int = 360
     keep_dupes_in_hof: bool = False
 
     # evaluation specifics
@@ -92,7 +95,10 @@ class EvolutionConfig(DataConfig):
     early_abort_xs: float = 5e-2
     early_abort_t: float = 5e-2
     flat_bar_threshold: float = 0.25
-    scale: str = "zscore"
+    scale: str = "madz"
+    # Optional preprocessing tweaks
+    sector_neutralize: bool = True       # Demean positions by sector before IC
+    winsor_p: float = 0.02               # Tail prob for 'winsor' scale
 
     # evaluation cache
     eval_cache_size: int = 128

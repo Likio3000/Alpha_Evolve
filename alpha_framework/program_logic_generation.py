@@ -9,6 +9,23 @@ from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_
 # overridden by callers (e.g. `evolve_alphas`) before program creation.
 VECTOR_OPS_BIAS = 0.0
 
+# Optional weighting to favour relation-aware and cross-sectional ops
+RELATION_OPS_WEIGHT = 3.0
+CS_OPS_WEIGHT = 1.5
+DEFAULT_OP_WEIGHT = 1.0
+
+def _op_weight(op_name: str, is_predict: bool) -> float:
+    w = DEFAULT_OP_WEIGHT
+    if op_name.startswith("relation_"):
+        w *= RELATION_OPS_WEIGHT
+    # Encourage basic cross-sectional transforms a bit
+    if op_name.startswith("cs_"):
+        w *= CS_OPS_WEIGHT
+    # Slightly prefer relation/cs usage more in predict stage where final vector is built
+    if is_predict and (op_name.startswith("relation_") or op_name.startswith("cs_")):
+        w *= 1.2
+    return w
+
 # Per-stage limits from the paper
 MAX_SETUP_OPS = 21
 MAX_PREDICT_OPS = 21
@@ -114,7 +131,16 @@ def generate_random_program_logic(
                     block.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (fallback,)))
                     return prog
             else:
-                idx = rng.integers(len(candidates))      # ← pick index
+                # Weighted pick favouring relation_* and cs_* ops
+                if candidates:
+                    weights = np.array([_op_weight(n, is_predict) for n, _, _ in candidates], dtype=float)
+                    if np.all(weights <= 0) or np.isnan(weights).any():
+                        idx = rng.integers(len(candidates))
+                    else:
+                        weights = weights / weights.sum()
+                        idx = int(rng.choice(len(candidates), p=weights))
+                else:
+                    idx = 0
                 chosen_name, chosen_spec, pools = candidates[idx]
                 chosen_ins = tuple(rng.choice(p) for p in pools)
                 out_t = chosen_spec.out_type

@@ -109,6 +109,17 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
         df_sym = raw_dfs[sym]
         # Reindex to common_index. ffill/bfill to handle any gaps from individual symbol histories not perfectly matching.
         reindexed_df = df_sym.reindex(common_index).ffill().bfill()
+
+        # Ensure forward return matches the configured evaluation horizon.
+        # We recompute 'ret_fwd' here so that evaluation at t uses the cumulative
+        # return over `eval_lag` bars ending at t+eval_lag.
+        try:
+            reindexed_df["ret_fwd"] = (
+                reindexed_df["close"].pct_change(periods=eval_lag).shift(-eval_lag)
+            )
+        except Exception:
+            # Fall back to 1-step forward return if something goes wrong
+            reindexed_df["ret_fwd"] = reindexed_df["close"].pct_change(periods=1).shift(-1)
         
         # Final check for NaNs after alignment (should be rare if common_index logic is robust)
         if reindexed_df.isnull().values.any():

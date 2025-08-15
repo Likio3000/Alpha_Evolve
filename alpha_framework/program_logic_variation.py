@@ -21,6 +21,21 @@ from .alpha_framework_types import (
 # override this (see `evolve_alphas`).
 VECTOR_OPS_BIAS = 0.0
 
+# Optional weighting to favour relation-aware and cross-sectional ops
+RELATION_OPS_WEIGHT = 3.0
+CS_OPS_WEIGHT = 1.5
+DEFAULT_OP_WEIGHT = 1.0
+
+def _op_weight(op_name: str, is_predict: bool) -> float:
+    w = DEFAULT_OP_WEIGHT
+    if op_name.startswith("relation_"):
+        w *= RELATION_OPS_WEIGHT
+    if op_name.startswith("cs_"):
+        w *= CS_OPS_WEIGHT
+    if is_predict and (op_name.startswith("relation_") or op_name.startswith("cs_")):
+        w *= 1.2
+    return w
+
 
 if TYPE_CHECKING:
     from .alpha_framework_program import AlphaProgram # For type hint of self and return type
@@ -119,7 +134,14 @@ def mutate_program_logic(
                 candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
 
         if candidate_ops_for_add:
-            choice_index = rng.integers(len(candidate_ops_for_add))
+            weights = np.array([
+                _op_weight(op_n, chosen_block_name == "predict") for op_n, _, _ in candidate_ops_for_add
+            ], dtype=float)
+            if np.all(weights <= 0) or np.isnan(weights).any():
+                choice_index = rng.integers(len(candidate_ops_for_add))
+            else:
+                weights = weights / weights.sum()
+                choice_index = int(rng.choice(len(candidate_ops_for_add), p=weights))
             sel_op_n, sel_op_s, sel_sources = candidate_ops_for_add[choice_index]
             chosen_ins = tuple(rng.choice(s_list) for s_list in sel_sources)
 
@@ -173,7 +195,14 @@ def mutate_program_logic(
                     compatible_ops.append(op_n)
 
         if compatible_ops:
-            new_opcode = rng.choice(compatible_ops)
+            weights = np.array([
+                _op_weight(op_n, chosen_block_name == "predict") for op_n in compatible_ops
+            ], dtype=float)
+            if np.all(weights <= 0) or np.isnan(weights).any():
+                new_opcode = rng.choice(compatible_ops)
+            else:
+                weights = weights / weights.sum()
+                new_opcode = str(rng.choice(compatible_ops, p=weights))
             chosen_block_ops_list[op_idx_to_change] = Op(original_op.out, new_opcode, original_op.inputs)
 
     elif mutation_type == "change_inputs" and chosen_block_ops_list:

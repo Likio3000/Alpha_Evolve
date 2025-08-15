@@ -53,9 +53,14 @@ _EVAL_CONFIG = {
     "early_abort_t_threshold": 5e-2,
     "flat_bar_threshold": 0.25,
     "ic_scale_method": "zscore", # from args.scale
+    "winsor_p": 0.01,            # winsorization tail prob for 'winsor'
+    "sector_neutralize": False,  # optionally demean by sector before IC
     "sharpe_proxy_weight": 0.0,
     "ic_std_penalty_weight": 0.0,
     "turnover_penalty_weight": 0.0,
+    "use_train_val_splits": False,
+    "train_points": 0,
+    "val_points": 0,
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
 }
 
@@ -78,6 +83,24 @@ def reset_eval_stats() -> None:
 def get_eval_stats() -> dict:
     return dict(_EVAL_STATS)
 
+# Lightweight per-program event samples for diagnostics per generation
+_EVAL_EVENTS: list = []
+_EVAL_EVENTS_MAX = 200
+
+def reset_eval_events() -> None:
+    global _EVAL_EVENTS
+    _EVAL_EVENTS = []
+
+def get_eval_events() -> list:
+    return list(_EVAL_EVENTS)
+
+def _push_event(ev: dict) -> None:
+    try:
+        if len(_EVAL_EVENTS) < _EVAL_EVENTS_MAX:
+            _EVAL_EVENTS.append(ev)
+    except Exception:
+        pass
+
 def configure_evaluation(
     parsimony_penalty: float,
     max_ops: int,
@@ -90,7 +113,13 @@ def configure_evaluation(
     scale_method: str,
     sharpe_proxy_weight: float = 0.0,
     ic_std_penalty_weight: float = 0.0,
-    turnover_penalty_weight: float = 0.0
+    turnover_penalty_weight: float = 0.0,
+    use_train_val_splits: bool = False,
+    train_points: int = 0,
+    val_points: int = 0,
+    *,
+    sector_neutralize: bool = False,
+    winsor_p: float = 0.01,
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -102,16 +131,26 @@ def configure_evaluation(
     _EVAL_CONFIG["early_abort_t_threshold"] = early_abort_t
     _EVAL_CONFIG["flat_bar_threshold"] = flat_bar_threshold
     _EVAL_CONFIG["ic_scale_method"] = scale_method
+    _EVAL_CONFIG["sector_neutralize"] = bool(sector_neutralize)
+    _EVAL_CONFIG["winsor_p"] = float(winsor_p)
     _EVAL_CONFIG["sharpe_proxy_weight"] = sharpe_proxy_weight
     _EVAL_CONFIG["ic_std_penalty_weight"] = ic_std_penalty_weight
     _EVAL_CONFIG["turnover_penalty_weight"] = turnover_penalty_weight
+    _EVAL_CONFIG["use_train_val_splits"] = use_train_val_splits
+    _EVAL_CONFIG["train_points"] = int(train_points)
+    _EVAL_CONFIG["val_points"] = int(val_points)
     logging.getLogger(__name__).debug(
-        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s",
+        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f",
         scale_method,
         parsimony_penalty,
         sharpe_proxy_weight,
         ic_std_penalty_weight,
         turnover_penalty_weight,
+        use_train_val_splits,
+        train_points,
+        val_points,
+        sector_neutralize,
+        winsor_p,
     )
 
 
@@ -212,6 +251,26 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
             ranks = np.empty_like(temp, dtype=float)
             ranks[temp] = np.arange(len(clean_signal_vector))
             scaled = (ranks / (len(clean_signal_vector) - 1 + 1e-9)) * 2.0 - 1.0
+    elif method == "madz" or method == "mad":
+        med = np.nanmedian(clean_signal_vector)
+        mad = np.nanmedian(np.abs(clean_signal_vector - med))
+        scale = 1.4826 * mad
+        if scale < 1e-9:
+            scaled = np.zeros_like(clean_signal_vector)
+        else:
+            scaled = (clean_signal_vector - med) / scale
+    elif method == "winsor":
+        p = float(_EVAL_CONFIG.get("winsor_p", 0.01))
+        p = min(max(p, 0.0), 0.2)
+        lo = np.nanquantile(clean_signal_vector, p)
+        hi = np.nanquantile(clean_signal_vector, 1.0 - p)
+        w = np.clip(clean_signal_vector, lo, hi)
+        mu = np.nanmean(w)
+        sd = np.nanstd(w)
+        if sd < 1e-9:
+            scaled = np.zeros_like(clean_signal_vector)
+        else:
+            scaled = (w - mu) / sd
     else: # Default: z-score
         mu = np.nanmean(clean_signal_vector)
         sd = np.nanstd(clean_signal_vector)
@@ -224,6 +283,28 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
     # Ensure it's always centered for IC, regardless of method, this was specific to the original.
     centered_scaled = scaled - np.mean(scaled) 
     return np.clip(centered_scaled, -1, 1)
+
+def _demean_by_groups(x: np.ndarray, groups: np.ndarray) -> np.ndarray:
+    """Demean vector x within integer group IDs, then re-center and clip.
+
+    Groups with ID < 0 are treated as a separate bucket. If a group
+    has size 0 (shouldn't happen) it is skipped. Returns a vector of
+    same shape.
+    """
+    if x.size == 0:
+        return x
+    g = groups.astype(int, copy=False)
+    out = x.copy()
+    # unique groups
+    uniq = np.unique(g)
+    for gid in uniq:
+        mask = g == gid
+        if not np.any(mask):
+            continue
+        out[mask] = out[mask] - np.mean(out[mask])
+    # Re-center overall and clip to keep parity with scaling
+    out = out - np.mean(out)
+    return np.clip(out, -1, 1)
 
 
 def _average_rank_ties(x: np.ndarray) -> np.ndarray:
@@ -277,6 +358,7 @@ def evaluate_program(
     if not _uses_feature_vector_check(prog):
         logger.debug("Program %s does not use any feature vector", fp)
         _EVAL_STATS["rejected_no_feature_vec"] += 1
+        _push_event({"fp": fp, "event": "no_feature_vector"})
         result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
         _cache_set(fp, result)
         return result
@@ -335,6 +417,7 @@ def evaluate_program(
             if np.any(np.isnan(raw_predictions_t)) or np.any(np.isinf(raw_predictions_t)):
                 # print(f"Program {fp} yielded NaN/Inf at t_idx {t_idx}. Aborting eval for this prog.")
                 _EVAL_STATS["rejected_nan_or_inf"] += 1
+                _push_event({"fp": fp, "event": "nan_or_inf"})
                 _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
                 return _eval_cache[fp]
             
@@ -343,6 +426,8 @@ def evaluate_program(
             processed_predictions_t = _scale_signal_for_ic(
                 raw_predictions_t, _EVAL_CONFIG["ic_scale_method"]
             )
+            if _EVAL_CONFIG.get("sector_neutralize", False):
+                processed_predictions_t = _demean_by_groups(processed_predictions_t, sector_groups_vec)
             all_processed_predictions_timeseries.append(processed_predictions_t)
 
             # Early abort checks (on raw predictions)
@@ -393,6 +478,13 @@ def evaluate_program(
                     _EVAL_STATS["early_abort_t"] += 1
                     early_abort = True
                 if early_abort:
+                    _push_event({
+                        "fp": fp,
+                        "event": "early_abort",
+                        "mean_xs_std": float(mean_xs_std_partial),
+                        "flat_fraction": float(flat_fraction),
+                        "mean_t_std": float(mean_t_std_partial),
+                    })
                     logger.debug(
                         "Early abort stats %s | mean_xs_std_partial %.6f (< %.6f) flat_fraction %.6f (> %.6f) mean_t_std_partial %.6f (< %.6f)",
                         fp,
@@ -431,8 +523,25 @@ def evaluate_program(
             return _eval_cache[fp]
 
     if not daily_ic_values or not all_raw_predictions_timeseries or not all_processed_predictions_timeseries:
+        _push_event({"fp": fp, "event": "exception"})
         _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
         return _eval_cache[fp]
+
+    # Compute metrics (optionally on train/val splits)
+    full_raw_predictions_matrix = np.array(all_raw_predictions_timeseries)
+    full_processed_predictions_matrix = np.array(all_processed_predictions_timeseries)
+
+    def _neutralize(mat: np.ndarray) -> np.ndarray:
+        if mat.ndim != 2 or mat.shape[1] == 0:
+            return mat
+        centered = mat - mat.mean(axis=1, keepdims=True)
+        l1 = np.sum(np.abs(centered), axis=1, keepdims=True)
+        return np.where(l1 > 1e-9, centered / l1, 0.0)
+
+    total_steps = len(daily_ic_values)
+    use_splits = bool(_EVAL_CONFIG.get("use_train_val_splits", False))
+    t_points = int(_EVAL_CONFIG.get("train_points", 0))
+    v_points = int(_EVAL_CONFIG.get("val_points", 0))
 
     mean_daily_ic = float(np.mean(daily_ic_values))
     mean_pnl = pnl_sum / num_evaluation_steps
@@ -440,11 +549,29 @@ def evaluate_program(
     std_pnl = var_pnl ** 0.5 if var_pnl > 0 else 0.0
     sharpe_proxy = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
     ic_std = float(np.std(daily_ic_values, ddof=0)) if daily_ic_values else 0.0
-    # Turnover proxy: mean absolute change of processed predictions across time
     turnover_proxy = 0.0
-    if len(all_processed_predictions_timeseries) > 1:
-        ppm = np.array(all_processed_predictions_timeseries)
-        turnover_proxy = float(np.mean(np.abs(np.diff(ppm, axis=0))))
+
+    if use_splits and t_points > 0 and v_points > 0 and (t_points + v_points) <= total_steps:
+        tr = slice(0, t_points)
+        va = slice(t_points, t_points + v_points)
+        ic_tr = float(np.mean(daily_ic_values[tr])) if t_points > 0 else 0.0
+        ic_va = float(np.mean(daily_ic_values[va])) if v_points > 0 else 0.0
+        ic_std_tr = float(np.std(daily_ic_values[tr], ddof=0)) if t_points > 1 else 0.0
+        ic_std_va = float(np.std(daily_ic_values[va], ddof=0)) if v_points > 1 else 0.0
+
+        pos_tr = _neutralize(full_processed_predictions_matrix[tr])
+        pos_va = _neutralize(full_processed_predictions_matrix[va])
+        turn_tr = float(np.mean(np.sum(np.abs(np.diff(pos_tr, axis=0)), axis=1)/2.0)) if pos_tr.shape[0] > 1 else 0.0
+        turn_va = float(np.mean(np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1)/2.0)) if pos_va.shape[0] > 1 else 0.0
+
+        mean_daily_ic = 0.5 * (ic_tr + ic_va)
+        ic_std = 0.5 * (ic_std_tr + ic_std_va)
+        turnover_proxy = 0.5 * (turn_tr + turn_va)
+        processed_for_hof = full_processed_predictions_matrix[va]
+    else:
+        pos_full = _neutralize(full_processed_predictions_matrix)
+        turnover_proxy = float(np.mean(np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1)/2.0)) if pos_full.shape[0] > 1 else 0.0
+        processed_for_hof = full_processed_predictions_matrix
 
     parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * prog.size / _EVAL_CONFIG["max_ops_for_parsimony"]
     score = (
@@ -456,10 +583,7 @@ def evaluate_program(
     )
     correlation_penalty = 0.0
 
-    full_raw_predictions_matrix = np.array(all_raw_predictions_timeseries)
-    full_processed_predictions_matrix = np.array(all_processed_predictions_timeseries)
-
-    if np.all(full_processed_predictions_matrix == 0):
+    if np.all(processed_for_hof == 0):
         logger.debug("All-zero predictions – rejected")
         _EVAL_STATS["rejected_all_zero"] += 1
         score = -float('inf')
@@ -574,8 +698,8 @@ def evaluate_program(
                 score = -float('inf')
 
     # HOF correlation penalty (uses processed predictions)
-    if score > -float('inf') and full_processed_predictions_matrix.size > 0:
-        correlation_penalty = hof_module.get_correlation_penalty_with_hof(full_processed_predictions_matrix.flatten())
+    if score > -float('inf') and processed_for_hof.size > 0:
+        correlation_penalty = hof_module.get_correlation_penalty_with_hof(processed_for_hof.flatten())
         if correlation_penalty > 0:
             logger.debug(
                 "Correlation penalty for %s: %.6f",
@@ -583,7 +707,7 @@ def evaluate_program(
                 correlation_penalty,
             )
         score -= correlation_penalty
-    result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, full_processed_predictions_matrix if return_preds else None)
+    result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, processed_for_hof if return_preds else None)
     logger.debug(
         "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
         fp,

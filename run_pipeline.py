@@ -58,6 +58,9 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p.add_argument("--sharpe_proxy_w",     type=float, default=argparse.SUPPRESS)
     p.add_argument("--ic_std_penalty_w",   type=float, default=argparse.SUPPRESS)
     p.add_argument("--turnover_penalty_w", type=float, default=argparse.SUPPRESS)
+    p.add_argument("--use_train_val_splits", action="store_true", default=argparse.SUPPRESS)
+    p.add_argument("--train_points",       type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--val_points",         type=int,   default=argparse.SUPPRESS)
     p.add_argument("--keep_dupes_in_hof", action="store_true",
                    default=argparse.SUPPRESS)
     p.add_argument("--xs_flat_guard",      type=float, default=argparse.SUPPRESS)
@@ -67,8 +70,12 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p.add_argument("--early_abort_t",      type=float, default=argparse.SUPPRESS)
     p.add_argument("--flat_bar_threshold", type=float, default=argparse.SUPPRESS)
     p.add_argument("--hof_size",           type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--scale",              choices=["zscore","rank","sign"],
+    p.add_argument("--scale",              choices=["zscore","rank","sign","madz","winsor"],
                                                      default=argparse.SUPPRESS)
+    p.add_argument("--sector_neutralize",  action="store_true", default=argparse.SUPPRESS,
+                   help="Demean signals by sector prior to IC")
+    p.add_argument("--winsor_p",           type=float, default=argparse.SUPPRESS,
+                   help="Tail probability for 'winsor' scaling")
     p.add_argument("--quiet",              action="store_true", default=argparse.SUPPRESS)
     p.add_argument("--workers",            type=int,   default=argparse.SUPPRESS)
     p.add_argument("--eval_cache_size",    type=int,   default=argparse.SUPPRESS)
@@ -196,6 +203,19 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     pickle_path = _evolve_and_save(evo_cfg, run_dir)
+
+    # Save per-generation diagnostics if available
+    try:
+        from evolution_components import diagnostics as diag
+        diags = diag.get_all()
+        if diags:
+            import json
+            diag_path = run_dir / "diagnostics.json"
+            with open(diag_path, "w") as fh:
+                json.dump(diags, fh, indent=2)
+            logging.getLogger(__name__).info(f"Saved diagnostics → {diag_path}")
+    except Exception:
+        pass
 
     # ­­­ build argv for the back-tester (same flag names → zero changes there)
     bt_argv = [
