@@ -20,9 +20,10 @@ def _rolling_features_individual_df_bt(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def load_and_align_data_for_backtest(
-    data_dir_param: str, 
-    strategy_param: str, 
-    min_common_points_param: int
+    data_dir_param: str,
+    strategy_param: str,
+    min_common_points_param: int,
+    eval_lag: int = 1,
 ) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
     raw_dfs: Dict[str, pd.DataFrame] = {}
     for csv_file in glob.glob(os.path.join(data_dir_param, "*.csv")):
@@ -64,12 +65,20 @@ def load_and_align_data_for_backtest(
         else:
             common_index = common_index.intersection(df_sym.index)
     
-    if common_index is None or len(common_index) < min_common_points_param:
-        sys.exit(f"Not enough common history for backtesting (need at least {min_common_points_param}, got {len(common_index) if common_index is not None else 0}).")
+    # For backtests we also need to ensure there are enough points to compute
+    # forward returns for the chosen evaluation lag.
+    required_len = min_common_points_param + max(int(eval_lag), 0)
+    if common_index is None or len(common_index) < required_len:
+        sys.exit(
+            f"Not enough common history for backtesting (need at least {required_len}, "
+            f"got {len(common_index) if common_index is not None else 0})."
+        )
 
-    if strategy_param == 'common_1200': # common_1200 is a fixed lookback
-        if len(common_index) > min_common_points_param:
-            common_index = common_index[-min_common_points_param:]
+    if strategy_param == 'common_1200':  # fixed lookback window
+        # Keep exactly the evaluation steps plus extra bars for the forward return horizon
+        need = min_common_points_param + max(int(eval_lag), 0)
+        if len(common_index) > need:
+            common_index = common_index[-need:]
     # For 'specific_long_10k' and 'full_overlap', use the full common_index found that meets min_common_points_param.
 
     aligned_dfs_ordered = OrderedDict()
@@ -81,6 +90,15 @@ def load_and_align_data_for_backtest(
             continue
         
         df_sym = raw_dfs[sym].reindex(common_index).ffill().bfill()
+
+        # Recompute forward returns to match the configured evaluation horizon
+        try:
+            df_sym["ret_fwd"] = (
+                df_sym["close"].pct_change(periods=eval_lag).shift(-eval_lag)
+            )
+        except Exception:
+            df_sym["ret_fwd"] = df_sym["close"].pct_change(periods=1).shift(-1)
+
         if df_sym.isnull().values.any():
              print(f"Warning (backtest): DataFrame for {sym} contains NaNs after alignment. This might affect backtest results.")
         aligned_dfs_ordered[sym] = df_sym

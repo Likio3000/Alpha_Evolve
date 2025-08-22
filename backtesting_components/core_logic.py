@@ -30,6 +30,25 @@ def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str) 
             ranks = np.empty_like(temp, dtype=float)
             ranks[temp] = np.arange(len(clean_signal_vector))
             scaled = (ranks / (len(clean_signal_vector) - 1 + 1e-9)) * 2.0 - 1.0
+    elif method == "madz" or method == "mad":
+        med = np.nanmedian(clean_signal_vector)
+        mad = np.nanmedian(np.abs(clean_signal_vector - med))
+        scale = 1.4826 * mad
+        if scale < 1e-9:
+            scaled = np.zeros_like(clean_signal_vector)
+        else:
+            scaled = (clean_signal_vector - med) / scale
+    elif method == "winsor":
+        p = 0.02
+        lo = np.nanquantile(clean_signal_vector, p)
+        hi = np.nanquantile(clean_signal_vector, 1.0 - p)
+        w = np.clip(clean_signal_vector, lo, hi)
+        mu = np.nanmean(w)
+        sd = np.nanstd(w)
+        if sd < 1e-9:
+            scaled = np.zeros_like(clean_signal_vector)
+        else:
+            scaled = (w - mu) / sd
     else: # Default: z-score
         mu = np.nanmean(clean_signal_vector) 
         sd = np.nanstd(clean_signal_vector)

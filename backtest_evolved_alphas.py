@@ -79,7 +79,7 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--long_short_n",      type=int,                   default=argparse.SUPPRESS,
                    help="trade only top/bottom N symbols")
     p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
-    p.add_argument("--scale",             choices=["zscore", "rank", "sign"],
+    p.add_argument("--scale",             choices=["zscore", "rank", "sign", "madz", "winsor"],
                                                                   default=argparse.SUPPRESS)
     p.add_argument("--lag",               dest="eval_lag",            type=int,   default=argparse.SUPPRESS)
     p.add_argument("--data_alignment_strategy",
@@ -120,6 +120,7 @@ def main() -> None:
         cfg.data_dir,
         cfg.max_lookback_data_option,
         cfg.min_common_points,
+        cfg.eval_lag,
     )
     print(f"{len(stock_symbols)} symbols | {len(common_index)} bars "
           f"({common_index.min()} → {common_index.max()})")
