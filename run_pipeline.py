@@ -21,6 +21,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
+from dataclasses import fields as dc_fields
 
 from config import EvolutionConfig, BacktestConfig
 import evolve_alphas as ae
@@ -31,72 +32,55 @@ BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  CLI → two dataclass configs
+#  CLI → two dataclass configs (auto-generated from dataclasses)
 # ─────────────────────────────────────────────────────────────────────────────
+def _add_dataclass_args(parser: argparse.ArgumentParser,
+                        dc_type,
+                        *,
+                        skip: set[str] | None = None,
+                        choices_map: dict[str, list[str]] | None = None,
+                        already_added: set[str] | None = None) -> set[str]:
+    skip = skip or set()
+    choices_map = choices_map or {}
+    added = set() if already_added is None else set(already_added)
+    for f in dc_fields(dc_type):
+        name = f.name
+        if name in skip or name in added:
+            continue
+        ftype = f.type
+        if ftype not in (int, float, str, bool):
+            continue
+        if name == "generations":
+            # Keep positional form for compatibility
+            continue
+        arg = f"--{name}"
+        kwargs: dict = {"default": argparse.SUPPRESS}
+        if ftype is bool:
+            kwargs["action"] = "store_true"
+        else:
+            kwargs["type"] = ftype
+            if name in choices_map:
+                kwargs["choices"] = choices_map[name]
+        parser.add_argument(arg, **kwargs)
+        added.add(name)
+    return added
+
+
 def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
 
-    # ───► evolution flags
+    # Positional generations
     p.add_argument("generations", type=int)
-    p.add_argument("--seed",               type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--pop_size",           type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--tournament_k",       type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--p_mut",              type=float, default=argparse.SUPPRESS)
-    p.add_argument("--p_cross",            type=float, default=argparse.SUPPRESS)
-    p.add_argument("--elite_keep",         type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--fresh_rate",         type=float, default=argparse.SUPPRESS)
-    p.add_argument("--max_ops",            type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--max_setup_ops",      type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--max_predict_ops",    type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--max_update_ops",     type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--max_scalar_operands", type=int,  default=argparse.SUPPRESS)
-    p.add_argument("--max_vector_operands", type=int,  default=argparse.SUPPRESS)
-    p.add_argument("--max_matrix_operands", type=int,  default=argparse.SUPPRESS)
-    p.add_argument("--parsimony_penalty",  type=float, default=argparse.SUPPRESS)
-    p.add_argument("--corr_penalty_w",     type=float, default=argparse.SUPPRESS)
-    p.add_argument("--corr_cutoff",        type=float, default=argparse.SUPPRESS)
-    p.add_argument("--sharpe_proxy_w",     type=float, default=argparse.SUPPRESS)
-    p.add_argument("--ic_std_penalty_w",   type=float, default=argparse.SUPPRESS)
-    p.add_argument("--turnover_penalty_w", type=float, default=argparse.SUPPRESS)
-    p.add_argument("--use_train_val_splits", action="store_true", default=argparse.SUPPRESS)
-    p.add_argument("--train_points",       type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--val_points",         type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--keep_dupes_in_hof", action="store_true",
-                   default=argparse.SUPPRESS)
-    p.add_argument("--xs_flat_guard",      type=float, default=argparse.SUPPRESS)
-    p.add_argument("--t_flat_guard",       type=float, default=argparse.SUPPRESS)
-    p.add_argument("--early_abort_bars",   type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--early_abort_xs",     type=float, default=argparse.SUPPRESS)
-    p.add_argument("--early_abort_t",      type=float, default=argparse.SUPPRESS)
-    p.add_argument("--flat_bar_threshold", type=float, default=argparse.SUPPRESS)
-    p.add_argument("--hof_size",           type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--scale",              choices=["zscore","rank","sign","madz","winsor"],
-                                                     default=argparse.SUPPRESS)
-    p.add_argument("--sector_neutralize",  action="store_true", default=argparse.SUPPRESS,
-                   help="Demean signals by sector prior to IC")
-    p.add_argument("--winsor_p",           type=float, default=argparse.SUPPRESS,
-                   help="Tail probability for 'winsor' scaling")
-    p.add_argument("--quiet",              action="store_true", default=argparse.SUPPRESS)
-    p.add_argument("--workers",            type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--eval_cache_size",    type=int,   default=argparse.SUPPRESS)
 
-    # ───► shared data flags
-    p.add_argument("--data_dir",                 default=argparse.SUPPRESS)
-    p.add_argument("--max_lookback_data_option", choices=['common_1200',
-                                                          'specific_long_10k',
-                                                          'full_overlap'],
-                                                   default=argparse.SUPPRESS)
-    p.add_argument("--min_common_points",  type=int, default=argparse.SUPPRESS)
-    p.add_argument("--eval_lag",           type=int, default=argparse.SUPPRESS)
+    # Auto-add flags with known choices
+    choices_map = {
+        "scale": ["zscore", "rank", "sign", "madz", "winsor"],
+        "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
+    }
+    added = _add_dataclass_args(p, EvolutionConfig, choices_map=choices_map)
+    _add_dataclass_args(p, BacktestConfig, choices_map=choices_map, already_added=added)
 
-    # ───► back-test-only flags
-    p.add_argument("--top",   dest="top_to_backtest", type=int, default=argparse.SUPPRESS)
-    p.add_argument("--top_to_backtest", dest="top_to_backtest", type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-
-    p.add_argument("--fee",                            type=float, default=argparse.SUPPRESS)
-    p.add_argument("--hold",                           type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--long_short_n",                   type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
+    # Pipeline-only flags
     p.add_argument("--debug_prints", action="store_true")
     p.add_argument("--run_baselines", action="store_true",
                    help="also train baseline models")
@@ -112,8 +96,9 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     ns = p.parse_args()
     d = vars(ns)
 
-    evo_cfg = EvolutionConfig(**{k: v for k, v in d.items()
-                                 if k in EvolutionConfig.__annotations__})
+    evo_kwargs = {k: v for k, v in d.items() if k in EvolutionConfig.__annotations__}
+    evo_kwargs["generations"] = ns.generations
+    evo_cfg = EvolutionConfig(**evo_kwargs)
     bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
                                  if k in BacktestConfig.__annotations__})
 
@@ -269,6 +254,15 @@ def main() -> None:
             logging.getLogger(__name__).info(f"Saved diagnostics → {diag_path}")
     except Exception:
         pass
+
+    # Optionally generate plots (if matplotlib present)
+    try:
+        import scripts.diagnostics_plot as diag_plot
+        diag_plot.main()
+    except SystemExit:
+        pass
+    except Exception:
+        logging.getLogger(__name__).info("Plotting skipped (matplotlib not available).")
 
     # Back-test programmatically using the new API
     logger = logging.getLogger(__name__)

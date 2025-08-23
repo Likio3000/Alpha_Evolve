@@ -51,6 +51,18 @@ def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, 
         corr_cutoff,
     )
 
+def set_correlation_penalty(weight: float | None = None, cutoff: float | None = None) -> None:
+    """Dynamically update correlation-penalty configuration during evolution.
+
+    Useful for annealing: e.g., start with zero correlation penalty for a few
+    generations, then ramp up to the configured target weight.
+    """
+    global _corr_penalty_config
+    if weight is not None:
+        _corr_penalty_config["weight"] = float(weight)
+    if cutoff is not None:
+        _corr_penalty_config["cutoff"] = float(cutoff)
+
 def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Copied from evolve_alphas, will be used for HOF penalty
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
         return 0.0

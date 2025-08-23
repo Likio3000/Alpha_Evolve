@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import glob
 import sys
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
@@ -84,6 +85,8 @@ def load_and_align_data_for_backtest(
     aligned_dfs_ordered = OrderedDict()
     symbols_to_keep = sorted(list(raw_dfs.keys())) # Ensure we only iterate over symbols present after filtering
 
+    lg = logging.getLogger(__name__)
+
     for sym in symbols_to_keep:
         # Ensure symbol still exists in raw_dfs (it should if symbols_to_keep is from raw_dfs.keys())
         if sym not in raw_dfs:
@@ -100,7 +103,10 @@ def load_and_align_data_for_backtest(
             df_sym["ret_fwd"] = df_sym["close"].pct_change(periods=1).shift(-1)
 
         if df_sym.isnull().values.any():
-             print(f"Warning (backtest): DataFrame for {sym} contains NaNs after alignment. This might affect backtest results.")
+            lg.warning(
+                "DataFrame for %s contains NaNs after alignment. This might affect backtest results.",
+                sym,
+            )
         aligned_dfs_ordered[sym] = df_sym
     
     stock_symbols = list(aligned_dfs_ordered.keys())

@@ -141,6 +141,10 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
 
 def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: 
     _sync_evolution_configs_from_config(cfg)
+    try:
+        diag.reset()
+    except Exception:
+        pass
 
     logger = logging.getLogger(__name__)
 
@@ -150,6 +154,37 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
 
     try:
         for gen in range(cfg.generations):
+            # Anneal correlation penalty and optional eval weights to encourage exploration early
+            # Ramp linearly over first third of the run (min 5 gens)
+            ramp_gens = max(5, cfg.generations // 3 if cfg.generations > 0 else 5)
+            ramp = min(1.0, (gen + 1) / ramp_gens)
+            try:
+                hof_module.set_correlation_penalty(weight=cfg.corr_penalty_w * ramp, cutoff=cfg.corr_cutoff)
+            except Exception:
+                pass
+            try:
+                # Re-apply eval configuration to adjust weights dynamically
+                el_module.configure_evaluation(
+                    parsimony_penalty=cfg.parsimony_penalty,
+                    max_ops=cfg.max_ops,
+                    xs_flatness_guard=cfg.xs_flat_guard,
+                    temporal_flatness_guard=cfg.t_flat_guard,
+                    early_abort_bars=cfg.early_abort_bars,
+                    early_abort_xs=cfg.early_abort_xs,
+                    early_abort_t=cfg.early_abort_t,
+                    flat_bar_threshold=cfg.flat_bar_threshold,
+                    scale_method=cfg.scale,
+                    sharpe_proxy_weight=cfg.sharpe_proxy_w * ramp,
+                    ic_std_penalty_weight=cfg.ic_std_penalty_w * ramp,
+                    turnover_penalty_weight=cfg.turnover_penalty_w * ramp,
+                    use_train_val_splits=cfg.use_train_val_splits,
+                    train_points=cfg.train_points,
+                    val_points=cfg.val_points,
+                    sector_neutralize=cfg.sector_neutralize,
+                    winsor_p=cfg.winsor_p,
+                )
+            except Exception:
+                pass
             # Reset per-generation diagnostics for clearer inspection
             if hasattr(el_module, "reset_eval_stats"):
                 el_module.reset_eval_stats()
@@ -233,18 +268,53 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                 )
                 # Record richer diagnostics for optional post-run analysis
                 try:
+                    # Per-gen population distribution and a snapshot of top-K
+                    K = 5
                     events = el_module.get_eval_events() if hasattr(el_module, "get_eval_events") else []
-                    best_fit = eval_results[0][1].fitness if eval_results else float('-inf')
-                    best_idx = eval_results[0][0] if eval_results else -1
-                    best_ic = eval_results[0][1].mean_ic if eval_results else 0.0
-                    best_ops = pop[best_idx].size if best_idx >= 0 else 0
-                    best_fp = pop[best_idx].fingerprint if best_idx >= 0 else None
+                    valid_scores = [r[1].fitness for r in eval_results if np.isfinite(r[1].fitness)]
+                    q = None
+                    if valid_scores:
+                        arr = np.array(valid_scores)
+                        q = {
+                            "best": float(np.max(arr)),
+                            "p95": float(np.quantile(arr, 0.95)),
+                            "p75": float(np.quantile(arr, 0.75)),
+                            "median": float(np.median(arr)),
+                            "p25": float(np.quantile(arr, 0.25)),
+                            "count": int(arr.size),
+                        }
+                    top_summary = []
+                    for idx_in_pop, res in eval_results[:K]:
+                        prog = pop[idx_in_pop]
+                        top_summary.append({
+                            "fingerprint": prog.fingerprint,
+                            "fitness": float(res.fitness),
+                            "mean_ic": float(res.mean_ic),
+                            "ic_std": float(getattr(res, "ic_std", 0.0)),
+                            "turnover": float(getattr(res, "turnover_proxy", 0.0)),
+                            "parsimony": float(res.parsimony_penalty),
+                            "corr_pen": float(res.correlation_penalty),
+                            "ops": int(prog.size),
+                            "program": prog.to_string(max_len=180),
+                        })
                     diag.record_generation(
                         generation=gen + 1,
                         eval_stats=stats,
                         eval_events=events,
-                        best={"fitness": best_fit, "mean_ic": best_ic, "ops": best_ops, "fingerprint": best_fp},
+                        best=(top_summary[0] if top_summary else {}),
                     )
+                    # Also stash distribution and top-K under synthetic keys for downstream report scripts
+                    if hasattr(diag, "_GEN_DIAGNOSTICS"):
+                        try:
+                            diag._GEN_DIAGNOSTICS[-1]["pop_quantiles"] = q or {}
+                            diag._GEN_DIAGNOSTICS[-1]["topK"] = top_summary
+                            diag._GEN_DIAGNOSTICS[-1]["ramp"] = {"corr_w": float(cfg.corr_penalty_w * ramp),
+                                                                   "ic_std_w": float(cfg.ic_std_penalty_w * ramp),
+                                                                   "turnover_w": float(cfg.turnover_penalty_w * ramp),
+                                                                   "sharpe_w": float(cfg.sharpe_proxy_w * ramp)}
+                            diag._GEN_DIAGNOSTICS[-1]["gen_eval_seconds"] = float(gen_eval_time)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
