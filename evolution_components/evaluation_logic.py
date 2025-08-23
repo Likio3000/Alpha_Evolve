@@ -341,7 +341,7 @@ def evaluate_program(
     dh_module: data_handling, # Pass the data_handling module for access
     hof_module: hof_manager,  # Pass the hall_of_fame_manager module
     initial_prog_state_vars_config: Dict[str, Any], # e.g. evolve_alphas.INITIAL_STATE_VARS
-    return_preds: bool = False
+    return_preds: bool = True
 ) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
