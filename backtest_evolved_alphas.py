@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from config import BacktestConfig
+from utils.logging_setup import setup_logging
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
@@ -229,17 +230,9 @@ def run(
 def main() -> None:
     cfg, cli = parse_args()
 
-    # Prepare logging for standalone invocation
+    # Prepare logging for standalone invocation (tqdm-friendly, colored)
     level = getattr(logging, str(cli.log_level).upper(), logging.INFO)
-    handlers = [logging.StreamHandler()]
-    if cli.log_file:
-        handlers.append(logging.FileHandler(cli.log_file))
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d | %(message)s",
-        handlers=handlers,
-        force=True,
-    )
+    setup_logging(level=level, log_file=cli.log_file)
 
     logger = logging.getLogger(__name__)
 

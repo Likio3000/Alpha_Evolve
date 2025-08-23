@@ -26,6 +26,8 @@ class EvalResult:
     parsimony_penalty: float
     correlation_penalty: float
     processed_predictions: Optional[np.ndarray]
+    ic_std: float = 0.0
+    turnover_proxy: float = 0.0
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
@@ -714,14 +716,16 @@ def evaluate_program(
         parsimony_penalty,
         correlation_penalty,
         processed_for_hof if return_preds else None,
+        ic_std,
+        turnover_proxy,
     )
     logger.debug(
         "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
         fp,
         result.fitness,
         result.mean_ic,
-        ic_std,
-        turnover_proxy,
+        result.ic_std,
+        result.turnover_proxy,
         result.sharpe_proxy,
         result.parsimony_penalty,
         result.correlation_penalty,
