@@ -10,23 +10,23 @@ from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR
 import alpha_framework.program_logic_generation as plg
 import alpha_framework.program_logic_variation as plv
 from evolution_components import (
-    initialize_data, 
-    evaluate_program, 
+    initialize_data,
+    evaluate_program,
     initialize_evaluation_cache,
-    initialize_hof, 
-    add_program_to_hof, 
-    update_correlation_hof, 
-    get_final_hof_programs, 
+    initialize_hof,
+    add_program_to_hof,
+    update_correlation_hof,
+    get_final_hof_programs,
     print_generation_summary,
-    clear_hof, 
-    pbar
+    clear_hof,
+    pbar,
 )
 from evolution_components import data_handling as dh_module
 from evolution_components import hall_of_fame_manager as hof_module
 from evolution_components import evaluation_logic as el_module
 from evolution_components import diagnostics as diag
 
-from config import EvoConfig # New import
+from config import EvoConfig  # New import
 
 ###############################################################################
 # CLI & CONFIG REMOVED ########################################################
@@ -34,9 +34,14 @@ from config import EvoConfig # New import
 # _parse_cli function REMOVED
 # Global args object initialization REMOVED
 
-def _sync_evolution_configs_from_config(cfg: EvoConfig): # Renamed and signature changed
+_RNG = np.random.default_rng()
+
+
+def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signature changed
+    global _RNG
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
+    _RNG = np.random.default_rng(cfg.seed)
     
     initialize_data(
         data_dir=cfg.data_dir,
@@ -86,7 +91,7 @@ VECTOR_OPS_BIAS = 0.3
 plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
 plv.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
 
-def _random_prog(cfg: EvoConfig, rng: np.random.Generator) -> AlphaProgram:
+def _random_prog(cfg: EvoConfig) -> AlphaProgram:
     return AlphaProgram.random_program(
         FEATURE_VARS,
         INITIAL_STATE_VARS,
@@ -94,10 +99,11 @@ def _random_prog(cfg: EvoConfig, rng: np.random.Generator) -> AlphaProgram:
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
-        rng=rng,
+        rng=_RNG,
     )
 
-def _mutate_prog(p: AlphaProgram, cfg: EvoConfig, rng: np.random.Generator) -> AlphaProgram:
+
+def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram:
     return p.mutate(
         FEATURE_VARS,
         INITIAL_STATE_VARS,
@@ -105,7 +111,7 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig, rng: np.random.Generator) -> A
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
-        rng=rng,
+        rng=_RNG,
     )
 
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
@@ -148,8 +154,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
 
     logger = logging.getLogger(__name__)
 
-    rng = np.random.default_rng(cfg.seed)
-    pop: List[AlphaProgram] = [_random_prog(cfg, rng) for _ in range(cfg.pop_size)]
+    pop: List[AlphaProgram] = [_random_prog(cfg) for _ in range(cfg.pop_size)]
     gen_eval_times_history: List[float] = []
 
     try:
@@ -346,7 +351,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     "Gen %s | No valid programs. Restarting population and HOF.",
                     gen + 1,
                 )
-                pop = [_random_prog(cfg, rng) for _ in range(cfg.pop_size)]
+                pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
                 initialize_evaluation_cache(cfg.eval_cache_size)
                 clear_hof()
                 gen_eval_times_history.clear()
@@ -433,7 +438,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     child = parent_a.copy() if rng.random() < 0.5 else parent_b.copy()
                 
                 if rng.random() < cfg.p_mut:
-                    child = _mutate_prog(child, cfg, rng)
+                    child = _mutate_prog(child, cfg)
                 
                 new_pop.append(child)
             pop = new_pop

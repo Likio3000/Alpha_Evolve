@@ -68,7 +68,7 @@ def load_and_align_data_for_backtest(
     
     # For backtests we also need to ensure there are enough points to compute
     # forward returns for the chosen evaluation lag.
-    required_len = min_common_points_param + max(int(eval_lag), 0)
+    required_len = min_common_points_param
     if common_index is None or len(common_index) < required_len:
         sys.exit(
             f"Not enough common history for backtesting (need at least {required_len}, "
@@ -77,7 +77,7 @@ def load_and_align_data_for_backtest(
 
     if strategy_param == 'common_1200':  # fixed lookback window
         # Keep exactly the evaluation steps plus extra bars for the forward return horizon
-        need = min_common_points_param + max(int(eval_lag), 0)
+        need = min_common_points_param
         if len(common_index) > need:
             common_index = common_index[-need:]
     # For 'specific_long_10k' and 'full_overlap', use the full common_index found that meets min_common_points_param.
