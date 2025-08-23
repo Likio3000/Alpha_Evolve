@@ -121,10 +121,19 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
             # Fall back to 1-step forward return if something goes wrong
             reindexed_df["ret_fwd"] = reindexed_df["close"].pct_change(periods=1).shift(-1)
         
-        # Final check for NaNs after alignment (should be rare if common_index logic is robust)
-        if reindexed_df.isnull().values.any():
+        # Final check for NaNs after alignment. It's expected that the last
+        # `eval_lag` rows have NaN in `ret_fwd` (shifted forward returns).
+        # Ignore those when deciding whether to warn.
+        if eval_lag > 0 and "ret_fwd" in reindexed_df.columns and len(reindexed_df) >= eval_lag:
+            tail_ok_mask = pd.DataFrame(False, index=reindexed_df.index, columns=reindexed_df.columns)
+            tail_ok_mask.loc[reindexed_df.index[-eval_lag:], "ret_fwd"] = True
+            problematic_nans = reindexed_df.isna() & ~tail_ok_mask
+        else:
+            problematic_nans = reindexed_df.isna()
+
+        if problematic_nans.values.any():
             logger.warning(
-                "DataFrame for %s still contains NaNs after ffill/bfill on common_index. This might indicate issues with source data or alignment logic.",
+                "DataFrame for %s still contains NaNs after alignment (excluding expected tail NaNs in ret_fwd).",
                 sym,
             )
             # Potentially drop this symbol or handle NaNs further, for now, we proceed.

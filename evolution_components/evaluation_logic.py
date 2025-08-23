@@ -538,7 +538,10 @@ def evaluate_program(
             return mat
         centered = mat - mat.mean(axis=1, keepdims=True)
         l1 = np.sum(np.abs(centered), axis=1, keepdims=True)
-        return np.where(l1 > 1e-9, centered / l1, 0.0)
+        # Use np.divide with a mask to avoid RuntimeWarning on 0/0
+        out = np.zeros_like(centered)
+        np.divide(centered, l1, out=out, where=l1 > 1e-9)
+        return out
 
     total_steps = len(daily_ic_values)
     use_splits = bool(_EVAL_CONFIG.get("use_train_val_splits", False))

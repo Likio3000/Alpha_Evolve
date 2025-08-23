@@ -102,9 +102,19 @@ def load_and_align_data_for_backtest(
         except Exception:
             df_sym["ret_fwd"] = df_sym["close"].pct_change(periods=1).shift(-1)
 
-        if df_sym.isnull().values.any():
+        # Allow NaNs in the last `eval_lag` rows for `ret_fwd` only; those rows
+        # are outside the evaluation window and exist solely to compute the
+        # final forward return used by the last eval step.
+        if eval_lag > 0 and "ret_fwd" in df_sym.columns and len(df_sym) >= eval_lag:
+            tail_ok_mask = pd.DataFrame(False, index=df_sym.index, columns=df_sym.columns)
+            tail_ok_mask.loc[df_sym.index[-eval_lag:], "ret_fwd"] = True
+            problematic_nans = df_sym.isna() & ~tail_ok_mask
+        else:
+            problematic_nans = df_sym.isna()
+
+        if problematic_nans.values.any():
             lg.warning(
-                "DataFrame for %s contains NaNs after alignment. This might affect backtest results.",
+                "DataFrame for %s contains NaNs after alignment (excluding expected tail NaNs in ret_fwd). This might affect backtest results.",
                 sym,
             )
         aligned_dfs_ordered[sym] = df_sym
