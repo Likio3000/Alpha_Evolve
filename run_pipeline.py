@@ -106,6 +106,8 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
                    help="Logging level (DEBUG, INFO, WARNING, ERROR)")
     p.add_argument("--log-file", default=None,
                    help="File to additionally write logs to")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show resolved configs and planned outputs, then exit")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -202,6 +204,57 @@ def main() -> None:
                f"{evo_cfg.max_lookback_data_option}_{run_stamp}")
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Persist configs and minimal run metadata for reproducibility
+    try:
+        import json, platform, subprocess
+        from dataclasses import asdict
+        (run_dir / "meta").mkdir(exist_ok=True)
+        with open(run_dir / "meta" / "evolution_config.json", "w") as fh:
+            json.dump(asdict(evo_cfg), fh, indent=2)
+        with open(run_dir / "meta" / "backtest_config.json", "w") as fh:
+            json.dump(asdict(bt_cfg), fh, indent=2)
+        meta = {
+            "python": sys.version,
+            "platform": platform.platform(),
+            "time": run_stamp,
+        }
+        try:
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+            meta["git_commit"] = sha
+        except Exception:
+            pass
+        with open(run_dir / "meta" / "run_metadata.json", "w") as fh:
+            json.dump(meta, fh, indent=2)
+        try:
+            with open(BASE_OUTPUT_DIR / "LATEST", "w") as fh:
+                fh.write(str(run_dir))
+        except Exception:
+            pass
+    except Exception:
+        logging.getLogger(__name__).warning("Failed to save run metadata.")
+
+    # Dry-run: show the plan, paths, and exit early
+    if getattr(cli, "dry_run", False):
+        logging.getLogger(__name__).info(
+            "Dry run: would evolve %d generations and backtest top %d; outputs → %s",
+            evo_cfg.generations,
+            bt_cfg.top_to_backtest,
+            run_dir,
+        )
+        # Write a brief README
+        try:
+            with open(run_dir / "README.txt", "w") as fh:
+                fh.write(
+                    f"Alpha Evolve Pipeline (dry run)\n\n"
+                    f"Run directory: {run_dir}\n"
+                    f"Generations: {evo_cfg.generations}\n"
+                    f"Data: {bt_cfg.data_dir}\n"
+                    f"Backtest top: {bt_cfg.top_to_backtest}\n"
+                )
+        except Exception:
+            pass
+        return
+
     pickle_path = _evolve_and_save(evo_cfg, run_dir)
 
     # Save per-generation diagnostics if available
@@ -217,34 +270,21 @@ def main() -> None:
     except Exception:
         pass
 
-    # ­­­ build argv for the back-tester (same flag names → zero changes there)
-    bt_argv = [
-        "backtest_evolved_alphas.py",
-        "--input", str(pickle_path),
-        "--top",   str(bt_cfg.top_to_backtest),
-        "--fee",   str(bt_cfg.fee),
-        "--hold",  str(bt_cfg.hold),
-        "--long_short_n", str(bt_cfg.long_short_n),
-        "--annualization_factor", str(bt_cfg.annualization_factor),
-        "--scale", bt_cfg.scale,
-        "--lag",   str(bt_cfg.eval_lag),
-        "--data",  str(bt_cfg.data_dir),
-        "--outdir", str(run_dir / "backtest_portfolio_csvs"),
-        "--data_alignment_strategy", bt_cfg.max_lookback_data_option,
-        "--min_common_data_points",  str(bt_cfg.min_common_points),
-        "--seed",  str(bt_cfg.seed),
-    ]
-    if cli.debug_prints:
-        bt_argv.append("--debug_prints")
-
+    # Back-test programmatically using the new API
     logger = logging.getLogger(__name__)
     logger.info("\n— Back-testing …")
-    orig_argv = sys.argv[:]
-    sys.argv = bt_argv
     try:
-        bt.main()
-    finally:
-        sys.argv = orig_argv
+        bt.run(
+            bt_cfg,
+            outdir=run_dir / "backtest_portfolio_csvs",
+            programs_pickle=pickle_path,
+            debug_prints=getattr(cli, "debug_prints", False),
+            annualization_factor_override=None,
+            logger=logger,
+        )
+    except Exception as e:
+        logger.exception("Back-testing failed: %s", e)
+        sys.exit(1)
 
     if cli.run_baselines:
         _train_baselines(bt_cfg.data_dir, run_dir,

@@ -110,13 +110,30 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig, rng: np.random.Generator) -> A
 
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
     idx, prog = args
-    result = evaluate_program(
-        prog,
-        dh_module,
-        hof_module,
-        INITIAL_STATE_VARS
-    )
-    return idx, result
+    try:
+        result = evaluate_program(
+            prog,
+            dh_module,
+            hof_module,
+            INITIAL_STATE_VARS
+        )
+        return idx, result
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Evaluation error for program idx=%s fp=%s: %s",
+            idx,
+            getattr(prog, "fingerprint", "<unknown>"),
+            e,
+        )
+        # Return a sentinel EvalResult with -inf fitness so it is ignored
+        return idx, el_module.EvalResult(
+            fitness=float('-inf'),
+            mean_ic=0.0,
+            sharpe_proxy=0.0,
+            parsimony_penalty=0.0,
+            correlation_penalty=0.0,
+            processed_predictions=None,
+        )
 
 ###############################################################################
 # EVOLVE LOOP ##############################################################
