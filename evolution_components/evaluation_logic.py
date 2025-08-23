@@ -339,7 +339,7 @@ def evaluate_program(
     dh_module: data_handling, # Pass the data_handling module for access
     hof_module: hof_manager,  # Pass the hall_of_fame_manager module
     initial_prog_state_vars_config: Dict[str, Any], # e.g. evolve_alphas.INITIAL_STATE_VARS
-    return_preds: bool = False
+    return_preds: bool = True
 ) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
@@ -707,7 +707,14 @@ def evaluate_program(
                 correlation_penalty,
             )
         score -= correlation_penalty
-    result = EvalResult(score, mean_daily_ic, sharpe_proxy, parsimony_penalty, correlation_penalty, processed_for_hof if return_preds else None)
+    result = EvalResult(
+        score,
+        mean_daily_ic,
+        sharpe_proxy,
+        parsimony_penalty,
+        correlation_penalty,
+        processed_for_hof if return_preds else None,
+    )
     logger.debug(
         "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
         fp,
