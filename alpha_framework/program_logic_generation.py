@@ -44,6 +44,7 @@ def generate_random_program_logic(
     max_setup_ops: int = MAX_SETUP_OPS,
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
+    ops_split_jitter: float = 0.0,
 ) -> AlphaProgram:
     """
     Build a random but type-correct AlphaProgram.
@@ -53,9 +54,39 @@ def generate_random_program_logic(
     prog = cls() # type: ignore # cls() will be an AlphaProgram instance
 
     # — split total op budget into three blocks, respecting per-stage limits —
-    n_predict_ops = max(1, int(max_total_ops * 0.70))
-    n_setup_ops = int(max_total_ops * 0.15)
-    n_update_ops = max_total_ops - n_predict_ops - n_setup_ops
+    # Base split ~ [setup 15%, predict 70%, update 15%] with optional jitter for variance
+    base = np.array([0.15, 0.70, 0.15], dtype=float)
+    j = float(max(0.0, min(1.0, ops_split_jitter)))
+    if j > 1e-12:
+        noise = rng.normal(0.0, 0.3 * j, size=3)  # std scaled so j in [0,1] is reasonable
+        props = base + noise
+        props = np.clip(props, 0.01, None)
+        props = props / props.sum()
+    else:
+        props = base
+
+    # Initial allocation
+    target = np.maximum([0, 1, 0], np.round(props * max_total_ops).astype(int))
+    # Ensure at least 1 predict op
+    if target[1] < 1:
+        target[1] = 1
+    total = int(target.sum())
+    # Adjust to exactly max_total_ops
+    while total < max_total_ops:
+        # add to the block with largest remaining proportion signal
+        k = int(np.argmax(props))
+        target[k] += 1
+        total += 1
+    while total > max_total_ops:
+        # remove from the block with smallest proportion but keep predict >=1
+        k = int(np.argmin(props))
+        if k == 1 and target[1] <= 1:
+            k = 0 if target[0] > 0 else 2
+        if target[k] > 0:
+            target[k] -= 1
+            total -= 1
+
+    n_setup_ops, n_predict_ops, n_update_ops = int(target[0]), int(target[1]), int(target[2])
 
     n_setup_ops = min(n_setup_ops, max_setup_ops)
     n_predict_ops = min(n_predict_ops, max_predict_ops)

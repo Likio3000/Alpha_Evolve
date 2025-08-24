@@ -14,6 +14,14 @@ import sys
 from pathlib import Path
 import numpy as np
 
+# Force a non-interactive backend for headless environments
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # Safe in both headless and GUI envs
+except Exception:
+    # If matplotlib is not installed, the import below will handle it
+    pass
+
 
 def _resolve_run_dir(arg: str | None) -> Path:
     if arg:
@@ -48,8 +56,11 @@ def _to_series(diags: list[dict], key_path: list[str], default=None):
     return out
 
 
-def main() -> None:
-    run_dir = _resolve_run_dir(sys.argv[1] if len(sys.argv) > 1 else None)
+def generate_plots(run_dir: Path) -> Path:
+    """Generate diagnostic plots for a specific run directory.
+
+    Returns the directory where plots were written.
+    """
     diags = _load_diags(run_dir)
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
@@ -58,7 +69,7 @@ def main() -> None:
         import matplotlib.pyplot as plt
     except Exception:
         print("matplotlib not available; skipping plots. Install matplotlib to enable.")
-        return
+        return plots_dir
 
     gens = [int(d.get("generation", i + 1)) for i, d in enumerate(diags)]
 
@@ -162,6 +173,12 @@ def main() -> None:
         plt.close(fig)
 
     print(f"Saved plots → {plots_dir}")
+    return plots_dir
+
+
+def main() -> None:
+    run_dir = _resolve_run_dir(sys.argv[1] if len(sys.argv) > 1 else None)
+    generate_plots(run_dir)
 
 
 def fig_to_png(fig) -> bytes:

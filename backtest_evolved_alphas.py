@@ -89,6 +89,8 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--scale",             choices=["zscore", "rank", "sign", "madz", "winsor"],
                                                                   default=argparse.SUPPRESS)
     p.add_argument("--lag",               dest="eval_lag",            type=int,   default=argparse.SUPPRESS)
+    p.add_argument("--stop_loss_pct",     type=float,                 default=argparse.SUPPRESS,
+                   help="per-asset intrabar stop (e.g., 0.03 for 3%)")
     p.add_argument("--data_alignment_strategy",
                    dest="max_lookback_data_option",
                    choices=["common_1200", "specific_long_10k", "full_overlap"],
@@ -189,7 +191,38 @@ def run(
             annualization_factor=(annualization_factor_override
                                   if annualization_factor_override is not None
                                   else cfg.annualization_factor),
+            stop_loss_pct=cfg.stop_loss_pct,
+            sector_neutralize_positions=cfg.sector_neutralize_positions,
+            volatility_target=cfg.volatility_target,
+            volatility_lookback=cfg.volatility_lookback,
+            max_leverage=cfg.max_leverage,
+            min_leverage=cfg.min_leverage,
+            dd_limit=cfg.dd_limit,
+            dd_reduction=cfg.dd_reduction,
         )
+
+        # Persist per-bar diagnostics for plotting
+        try:
+            ts_len = len(metrics.get("RetNet", []))
+            if ts_len > 0:
+                dates = list(common_index[:ts_len])
+                import pandas as _pd
+                df_ts = _pd.DataFrame({
+                    "date": dates,
+                    "ret_net": metrics.get("RetNet"),
+                    "equity": metrics.get("EquityCurve"),
+                    "exposure_mult": metrics.get("ExposureMult"),
+                    "drawdown": metrics.get("Drawdown"),
+                    "stop_hits": metrics.get("StopHitsPerBar"),
+                })
+                ts_path = outdir / f"alpha_{idx:02d}_timeseries.csv"
+                df_ts.to_csv(ts_path, index=False)
+                metrics["TimeseriesFile"] = str(ts_path)
+                # Drop bulky arrays from summary entry
+                for k in ("RetNet", "EquityCurve", "ExposureMult", "Drawdown", "StopHitsPerBar"):
+                    metrics.pop(k, None)
+        except Exception:
+            pass
 
         metrics["Ops"] = prog.size
         metrics.update({
@@ -210,10 +243,11 @@ def run(
     # Save summaries
     if results:
         df = pd.DataFrame(results).sort_values("Sharpe", ascending=False)
-        summary_csv = outdir / f"backtest_summary_top{cfg.top_to_backtest}.csv"
+        actual_n = len(programs)
+        summary_csv = outdir / f"backtest_summary_top{actual_n}.csv"
         df.to_csv(summary_csv, index=False, float_format="%.4f")
         # JSON alongside
-        summary_json = outdir / f"backtest_summary_top{cfg.top_to_backtest}.json"
+        summary_json = outdir / f"backtest_summary_top{actual_n}.json"
         with open(summary_json, "w") as fh:
             json.dump(results, fh, indent=2)
         try:
@@ -292,7 +326,37 @@ def main() -> None:
             annualization_factor=(cli.annualization_factor_override
                                   if cli.annualization_factor_override is not None
                                   else cfg.annualization_factor),
+            stop_loss_pct=cfg.stop_loss_pct,
+            sector_neutralize_positions=cfg.sector_neutralize_positions,
+            volatility_target=cfg.volatility_target,
+            volatility_lookback=cfg.volatility_lookback,
+            max_leverage=cfg.max_leverage,
+            min_leverage=cfg.min_leverage,
+            dd_limit=cfg.dd_limit,
+            dd_reduction=cfg.dd_reduction,
         )
+
+        # Persist per-bar diagnostics for plotting
+        try:
+            ts_len = len(metrics.get("RetNet", []))
+            if ts_len > 0:
+                dates = list(common_index[:ts_len])
+                import pandas as _pd
+                df_ts = _pd.DataFrame({
+                    "date": dates,
+                    "ret_net": metrics.get("RetNet"),
+                    "equity": metrics.get("EquityCurve"),
+                    "exposure_mult": metrics.get("ExposureMult"),
+                    "drawdown": metrics.get("Drawdown"),
+                    "stop_hits": metrics.get("StopHitsPerBar"),
+                })
+                ts_path = outdir / f"alpha_{idx:02d}_timeseries.csv"
+                df_ts.to_csv(ts_path, index=False)
+                metrics["TimeseriesFile"] = str(ts_path)
+                for k in ("RetNet", "EquityCurve", "ExposureMult", "Drawdown", "StopHitsPerBar"):
+                    metrics.pop(k, None)
+        except Exception:
+            pass
 
         metrics["Ops"] = prog.size
         metrics.update({

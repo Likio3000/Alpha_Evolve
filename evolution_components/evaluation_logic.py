@@ -122,6 +122,8 @@ def configure_evaluation(
     *,
     sector_neutralize: bool = False,
     winsor_p: float = 0.01,
+    # Optional: add deterministic jitter to parsimony penalty to improve ops variance
+    parsimony_jitter_pct: float = 0.0,
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -141,8 +143,14 @@ def configure_evaluation(
     _EVAL_CONFIG["use_train_val_splits"] = use_train_val_splits
     _EVAL_CONFIG["train_points"] = int(train_points)
     _EVAL_CONFIG["val_points"] = int(val_points)
+    # Clamp jitter into [0, 1] and store
+    try:
+        pj = float(parsimony_jitter_pct)
+    except Exception:
+        pj = 0.0
+    _EVAL_CONFIG["parsimony_jitter_pct"] = max(0.0, min(1.0, pj))
     logging.getLogger(__name__).debug(
-        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f",
+        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f jitter=%.3f",
         scale_method,
         parsimony_penalty,
         sharpe_proxy_weight,
@@ -153,6 +161,7 @@ def configure_evaluation(
         val_points,
         sector_neutralize,
         winsor_p,
+        _EVAL_CONFIG["parsimony_jitter_pct"],
     )
 
 
@@ -578,7 +587,28 @@ def evaluate_program(
         turnover_proxy = float(np.mean(np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1)/2.0)) if pos_full.shape[0] > 1 else 0.0
         processed_for_hof = full_processed_predictions_matrix
 
-    parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * prog.size / _EVAL_CONFIG["max_ops_for_parsimony"]
+    # Smoother complexity control: use log-normalized parsimony instead of linear
+    # This penalizes very large programs while being gentler on small ones.
+    try:
+        max_ops_norm = float(max(1, _EVAL_CONFIG["max_ops_for_parsimony"]))
+        parsimony_norm = np.log1p(float(prog.size)) / np.log1p(max_ops_norm)
+    except Exception:
+        parsimony_norm = float(prog.size) / float(_EVAL_CONFIG.get("max_ops_for_parsimony", max(1, prog.size)))
+    parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * parsimony_norm
+    # Apply deterministic jitter to parsimony penalty based on program fingerprint
+    try:
+        pj = float(_EVAL_CONFIG.get("parsimony_jitter_pct", 0.0))
+    except Exception:
+        pj = 0.0
+    if pj > 1e-12:
+        import hashlib
+        # Map fingerprint to a stable float in [0,1)
+        h = hashlib.sha1(fp.encode("utf-8")).digest()
+        # Use first 8 bytes as unsigned integer for reproducible fraction
+        u = int.from_bytes(h[:8], byteorder="big", signed=False) / float(2**64)
+        # Scale to [-pj, +pj]
+        jitter_factor = 1.0 + pj * (2.0 * u - 1.0)
+        parsimony_penalty *= jitter_factor
     score = (
         mean_daily_ic
         + _EVAL_CONFIG.get("sharpe_proxy_weight", 0.0) * sharpe_proxy

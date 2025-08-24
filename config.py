@@ -61,6 +61,9 @@ class EvolutionConfig(DataConfig):
     tournament_k: int = 10
     elite_keep: int = 1
     hof_size: int = 20
+    # Add top-K candidates per generation to the Hall of Fame (subject to
+    # correlation and duplicate filters). Increases diversity of saved alphas.
+    hof_per_gen: int = 3
     quiet: bool = False
 
     # breeding / variation
@@ -88,6 +91,11 @@ class EvolutionConfig(DataConfig):
     val_points: int = 360
     keep_dupes_in_hof: bool = False
 
+    # ops variance controls
+    # Introduce deterministic jitter to the parsimony penalty per program
+    # to avoid collapsing to extreme sizes. 0.0 disables the feature.
+    parsimony_jitter_pct: float = 0.0
+
     # evaluation specifics
     xs_flat_guard: float = 5e-2
     t_flat_guard: float = 5e-2
@@ -106,6 +114,11 @@ class EvolutionConfig(DataConfig):
     # multiprocessing
     workers: int = 1
 
+    # random program generation variance
+    # Jitter the (setup, predict, update) op split when seeding fresh programs.
+    # 0.0 keeps fixed ~[15%, 70%, 15%]; higher values add randomness.
+    ops_split_jitter: float = 0.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  cross-sectional back-test
@@ -120,6 +133,21 @@ class BacktestConfig(DataConfig):
     # For 4 hour bars on 24/7 crypto data use 365 days × 6 bars/day
     annualization_factor: float = 365 * 6
     seed: int = 42
+    # Optional intrabar per-asset stop-loss. If > 0, a long exits at
+    # -stop_loss_pct and a short exits at +stop_loss_pct during the next bar
+    # when breached (requires lag=1). A one-way fee is charged for the stop exit.
+    stop_loss_pct: float = 0.0
+    # Risk controls (optional; disabled by default)
+    # Sector-neutralize daily target positions before final normalization.
+    sector_neutralize_positions: bool = False
+    # Volatility targeting on portfolio returns (daily). If <= 0, disabled.
+    volatility_target: float = 0.0        # target daily vol (e.g., 0.01 for 1%)
+    volatility_lookback: int = 30         # bars to estimate realized vol
+    max_leverage: float = 2.0             # cap on exposure multiplier
+    min_leverage: float = 0.25            # floor on exposure multiplier
+    # Drawdown limiter: reduce exposure when DD exceeds threshold.
+    dd_limit: float = 0.0                 # e.g., 0.15 for 15%; if <=0 disabled
+    dd_reduction: float = 0.5             # multiply exposure when beyond dd_limit
 
 
 # keep old import path alive

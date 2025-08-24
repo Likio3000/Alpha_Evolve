@@ -2,6 +2,7 @@ from __future__ import annotations
 import random
 import time
 from typing import Dict, List, Tuple
+import math
 from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
@@ -67,6 +68,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         val_points=cfg.val_points,
         sector_neutralize=cfg.sector_neutralize,
         winsor_p=cfg.winsor_p,
+        parsimony_jitter_pct=cfg.parsimony_jitter_pct,
     )
     initialize_hof(
         max_size=cfg.hof_size,
@@ -99,6 +101,7 @@ def _random_prog(cfg: EvoConfig) -> AlphaProgram:
         max_setup_ops=cfg.max_setup_ops,
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
+        ops_split_jitter=getattr(cfg, "ops_split_jitter", 0.0),
         rng=_RNG,
     )
 
@@ -158,6 +161,10 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
     gen_eval_times_history: List[float] = []
 
     try:
+        prev_best_fit: float = float('-inf')
+        no_improve_gens: int = 0
+        prev_q25: float | None = None
+        q25_deteriorate_streak: int = 0
         for gen in range(cfg.generations):
             # Anneal correlation penalty and optional eval weights to encourage exploration early
             # Ramp linearly over first third of the run (min 5 gens)
@@ -187,6 +194,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     val_points=cfg.val_points,
                     sector_neutralize=cfg.sector_neutralize,
                     winsor_p=cfg.winsor_p,
+                    parsimony_jitter_pct=cfg.parsimony_jitter_pct,
                 )
             except Exception:
                 pass
@@ -325,24 +333,26 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
 
             eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
 
+            # Add top-K from this generation into the HOF to increase saved diversity.
             if eval_results and eval_results[0][1].fitness > -np.inf:
-                best_prog_idx_this_gen, _ = eval_results[0]
-                best_program_instance_this_gen = pop[best_prog_idx_this_gen]
-                # Re-evaluate winner once with predictions so we can update the HOF correlation store.
-                best_metrics_this_gen = el_module.evaluate_program(
-                    best_program_instance_this_gen,
-                    dh_module,
-                    hof_module,
-                    INITIAL_STATE_VARS,
-                    return_preds=True,
-                )
-                best_preds_matrix_this_gen = best_metrics_this_gen.processed_predictions
-
-
-                add_program_to_hof(best_program_instance_this_gen, best_metrics_this_gen, gen)
-
-                if best_preds_matrix_this_gen is not None:
-                    update_correlation_hof(best_program_instance_this_gen.fingerprint, best_preds_matrix_this_gen)
+                k = max(1, int(getattr(cfg, "hof_per_gen", 1)))
+                added = 0
+                for rank_idx, (prog_idx_k, res_k) in enumerate(eval_results):
+                    if not np.isfinite(res_k.fitness):
+                        continue
+                    try:
+                        prog_k = pop[prog_idx_k]
+                        metrics_k = el_module.evaluate_program(
+                            prog_k, dh_module, hof_module, INITIAL_STATE_VARS, return_preds=True
+                        )
+                        add_program_to_hof(prog_k, metrics_k, gen)
+                        if metrics_k.processed_predictions is not None:
+                            update_correlation_hof(prog_k.fingerprint, metrics_k.processed_predictions)
+                        added += 1
+                        if added >= k:
+                            break
+                    except Exception:
+                        continue
 
             print_generation_summary(gen, pop, eval_results)
 
@@ -369,6 +379,13 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
             best_fit = best_metrics.fitness
             best_ic = best_metrics.mean_ic
             best_program_obj = pop[best_prog_idx]
+
+            # Track progress for adaptive rates
+            if best_fit > prev_best_fit + 1e-6:
+                no_improve_gens = 0
+                prev_best_fit = best_fit
+            else:
+                no_improve_gens += 1
             logger.info(
                 "Gen %3d BestThisGenFit %+7.4f MeanIC %+7.4f Ops %2d EvalTime %.1fs%s\n  └─ %s",
                 gen + 1,
@@ -386,6 +403,55 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
             )
 
             new_pop: List[AlphaProgram] = []
+
+            # Diversity proxy and adaptive breeding rates
+            try:
+                unique_fps = len({p.fingerprint for p in pop})
+                diversity_ratio = unique_fps / max(1, len(pop))
+            except Exception:
+                diversity_ratio = 1.0
+
+            # Stagnation factor grows when no improvement; patience ~ 5 gens or 10% of total
+            patience = max(5, cfg.generations // 10 if cfg.generations > 0 else 5)
+            stagnation_factor = min(1.0, no_improve_gens / patience)
+
+            # Increase exploration when stagnating or when diversity is low
+            p_mut_eff = max(0.0, min(1.0, cfg.p_mut * (1.0 + 0.5 * stagnation_factor)))
+            fresh_rate_eff = max(0.0, min(1.0, cfg.fresh_rate * (1.0 + (1.0 - diversity_ratio))))
+
+            # Soft-restart heuristic: boost fresh intake if lower quartile deteriorates over gens
+            valid_scores_for_q = [r[1].fitness for r in eval_results if np.isfinite(r[1].fitness)]
+            if valid_scores_for_q:
+                arrq = np.array(valid_scores_for_q)
+                q25 = float(np.quantile(arrq, 0.25))
+                if prev_q25 is not None and q25 < prev_q25 - 1e-6:
+                    q25_deteriorate_streak += 1
+                else:
+                    q25_deteriorate_streak = 0
+                prev_q25 = q25
+                # Up to +0.2 extra fresh when deteriorating for several gens
+                fresh_rate_eff = min(1.0, fresh_rate_eff + 0.05 * q25_deteriorate_streak)
+
+            # Anneal crossover upwards to recombine mature building blocks
+            p_cross_eff = max(0.0, min(1.0, cfg.p_cross + 0.5 * ramp))
+
+            # Rank-based sampling weights for tournaments (softmax over normalized ranks)
+            valid_indices_for_tournament = [k_idx for k_idx, s_k in enumerate(pop_fitness_scores) if s_k > -np.inf]
+            valid_scores = [pop_fitness_scores[i] for i in valid_indices_for_tournament]
+            rank_weights = None
+            if valid_indices_for_tournament:
+                # Higher rank -> higher weight. Normalize to [0,1].
+                order = np.argsort(valid_scores)
+                ranks = np.empty(len(valid_scores), dtype=float)
+                ranks[order] = np.arange(len(valid_scores))
+                rank_norm = ranks / max(1, len(valid_scores) - 1)
+                # Temperature decreases with ramp to increase pressure over time
+                beta = 2.0 * ramp  # 0..2
+                # Use exp(beta * rank_norm) so top ranks dominate as beta grows
+                w = np.exp(beta * rank_norm)
+                # Guard against inf/nan
+                if np.all(np.isfinite(w)) and np.any(w > 0):
+                    rank_weights = w.tolist()
             
             elites_added_fingerprints = set()
             for res_idx, res_metrics in eval_results:
@@ -403,22 +469,28 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                  new_pop.append(pop[eval_results[0][0]].copy())
 
             while len(new_pop) < cfg.pop_size:
-                if rng.random() < cfg.fresh_rate:
-                    new_pop.append(_random_prog(cfg, rng))
+                if _RNG.random() < fresh_rate_eff:
+                    new_pop.append(_random_prog(cfg))
                     continue
                 
                 valid_indices_for_tournament = [k_idx for k_idx, s_k in enumerate(pop_fitness_scores) if s_k > -np.inf]
                 if not valid_indices_for_tournament: 
-                    new_pop.extend([_random_prog(cfg, rng) for _ in range(cfg.pop_size - len(new_pop))])
+                    new_pop.extend([_random_prog(cfg) for _ in range(cfg.pop_size - len(new_pop))])
                     break
 
                 num_to_sample = cfg.tournament_k * 2
-                if len(valid_indices_for_tournament) < num_to_sample and len(valid_indices_for_tournament) > 0 :
-                    tournament_indices_pool = random.choices(valid_indices_for_tournament, k=num_to_sample)
-                elif len(valid_indices_for_tournament) >= num_to_sample:
-                    tournament_indices_pool = random.sample(valid_indices_for_tournament, num_to_sample)
-                else: 
-                    new_pop.append(_random_prog(cfg, rng))
+                if len(valid_indices_for_tournament) > 0:
+                    if rank_weights is not None:
+                        # Weighted sampling (with replacement) by rank-based weights
+                        tournament_indices_pool = random.choices(valid_indices_for_tournament, weights=rank_weights, k=num_to_sample)
+                    else:
+                        # Fallback to uniform sampling
+                        if len(valid_indices_for_tournament) < num_to_sample:
+                            tournament_indices_pool = random.choices(valid_indices_for_tournament, k=num_to_sample)
+                        else:
+                            tournament_indices_pool = random.sample(valid_indices_for_tournament, num_to_sample)
+                else:
+                    new_pop.append(_random_prog(cfg))
                     continue
 
                 parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=lambda i_tour: pop_fitness_scores[i_tour])
@@ -426,18 +498,18 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                 parent_a, parent_b = pop[parent1_idx], pop[parent2_idx]
 
                 child: AlphaProgram
-                if rng.random() < cfg.p_cross:
+                if _RNG.random() < p_cross_eff:
                     child = parent_a.crossover(
                         parent_b,
                         max_setup_ops=cfg.max_setup_ops,
                         max_predict_ops=cfg.max_predict_ops,
                         max_update_ops=cfg.max_update_ops,
-                        rng=rng
+                        rng=_RNG
                     )
                 else:
-                    child = parent_a.copy() if rng.random() < 0.5 else parent_b.copy()
+                    child = parent_a.copy() if _RNG.random() < 0.5 else parent_b.copy()
                 
-                if rng.random() < cfg.p_mut:
+                if _RNG.random() < p_mut_eff:
                     child = _mutate_prog(child, cfg)
                 
                 new_pop.append(child)

@@ -20,6 +20,10 @@ wheels/
 # ruff cache
 /.ruff_cache
 
+# S&P 500 data (keep README tracked)
+data_sp500/*
+!data_sp500/README.md
+
 # Logs
 UI_alphas_lab/logs
 UI_alphas_lab/*.log

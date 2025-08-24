@@ -104,6 +104,7 @@ class AlphaProgram:
         max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+        ops_split_jitter: float = 0.0,
     ) -> "AlphaProgram":
         """Create a random, type-correct program.
 
@@ -133,6 +134,7 @@ class AlphaProgram:
             max_setup_ops,
             max_predict_ops,
             max_update_ops,
+            ops_split_jitter,
         )
 
     def copy(self) -> "AlphaProgram":

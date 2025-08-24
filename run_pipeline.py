@@ -92,6 +92,9 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
                    help="File to additionally write logs to")
     p.add_argument("--dry-run", action="store_true",
                    help="Show resolved configs and planned outputs, then exit")
+    # Backtest-only overrides
+    p.add_argument("--bt-scale", choices=["zscore", "rank", "sign", "madz", "winsor"],
+                   default=None, help="Override backtest scaling (leaves evolution scale unchanged)")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -101,6 +104,9 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     evo_cfg = EvolutionConfig(**evo_kwargs)
     bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
                                  if k in BacktestConfig.__annotations__})
+    # Apply backtest-only overrides
+    if getattr(ns, "bt_scale", None):
+        bt_cfg.scale = ns.bt_scale
 
     return evo_cfg, bt_cfg, ns
 
@@ -258,11 +264,12 @@ def main() -> None:
     # Optionally generate plots (if matplotlib present)
     try:
         import scripts.diagnostics_plot as diag_plot
-        diag_plot.main()
+        # Prefer explicit run_dir to avoid relying on LATEST
+        diag_plot.generate_plots(run_dir)
     except SystemExit:
         pass
-    except Exception:
-        logging.getLogger(__name__).info("Plotting skipped (matplotlib not available).")
+    except Exception as e:
+        logging.getLogger(__name__).info("Plotting skipped: %s", e)
 
     # Back-test programmatically using the new API
     logger = logging.getLogger(__name__)

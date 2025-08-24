@@ -90,7 +90,16 @@ def backtest_cross_sectional_alpha(
     scalar_feature_names: List[str], # Pass these from calling script
     cross_sectional_feature_vector_names: List[str], # Pass these
     debug_prints: bool = False, # For optional debug prints
-    annualization_factor: float = (365 * 6) # Default for 4H bars, 365 days (crypto)
+    annualization_factor: float = (365 * 6), # Default for 4H bars, 365 days (crypto)
+    stop_loss_pct: float = 0.0,
+    # Optional risk controls
+    sector_neutralize_positions: bool = False,
+    volatility_target: float = 0.0,
+    volatility_lookback: int = 30,
+    max_leverage: float = 2.0,
+    min_leverage: float = 0.25,
+    dd_limit: float = 0.0,
+    dd_reduction: float = 0.5,
 ) -> Dict[str, Any]:
     
     program_state: Dict[str, Any] = prog.new_state()
@@ -150,13 +159,22 @@ def backtest_cross_sectional_alpha(
             ls_vector[long_idx] = 1.0
             ls_vector[short_idx] = -1.0
             scaled_signal_t = ls_vector
-        mean_signal_t = np.mean(scaled_signal_t)
-        centered_signal_t = scaled_signal_t - mean_signal_t
-        sum_abs_centered_signal = np.sum(np.abs(centered_signal_t))
+        # Center cross-section and optionally sector-neutralize
+        centered_signal_t = scaled_signal_t - np.mean(scaled_signal_t)
+        neutralized_signal_t = centered_signal_t
+        if sector_neutralize_positions:
+            # Demean within sector buckets
+            groups = get_sector_groups(stock_symbols).astype(int)
+            for gid in np.unique(groups):
+                mask = groups == gid
+                if np.any(mask):
+                    neutralized_signal_t[mask] -= np.mean(neutralized_signal_t[mask])
+        # Final L1 neutralization
+        sum_abs_centered_signal = np.sum(np.abs(neutralized_signal_t))
         if sum_abs_centered_signal > 1e-9:
-            neutralized_signal_t = centered_signal_t / sum_abs_centered_signal
+            neutralized_signal_t = neutralized_signal_t / sum_abs_centered_signal
         else:
-            neutralized_signal_t = np.zeros_like(centered_signal_t)
+            neutralized_signal_t = np.zeros_like(neutralized_signal_t)
         target_positions_matrix[t, :] = neutralized_signal_t
 
     if debug_prints:
@@ -180,17 +198,107 @@ def backtest_cross_sectional_alpha(
         actual_positions = target_positions_matrix
     
     ret_fwd_matrix = np.zeros_like(signal_matrix)
+    close_t_matrix = np.zeros_like(signal_matrix)
+    next_high_matrix = np.zeros_like(signal_matrix)
+    next_low_matrix = np.zeros_like(signal_matrix)
     idx_for_returns = common_time_index[:signal_matrix.shape[0]]
     for i, sym in enumerate(stock_symbols):
         ret_fwd_values = aligned_dfs[sym]["ret_fwd"].loc[idx_for_returns].values
         ret_fwd_matrix[:, i] = np.nan_to_num(ret_fwd_values, nan=0.0, posinf=0.0, neginf=0.0)
+        # For simple intrabar stop-loss modeling (lag==1), we need entry close
+        # at t and next bar's high/low.
+        close_t_vals = aligned_dfs[sym]["close"].loc[idx_for_returns].values
+        close_t_matrix[:, i] = np.nan_to_num(close_t_vals, nan=0.0, posinf=0.0, neginf=0.0)
+        # Shift high/low by -1 so index t corresponds to the next bar extremes
+        try:
+            next_high_vals = aligned_dfs[sym]["high"].shift(-1).loc[idx_for_returns].values
+            next_low_vals = aligned_dfs[sym]["low"].shift(-1).loc[idx_for_returns].values
+        except Exception:
+            next_high_vals = np.zeros_like(close_t_vals)
+            next_low_vals = np.zeros_like(close_t_vals)
+        next_high_matrix[:, i] = np.nan_to_num(next_high_vals, nan=0.0, posinf=0.0, neginf=0.0)
+        next_low_matrix[:, i] = np.nan_to_num(next_low_vals, nan=0.0, posinf=0.0, neginf=0.0)
 
-    daily_portfolio_returns = np.sum(actual_positions * ret_fwd_matrix, axis=1)
-    
-    pos_diff = np.diff(actual_positions, axis=0, prepend=np.zeros((1, n_stocks)))
-    abs_pos_diff_sum = np.sum(np.abs(pos_diff), axis=1)
-    transaction_costs = (fee_bps * 1e-4) * abs_pos_diff_sum
-    daily_portfolio_returns_net = daily_portfolio_returns - transaction_costs
+    # Apply optional intrabar stop-loss (per-asset). Supported for lag==1.
+    # If enabled and lag!=1, the stop is ignored to avoid lookahead bias.
+    ret_used_matrix = ret_fwd_matrix.copy()
+    # We'll compute per-bar extra stop costs after exposure scaling.
+    stop_mask_matrix = np.zeros_like(ret_fwd_matrix, dtype=bool)
+    stop_hits_total = 0
+    stop_hit_bars = 0
+    if stop_loss_pct and stop_loss_pct > 0.0 and lag == 1:
+        s = float(stop_loss_pct)
+        # For each time t and asset i, determine if stop is hit during next bar.
+        # Long: next_low <= entry*(1-s) → realized return capped at -s
+        # Short: next_high >= entry*(1+s) → realized return capped at +s
+        entry_price = close_t_matrix
+        long_mask = (actual_positions > 0)
+        short_mask = (actual_positions < 0)
+        long_stop = (next_low_matrix <= entry_price * (1.0 - s)) & long_mask
+        short_stop = (next_high_matrix >= entry_price * (1.0 + s)) & short_mask
+        # Cap underlying return used
+        stop_mask = (long_stop | short_stop)
+        stop_mask_matrix = stop_mask
+        # Cap underlying return used
+        ret_used_matrix = np.where(long_stop, -s, ret_used_matrix)
+        ret_used_matrix = np.where(short_stop, +s, ret_used_matrix)
+        # Stats (notional and extra costs computed later after scaling)
+        stop_hits_total = int(np.sum(stop_mask))
+        stop_hit_bars = int(np.sum(np.any(stop_mask, axis=1)))
+
+    # Base (unit-gross) portfolio returns before costs
+    base_returns = np.sum(actual_positions * ret_used_matrix, axis=1)
+
+    # Exposure scaling via volatility targeting and drawdown limiter
+    T = base_returns.shape[0]
+    exposure_mult = np.ones(T, dtype=float)
+    fee_rate = (fee_bps * 1e-4)
+    eps = 1e-9
+    # Forward compute scaled positions, costs, and returns
+    scaled_positions = np.zeros_like(actual_positions)
+    daily_portfolio_returns_net = np.zeros(T, dtype=float)
+    abs_pos_diff_sum = np.zeros(T, dtype=float)
+    equity = 1.0
+    peak = 1.0
+    per_bar_stop_hits = np.zeros(T, dtype=float)
+    for t in range(T):
+        # Volatility targeting multiplier based on base returns history
+        mult = 1.0
+        if volatility_target and volatility_target > 0.0:
+            start = max(0, t - int(max(1, volatility_lookback)))
+            if t - start >= 2:
+                realized = np.std(base_returns[start:t], ddof=0)
+                if realized > eps:
+                    mult = float(volatility_target) / realized
+            # Clamp leverage
+            mult = float(np.clip(mult, min_leverage, max_leverage))
+        # Drawdown limiter (based on net equity up to t-1)
+        if dd_limit and dd_limit > 0.0:
+            dd = (equity - peak) / (peak + eps)
+            if dd < -abs(dd_limit):
+                mult *= float(dd_reduction)
+        exposure_mult[t] = mult
+        # Apply multiplier to positions
+        scaled_positions[t, :] = mult * actual_positions[t, :]
+        # Transaction costs (position change costs)
+        prev = scaled_positions[t - 1, :] if t > 0 else np.zeros(n_stocks)
+        pos_diff_t = scaled_positions[t, :] - prev
+        abs_pos_diff_sum[t] = np.sum(np.abs(pos_diff_t))
+        # Extra stop costs this bar using scaled exposure (intrabar exit)
+        extra_stop_cost_t = 0.0
+        if stop_loss_pct and stop_loss_pct > 0.0 and lag == 1:
+            per_bar_stop_notional = np.sum(np.abs(scaled_positions[t, :]) * stop_mask_matrix[t, :])
+            extra_stop_cost_t = fee_rate * per_bar_stop_notional
+            per_bar_stop_hits[t] = float(np.sum(stop_mask_matrix[t, :]))
+        # Net return this bar
+        gross_ret_t = np.dot(scaled_positions[t, :], ret_used_matrix[t, :])
+        transaction_costs_t = fee_rate * abs_pos_diff_sum[t] + extra_stop_cost_t
+        ret_net_t = gross_ret_t - transaction_costs_t
+        daily_portfolio_returns_net[t] = ret_net_t
+        # Update equity/peak for next bar drawdown logic
+        equity *= (1.0 + ret_net_t)
+        if equity > peak:
+            peak = equity
 
     if not np.any(actual_positions) or not np.any(daily_portfolio_returns_net):
         return {
@@ -212,6 +320,8 @@ def backtest_cross_sectional_alpha(
         return {"Sharpe": 0.0, "AnnReturn": 0.0, "AnnVol": 0.0, "MaxDD": 0.0, "Turnover": 0.0, "Bars": len(daily_portfolio_returns_net)}
 
     equity_curve = np.cumprod(1 + daily_portfolio_returns_net)
+    peak_curve = np.maximum.accumulate(equity_curve)
+    drawdown_series = (equity_curve - peak_curve) / (peak_curve + 1e-9)
     mean_ret = np.mean(daily_portfolio_returns_net)
     std_ret = np.std(daily_portfolio_returns_net, ddof=0)
 
@@ -229,5 +339,15 @@ def backtest_cross_sectional_alpha(
         "AnnVol": annualized_volatility,
         "MaxDD": max_dd,
         "Turnover": avg_daily_turnover_fraction,
-        "Bars": len(daily_portfolio_returns_net)
+        "Bars": len(daily_portfolio_returns_net),
+        "StopHits": stop_hits_total,
+        "StopBars": stop_hit_bars,
+        "VolTarget": float(volatility_target),
+        "DDLimit": float(dd_limit),
+        # Time series for diagnostics
+        "EquityCurve": equity_curve,
+        "ExposureMult": exposure_mult,
+        "Drawdown": drawdown_series,
+        "StopHitsPerBar": per_bar_stop_hits,
+        "RetNet": daily_portfolio_returns_net,
     }
