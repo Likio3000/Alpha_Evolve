@@ -99,11 +99,14 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     ns = p.parse_args()
     d = vars(ns)
 
-    evo_kwargs = {k: v for k, v in d.items() if k in EvolutionConfig.__annotations__}
+    # Collect full field-name sets including inherited dataclass fields.
+    evo_field_names = {f.name for f in dc_fields(EvolutionConfig)}
+    bt_field_names = {f.name for f in dc_fields(BacktestConfig)}
+
+    evo_kwargs = {k: v for k, v in d.items() if k in evo_field_names}
     evo_kwargs["generations"] = ns.generations
     evo_cfg = EvolutionConfig(**evo_kwargs)
-    bt_cfg  = BacktestConfig(**{k: v for k, v in d.items()
-                                 if k in BacktestConfig.__annotations__})
+    bt_cfg  = BacktestConfig(**{k: v for k, v in d.items() if k in bt_field_names})
     # Apply backtest-only overrides
     if getattr(ns, "bt_scale", None):
         bt_cfg.scale = ns.bt_scale

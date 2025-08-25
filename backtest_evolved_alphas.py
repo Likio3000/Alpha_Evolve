@@ -7,6 +7,7 @@ import random
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
+from dataclasses import fields as dc_fields
 
 import numpy as np
 import pandas as pd
@@ -101,9 +102,9 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
 
     ns = p.parse_args()
 
-    # feed only recognised fields into the dataclass
-    cfg_kwargs = {k: v for k, v in vars(ns).items()
-                  if k in BacktestConfig.__annotations__}
+    # feed only recognised fields into the dataclass (including inherited)
+    bt_field_names = {f.name for f in dc_fields(BacktestConfig)}
+    cfg_kwargs = {k: v for k, v in vars(ns).items() if k in bt_field_names}
     cfg = BacktestConfig(**cfg_kwargs)
 
     return cfg, ns

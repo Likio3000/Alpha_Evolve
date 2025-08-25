@@ -8,6 +8,7 @@
 #   GENS     – generations to evolve (default: 60)
 #   DATA_DIR – data directory (default: data_sp500)
 #   LOOKBACK – 'full_overlap' (default, aligns on max common) or 'common_1200'
+#   MIN_POINTS – minimum common eval points (default: 1200)
 #   WORKERS  – parallel workers (default: 8)
 #
 # Notes:
@@ -20,16 +21,18 @@ set -eu
 GENS="${GENS:-60}"
 DATA_DIR="${DATA_DIR:-data_sp500}"
 LOOKBACK="${LOOKBACK:-full_overlap}"
+MIN_POINTS="${MIN_POINTS:-1200}"
 WORKERS="${WORKERS:-8}"
 ANNUAL=252
 
-echo "[recommended_sp500] gens=${GENS} data=${DATA_DIR} lookback=${LOOKBACK} workers=${WORKERS} annual=${ANNUAL}" >&2
+echo "[recommended_sp500] gens=${GENS} data=${DATA_DIR} lookback=${LOOKBACK} min_points=${MIN_POINTS} workers=${WORKERS} annual=${ANNUAL}" >&2
 
 ARGS=(
   run_pipeline.py
   "${GENS}"
   --data_dir "${DATA_DIR}"
   --max_lookback_data_option "${LOOKBACK}"
+  --min_common_points "${MIN_POINTS}"
   --annualization_factor "${ANNUAL}"
   --pop_size 200
   --workers "${WORKERS}"

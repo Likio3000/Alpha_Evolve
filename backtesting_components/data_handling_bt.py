@@ -70,10 +70,56 @@ def load_and_align_data_for_backtest(
     # forward returns for the chosen evaluation lag.
     required_len = min_common_points_param
     if common_index is None or len(common_index) < required_len:
-        sys.exit(
-            f"Not enough common history for backtesting (need at least {required_len}, "
-            f"got {len(common_index) if common_index is not None else 0})."
-        )
+        # Attempt to prune symbols with the shortest overlapping window until requirement is met.
+        def _compute_bounds(dfs: Dict[str, pd.DataFrame]):
+            bounds: Dict[str, Tuple[pd.Timestamp, pd.Timestamp]] = {}
+            for s, dfx in dfs.items():
+                bounds[s] = (dfx.index[0], dfx.index[-1])
+            return bounds
+
+        def _common_len(dfs: Dict[str, pd.DataFrame]) -> int:
+            tmp_common: Optional[pd.DatetimeIndex] = None
+            for dfx in dfs.values():
+                tmp_common = dfx.index if tmp_common is None else tmp_common.intersection(dfx.index)
+            return 0 if tmp_common is None else len(tmp_common)
+
+        dropped: List[str] = []
+        while True:
+            cur_len = _common_len(raw_dfs)
+            if cur_len >= required_len:
+                # Recompute common_index for the pruned set
+                common_index = None
+                for dfx in raw_dfs.values():
+                    common_index = dfx.index if common_index is None else common_index.intersection(dfx.index)
+                break
+            if len(raw_dfs) <= 2:
+                sys.exit(
+                    f"Not enough common history for backtesting (need at least {required_len}, got {cur_len}). "
+                    f"After pruning {len(dropped)} symbols, only {len(raw_dfs)} remain."
+                )
+
+            bounds = _compute_bounds(raw_dfs)
+            latest_start_sym = max(bounds.items(), key=lambda kv: kv[1][0])[0]
+            earliest_end_sym = min(bounds.items(), key=lambda kv: kv[1][1])[0]
+
+            # Choose drop that maximizes common length
+            def _len_if_drop(sym: str) -> int:
+                tmp = dict(raw_dfs)
+                tmp.pop(sym, None)
+                return _common_len(tmp)
+
+            if _len_if_drop(latest_start_sym) >= _len_if_drop(earliest_end_sym):
+                to_drop = latest_start_sym
+            else:
+                to_drop = earliest_end_sym
+            dropped.append(to_drop)
+            raw_dfs.pop(to_drop, None)
+
+        if dropped:
+            logging.getLogger(__name__).info(
+                "[BT] Pruned %d symbols to reach required common history (%d). Remaining: %d. Dropped: %s",
+                len(dropped), required_len, len(raw_dfs), ", ".join(dropped)
+            )
 
     if strategy_param == 'common_1200':  # fixed lookback window
         # Keep exactly the evaluation steps plus extra bars for the forward return horizon

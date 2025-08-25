@@ -87,9 +87,76 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
     # The number of points needed for evaluation is min_common_points_param.
     # The actual data slice needs to be longer by eval_lag to calculate the final forward returns.
     required_length_for_data_slice = min_common_points_param + eval_lag
-    
+
     if common_index is None or len(common_index) < required_length_for_data_slice:
-        sys.exit(f"Not enough common history across all symbols. Need {required_length_for_data_slice} (for {min_common_points_param} eval steps + lag {eval_lag}), got {len(common_index) if common_index is not None else 0}).")
+        # Attempt to prune symbols with the shortest overlapping window until requirement is met.
+        # Heuristic: iteratively drop the symbol limiting the intersection (latest start or earliest end).
+        def _compute_bounds(dfs: Dict[str, pd.DataFrame]) -> Tuple[pd.Timestamp, pd.Timestamp, Dict[str, Tuple[pd.Timestamp, pd.Timestamp]]]:
+            bounds: Dict[str, Tuple[pd.Timestamp, pd.Timestamp]] = {}
+            starts: List[pd.Timestamp] = []
+            ends: List[pd.Timestamp] = []
+            for s, dfx in dfs.items():
+                st = dfx.index[0]
+                en = dfx.index[-1]
+                bounds[s] = (st, en)
+                starts.append(st)
+                ends.append(en)
+            return max(starts), min(ends), bounds
+
+        if not raw_dfs:
+            sys.exit("No data after initial load.")
+
+        inter_start, inter_end, bounds = _compute_bounds(raw_dfs)
+        dropped: List[str] = []
+
+        def _intersection_len(start, end) -> int:
+            if start >= end:
+                return 0
+            return len(pd.DatetimeIndex(sorted(set(raw_dfs[next(iter(raw_dfs))].index)).intersection(pd.date_range(start, end, freq=None))))
+
+        # Loop: drop limiting symbols until intersection long enough or not enough symbols remain
+        while True:
+            # Recompute common index directly from current raw_dfs
+            current_common: Optional[pd.DatetimeIndex] = None
+            for dfv in raw_dfs.values():
+                current_common = dfv.index if current_common is None else current_common.intersection(dfv.index)
+            cur_len = 0 if current_common is None else len(current_common)
+            if cur_len >= required_length_for_data_slice:
+                common_index = current_common
+                break
+            if len(raw_dfs) <= 2:
+                # Give up – not enough symbols to form cross-section
+                sys.exit(
+                    f"Not enough common history across all symbols. Need {required_length_for_data_slice} (for {min_common_points_param} eval steps + lag {eval_lag}), "
+                    f"got {cur_len}). After pruning {len(dropped)} symbols, only {len(raw_dfs)} remain."
+                )
+
+            # Identify candidates causing tight bounds
+            inter_start, inter_end, bounds = _compute_bounds(raw_dfs)
+            # Find symbols with latest start and earliest end
+            latest_start_sym = max(bounds.items(), key=lambda kv: kv[1][0])[0]
+            earliest_end_sym = min(bounds.items(), key=lambda kv: kv[1][1])[0]
+
+            # Evaluate which drop improves intersection length more
+            def _len_if_drop(sym: str) -> int:
+                tmp_common: Optional[pd.DatetimeIndex] = None
+                for s, dfx in raw_dfs.items():
+                    if s == sym:
+                        continue
+                    tmp_common = dfx.index if tmp_common is None else tmp_common.intersection(dfx.index)
+                return 0 if tmp_common is None else len(tmp_common)
+
+            len_drop_start = _len_if_drop(latest_start_sym)
+            len_drop_end = _len_if_drop(earliest_end_sym)
+            drop_sym = latest_start_sym if len_drop_start >= len_drop_end else earliest_end_sym
+            dropped.append(drop_sym)
+            raw_dfs.pop(drop_sym, None)
+
+        if dropped:
+            logger.info(
+                "Pruned %d symbols with shortest overlap to satisfy required length (%d). Remaining symbols: %d. Dropped: %s",
+                len(dropped), required_length_for_data_slice, len(raw_dfs), ", ".join(dropped)
+            )
 
     # Truncate common_index if using 'common_1200' or 'specific_long_10k' (unless 'full_overlap')
     if strategy_param == 'common_1200' or strategy_param == 'specific_long_10k':
