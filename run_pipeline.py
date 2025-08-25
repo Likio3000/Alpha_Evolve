@@ -287,6 +287,20 @@ def main() -> None:
         logger.exception("Back-testing failed: %s", e)
         sys.exit(1)
 
+    # Attempt to generate per-alpha timeseries plots (works for both crypto and SP500 data)
+    try:
+        from scripts.backtest_diagnostics_plot import plot_alpha_timeseries
+        import glob
+        bt_dir = run_dir / "backtest_portfolio_csvs"
+        csvs = sorted(bt_dir.glob("alpha_*_timeseries.csv"))
+        for c in csvs:
+            out_png = plot_alpha_timeseries(c)
+            logger.info("Saved plot → %s", out_png)
+    except SystemExit:
+        pass
+    except Exception as e:
+        logger.info("Backtest plots skipped: %s", e)
+
     if cli.run_baselines:
         _train_baselines(bt_cfg.data_dir, run_dir,
                          retrain=getattr(cli, "retrain_baselines", False))

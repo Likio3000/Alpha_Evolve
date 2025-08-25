@@ -69,6 +69,11 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         sector_neutralize=cfg.sector_neutralize,
         winsor_p=cfg.winsor_p,
         parsimony_jitter_pct=cfg.parsimony_jitter_pct,
+        # Provide fixed weights for logging/secondary fitness (no ramp)
+        fixed_sharpe_proxy_weight=cfg.sharpe_proxy_w,
+        fixed_ic_std_penalty_weight=cfg.ic_std_penalty_w,
+        fixed_turnover_penalty_weight=cfg.turnover_penalty_w,
+        fixed_corr_penalty_weight=cfg.corr_penalty_w,
     )
     initialize_hof(
         max_size=cfg.hof_size,
@@ -167,8 +172,12 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
         q25_deteriorate_streak: int = 0
         for gen in range(cfg.generations):
             # Anneal correlation penalty and optional eval weights to encourage exploration early
-            # Ramp linearly over first third of the run (min 5 gens)
-            ramp_gens = max(5, cfg.generations // 3 if cfg.generations > 0 else 5)
+            # Ramp linearly over a configurable portion of the run
+            try:
+                ramp_gens_cfg = int(max(1, round(cfg.generations * float(getattr(cfg, "ramp_fraction", 1.0/3.0)))))
+            except Exception:
+                ramp_gens_cfg = cfg.generations // 3 if cfg.generations > 0 else 5
+            ramp_gens = max(getattr(cfg, "ramp_min_gens", 5), ramp_gens_cfg)
             ramp = min(1.0, (gen + 1) / ramp_gens)
             try:
                 hof_module.set_correlation_penalty(weight=cfg.corr_penalty_w * ramp, cutoff=cfg.corr_cutoff)
@@ -195,6 +204,11 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     sector_neutralize=cfg.sector_neutralize,
                     winsor_p=cfg.winsor_p,
                     parsimony_jitter_pct=cfg.parsimony_jitter_pct,
+                    # Fixed weights stay at targets
+                    fixed_sharpe_proxy_weight=cfg.sharpe_proxy_w,
+                    fixed_ic_std_penalty_weight=cfg.ic_std_penalty_w,
+                    fixed_turnover_penalty_weight=cfg.turnover_penalty_w,
+                    fixed_corr_penalty_weight=cfg.corr_penalty_w,
                 )
             except Exception:
                 pass
@@ -213,6 +227,17 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
             eval_results: List[Tuple[int, el_module.EvalResult]] = []
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
 
+            # Helper to choose selection score based on configuration
+            def _sel_score(res: el_module.EvalResult) -> float:
+                sel = getattr(cfg, "selection_metric", "ramped")
+                if sel == "fixed":
+                    fs = getattr(res, "fitness_static", None)
+                    return float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                if sel == "ic":
+                    return float(res.mean_ic)
+                # default ramped fitness
+                return float(res.fitness)
+
             # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1
             if (cfg.workers or 0) > 1:
                 with Pool(processes=cfg.workers or cpu_count()) as pool:
@@ -220,7 +245,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
                     for i, result in bar:
                         eval_results.append((i, result))
-                        pop_fitness_scores[i] = result.fitness
+                        pop_fitness_scores[i] = _sel_score(result)
                         logger.debug(
                             "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
                             gen + 1,
@@ -239,7 +264,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                 for i in iterator:
                     _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
-                    pop_fitness_scores[i] = result.fitness
+                    pop_fitness_scores[i] = _sel_score(result)
                     logger.debug(
                         "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
                         gen + 1,
@@ -302,6 +327,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                         top_summary.append({
                             "fingerprint": prog.fingerprint,
                             "fitness": float(res.fitness),
+                            "fitness_fixed": float(getattr(res, "fitness_static", float("nan"))),
                             "mean_ic": float(res.mean_ic),
                             "ic_std": float(getattr(res, "ic_std", 0.0)),
                             "turnover": float(getattr(res, "turnover_proxy", 0.0)),
@@ -331,7 +357,8 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                 except Exception:
                     pass
 
-            eval_results.sort(key=lambda x: x[1].fitness, reverse=True)
+            # Sort by the configured selection score but keep EvalResult intact for logging
+            eval_results.sort(key=lambda x: _sel_score(x[1]), reverse=True)
 
             # Add top-K from this generation into the HOF to increase saved diversity.
             if eval_results and eval_results[0][1].fitness > -np.inf:
@@ -386,16 +413,30 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                 prev_best_fit = best_fit
             else:
                 no_improve_gens += 1
-            logger.info(
-                "Gen %3d BestThisGenFit %+7.4f MeanIC %+7.4f Ops %2d EvalTime %.1fs%s\n  └─ %s",
-                gen + 1,
-                best_fit,
-                best_ic,
-                best_program_obj.size,
-                gen_eval_time,
-                eta_str,
-                best_program_obj.to_string(max_len=100),
-            )
+            best_fixed = getattr(best_metrics, "fitness_static", None)
+            if best_fixed is not None and np.isfinite(best_fixed):
+                logger.info(
+                    "Gen %3d BestFit %+7.4f FixedFit %+7.4f MeanIC %+7.4f Ops %2d EvalTime %.1fs%s\n  └─ %s",
+                    gen + 1,
+                    best_fit,
+                    best_fixed,
+                    best_ic,
+                    best_program_obj.size,
+                    gen_eval_time,
+                    eta_str,
+                    best_program_obj.to_string(max_len=100),
+                )
+            else:
+                logger.info(
+                    "Gen %3d BestFit %+7.4f MeanIC %+7.4f Ops %2d EvalTime %.1fs%s\n  └─ %s",
+                    gen + 1,
+                    best_fit,
+                    best_ic,
+                    best_program_obj.size,
+                    gen_eval_time,
+                    eta_str,
+                    best_program_obj.to_string(max_len=100),
+                )
 
             logger.debug(
                 "Gen %s | Building new population from elites and offspring",

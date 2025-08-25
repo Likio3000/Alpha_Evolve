@@ -51,8 +51,8 @@ class _ColorFormatter(logging.Formatter):
         "white": "\033[37m",
     }
 
-    def __init__(self, fmt: str, use_color: bool) -> None:
-        super().__init__(fmt)
+    def __init__(self, fmt: str, datefmt: str | None, use_color: bool) -> None:
+        super().__init__(fmt, datefmt)
         self.use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
@@ -91,8 +91,9 @@ def _make_console_handler(level: int) -> logging.Handler:
     is_tty = sys.stdout.isatty() if hasattr(sys.stdout, "isatty") else False
     use_color = bool(force_color or (is_tty and not no_color))
 
-    fmt = "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d | %(message)s"
-    handler.setFormatter(_ColorFormatter(fmt, use_color=use_color))
+    # Lighter format: time only (HH:MM:SS) and no module/lineno in console
+    fmt = "%(asctime)s [%(levelname)s] | %(message)s"
+    handler.setFormatter(_ColorFormatter(fmt, datefmt="%H:%M:%S", use_color=use_color))
     return handler
 
 
@@ -106,9 +107,18 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
+        # File: keep date and a tidier format (seconds precision)
         file_handler.setFormatter(logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d | %(message)s"
+            "%(asctime)s [%(levelname)s] %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         ))
         handlers.append(file_handler)
 
     logging.basicConfig(level=level, handlers=handlers, force=True)
+
+    # Print the date once at the start to avoid per-line date clutter
+    try:
+        import time as _t
+        logging.getLogger(__name__).info("Date %s", _t.strftime("%Y-%m-%d"))
+    except Exception:
+        pass

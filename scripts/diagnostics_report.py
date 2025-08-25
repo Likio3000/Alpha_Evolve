@@ -46,6 +46,7 @@ def main() -> None:
         rows.append({
             "generation": g,
             "best_fitness": best.get("fitness"),
+            "best_fitness_fixed": best.get("fitness_fixed"),
             "best_ic": best.get("mean_ic"),
             "best_ops": best.get("ops"),
             "best_ic_std": best.get("ic_std"),
@@ -85,4 +86,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -119,6 +119,14 @@ class EvolutionConfig(DataConfig):
     # 0.0 keeps fixed ~[15%, 70%, 15%]; higher values add randomness.
     ops_split_jitter: float = 0.0
 
+    # ramp scheduling for annealed penalties (corr, ic_std, turnover, sharpe_proxy)
+    ramp_fraction: float = 1.0/3.0  # portion of total gens to reach full weight
+    ramp_min_gens: int = 5          # minimum generations to ramp over
+
+    # selection criterion for breeding/elites while logging can still show ramped
+    # Options: 'ramped' (default fitness), 'fixed' (fitness_static), 'ic' (mean_ic)
+    selection_metric: str = "ramped"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  cross-sectional back-test

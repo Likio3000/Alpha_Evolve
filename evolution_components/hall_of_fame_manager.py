@@ -103,6 +103,38 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
         return 0.0
     return _corr_penalty_config["weight"] * float(np.mean(corrs))
 
+def get_mean_corr_component_with_hof(current_prog_flat_processed_ts: np.ndarray, cutoff: float | None = None) -> float:
+    """Return the mean absolute Spearman correlation (above cutoff) with HOF entries.
+
+    This mirrors get_correlation_penalty_with_hof but returns the unweighted
+    mean correlation component so callers can apply arbitrary weights for
+    logging or alternative fitness calculations.
+    """
+    if not _hof_rank_pred_matrix or current_prog_flat_processed_ts.std(ddof=0) < 1e-9:
+        return 0.0
+    cand_rank = _rank_vector(current_prog_flat_processed_ts)
+    co = _corr_penalty_config["cutoff"] if cutoff is None else float(cutoff)
+    corrs: List[float] = []
+    for hof_rank in _hof_rank_pred_matrix:
+        if len(hof_rank) != len(cand_rank):
+            continue
+        corr = abs(_safe_corr(cand_rank, hof_rank))
+        if not np.isnan(corr) and corr > co:
+            corrs.append(corr)
+    if not corrs:
+        return 0.0
+    return float(np.mean(corrs))
+
+def get_correlation_penalty_with_weight(current_prog_flat_processed_ts: np.ndarray, *, weight: float, cutoff: float | None = None) -> float:
+    """Compute correlation penalty at a provided weight and optional cutoff.
+
+    Useful for computing a fixed-weight fitness alongside the dynamic ramped one.
+    """
+    mean_corr = get_mean_corr_component_with_hof(current_prog_flat_processed_ts, cutoff=cutoff)
+    if mean_corr <= 0:
+        return 0.0
+    return float(weight) * mean_corr
+
 def add_program_to_hof(
     program: AlphaProgram,
     metrics: EvalResult,
@@ -260,17 +292,20 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
 
     logger = logging.getLogger(__name__)
     logger.info("\n★ Generation %s – Top (up to) %s overall from HOF ★", generation+1, _TOP_TO_SHOW_PRINT)
-    hdr = " Rank | Fitness |  IC  | Ops | Gen | Finger  | First 90 chars"
+    hdr = " Rank | Fitness | Fixed |  IC  | Ops | Gen | Finger  | First 90 chars"
     logger.info(hdr)
     logger.info("─" * len(hdr))
     
     # Print from the managed _hof_programs_data
     for rk, entry in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
         head = textwrap.shorten(entry.program.to_string(max_len=300), width=90, placeholder="…")
+        fx = getattr(entry.metrics, "fitness_static", None)
+        fx_val = fx if fx is not None else float('nan')
         logger.info(
-            " %4d | %+7.4f | %+5.3f | %3d | %3d | %s | %s",
+            " %4d | %+7.4f | %+7.4f | %+5.3f | %3d | %3d | %s | %s",
             rk,
             entry.metrics.fitness,
+            fx_val,
             entry.metrics.mean_ic,
             entry.program.size,
             entry.generation + 1,

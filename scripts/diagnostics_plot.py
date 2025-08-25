@@ -71,7 +71,26 @@ def generate_plots(run_dir: Path) -> Path:
         print("matplotlib not available; skipping plots. Install matplotlib to enable.")
         return plots_dir
 
-    gens = [int(d.get("generation", i + 1)) for i, d in enumerate(diags)]
+    gens = np.array([int(d.get("generation", i + 1)) for i, d in enumerate(diags)], dtype=int)
+
+    def _safe_series(vals):
+        arr = np.array(vals, dtype=float)
+        # Replace None with nan
+        arr = np.where(np.isfinite(arr), arr, np.nan)
+        return arr
+
+    def _safe_plot(ax, x, y, *args, **kwargs):
+        x_arr = np.asarray(x)
+        y_arr = _safe_series(y)
+        n = min(len(x_arr), len(y_arr))
+        if n == 0:
+            return False
+        x_arr = x_arr[:n]
+        y_arr = y_arr[:n]
+        if not np.isfinite(y_arr).any():
+            return False
+        ax.plot(x_arr, y_arr, *args, **kwargs)
+        return True
 
     # Fitness quantiles
     q_best = [d.get("pop_quantiles", {}).get("best") for d in diags]
@@ -80,18 +99,18 @@ def generate_plots(run_dir: Path) -> Path:
     q_p25 = [d.get("pop_quantiles", {}).get("p25") for d in diags]
 
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(gens, q_best, label="Best", lw=2)
-    ax.plot(gens, q_p95, label="P95", alpha=0.7)
+    _safe_plot(ax, gens, q_best, label="Best", lw=2)
+    _safe_plot(ax, gens, q_p95, label="P95", alpha=0.7)
     # Rolling-window smoothing for median
-    med_arr = np.array(q_med, dtype=float)
+    med_arr = _safe_series(q_med)
     win = max(3, min(9, len(med_arr)//10*2+1))  # odd window ~10% of run, min 3, max 9
     if np.isfinite(med_arr).any() and win > 1:
         valid = np.isfinite(med_arr)
         smooth = _moving_avg_nan(med_arr, win)
-        ax.plot(gens, smooth, label=f"Median (smoothed w={win})", lw=2)
+        _safe_plot(ax, gens, smooth, label=f"Median (smoothed w={win})", lw=2)
     else:
-        ax.plot(gens, q_med, label="Median", lw=2)
-    ax.plot(gens, q_p25, label="P25", alpha=0.7)
+        _safe_plot(ax, gens, q_med, label="Median", lw=2)
+    _safe_plot(ax, gens, q_p25, label="P25", alpha=0.7)
     ax.set_title("Fitness progress")
     ax.set_xlabel("Generation")
     ax.set_ylabel("Fitness")
@@ -105,8 +124,8 @@ def generate_plots(run_dir: Path) -> Path:
     best_fit = [d.get("best", {}).get("fitness") for d in diags]
     best_ic = [d.get("best", {}).get("mean_ic") for d in diags]
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(gens, best_fit, label="Best fitness", lw=2)
-    ax.plot(gens, best_ic, label="Best IC", lw=2)
+    _safe_plot(ax, gens, best_fit, label="Best fitness", lw=2)
+    _safe_plot(ax, gens, best_ic, label="Best IC", lw=2)
     ax.set_title("Best-of-generation metrics")
     ax.set_xlabel("Generation")
     ax.grid(True, alpha=0.25)
@@ -120,9 +139,9 @@ def generate_plots(run_dir: Path) -> Path:
     e_t = [d.get("eval_stats", {}).get("early_abort_t") for d in diags]
     e_fb = [d.get("eval_stats", {}).get("early_abort_flatbar") for d in diags]
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(gens, e_xs, label="early_abort_xs")
-    ax.plot(gens, e_t, label="early_abort_t")
-    ax.plot(gens, e_fb, label="early_abort_flatbar")
+    _safe_plot(ax, gens, e_xs, label="early_abort_xs")
+    _safe_plot(ax, gens, e_t, label="early_abort_t")
+    _safe_plot(ax, gens, e_fb, label="early_abort_flatbar")
     ax.set_title("Early aborts / flatness guards")
     ax.set_xlabel("Generation")
     ax.set_ylabel("Count (sampled)")
@@ -138,10 +157,10 @@ def generate_plots(run_dir: Path) -> Path:
     r_turn = [d.get("ramp", {}).get("turnover_w") for d in diags]
     r_sh = [d.get("ramp", {}).get("sharpe_w") for d in diags]
     fig, ax = plt.subplots(figsize=(8, 3.5))
-    ax.plot(gens, r_corr, label="corr_w")
-    ax.plot(gens, r_icstd, label="ic_std_w")
-    ax.plot(gens, r_turn, label="turnover_w")
-    ax.plot(gens, r_sh, label="sharpe_w")
+    _safe_plot(ax, gens, r_corr, label="corr_w")
+    _safe_plot(ax, gens, r_icstd, label="ic_std_w")
+    _safe_plot(ax, gens, r_turn, label="turnover_w")
+    _safe_plot(ax, gens, r_sh, label="sharpe_w")
     ax.set_title("Penalty weights (ramp)")
     ax.set_xlabel("Generation")
     ax.grid(True, alpha=0.25)

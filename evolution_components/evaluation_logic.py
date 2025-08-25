@@ -28,6 +28,8 @@ class EvalResult:
     processed_predictions: Optional[np.ndarray]
     ic_std: float = 0.0
     turnover_proxy: float = 0.0
+    # Optional: fixed-weight fitness for comparability across gens (no ramping)
+    fitness_static: Optional[float] = None
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
@@ -60,6 +62,11 @@ _EVAL_CONFIG = {
     "sharpe_proxy_weight": 0.0,
     "ic_std_penalty_weight": 0.0,
     "turnover_penalty_weight": 0.0,
+    # Fixed weights for comparability (no ramping)
+    "fixed_sharpe_proxy_weight": 0.0,
+    "fixed_ic_std_penalty_weight": 0.0,
+    "fixed_turnover_penalty_weight": 0.0,
+    "fixed_corr_penalty_weight": 0.0,
     "use_train_val_splits": False,
     "train_points": 0,
     "val_points": 0,
@@ -124,6 +131,11 @@ def configure_evaluation(
     winsor_p: float = 0.01,
     # Optional: add deterministic jitter to parsimony penalty to improve ops variance
     parsimony_jitter_pct: float = 0.0,
+    # Optional: provide fixed (non-ramped) weights for logging/secondary fitness
+    fixed_sharpe_proxy_weight: Optional[float] = None,
+    fixed_ic_std_penalty_weight: Optional[float] = None,
+    fixed_turnover_penalty_weight: Optional[float] = None,
+    fixed_corr_penalty_weight: Optional[float] = None,
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -143,6 +155,19 @@ def configure_evaluation(
     _EVAL_CONFIG["use_train_val_splits"] = use_train_val_splits
     _EVAL_CONFIG["train_points"] = int(train_points)
     _EVAL_CONFIG["val_points"] = int(val_points)
+    # Fixed weights default to current (possibly ramped) values if not provided
+    _EVAL_CONFIG["fixed_sharpe_proxy_weight"] = (
+        float(sharpe_proxy_weight) if fixed_sharpe_proxy_weight is None else float(fixed_sharpe_proxy_weight)
+    )
+    _EVAL_CONFIG["fixed_ic_std_penalty_weight"] = (
+        float(ic_std_penalty_weight) if fixed_ic_std_penalty_weight is None else float(fixed_ic_std_penalty_weight)
+    )
+    _EVAL_CONFIG["fixed_turnover_penalty_weight"] = (
+        float(turnover_penalty_weight) if fixed_turnover_penalty_weight is None else float(fixed_turnover_penalty_weight)
+    )
+    _EVAL_CONFIG["fixed_corr_penalty_weight"] = (
+        float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0)) if fixed_corr_penalty_weight is None else float(fixed_corr_penalty_weight)
+    )
     # Clamp jitter into [0, 1] and store
     try:
         pj = float(parsimony_jitter_pct)
@@ -751,18 +776,55 @@ def evaluate_program(
         processed_for_hof if return_preds else None,
         ic_std,
         turnover_proxy,
+        None,
     )
-    logger.debug(
-        "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
-        fp,
-        result.fitness,
-        result.mean_ic,
-        result.ic_std,
-        result.turnover_proxy,
-        result.sharpe_proxy,
-        result.parsimony_penalty,
-        result.correlation_penalty,
-        prog.size,
-    )
+    # Compute fixed-weight fitness if candidate wasn't invalidated to -inf
+    try:
+        if result.fitness > -float("inf") and processed_for_hof.size > 0:
+            fixed_sharpe_w = float(_EVAL_CONFIG.get("fixed_sharpe_proxy_weight", 0.0))
+            fixed_ic_std_w = float(_EVAL_CONFIG.get("fixed_ic_std_penalty_weight", 0.0))
+            fixed_turnover_w = float(_EVAL_CONFIG.get("fixed_turnover_penalty_weight", 0.0))
+            fixed_corr_w = float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0))
+            # Use HOF helper at provided weight (cutoff stays as configured in HOF)
+            corr_pen_fixed = hof_module.get_correlation_penalty_with_weight(processed_for_hof.flatten(), weight=fixed_corr_w)
+            score_fixed = (
+                mean_daily_ic
+                + fixed_sharpe_w * sharpe_proxy
+                - fixed_ic_std_w * ic_std
+                - fixed_turnover_w * turnover_proxy
+                - parsimony_penalty
+                - corr_pen_fixed
+            )
+            result.fitness_static = float(score_fixed)
+    except Exception:
+        # Keep fitness_static as None on any failure
+        pass
+    if result.fitness_static is not None:
+        logger.debug(
+            "Eval summary %s | fitness %.6f (fixed %.6f) mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
+            fp,
+            result.fitness,
+            result.fitness_static,
+            result.mean_ic,
+            result.ic_std,
+            result.turnover_proxy,
+            result.sharpe_proxy,
+            result.parsimony_penalty,
+            result.correlation_penalty,
+            prog.size,
+        )
+    else:
+        logger.debug(
+            "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
+            fp,
+            result.fitness,
+            result.mean_ic,
+            result.ic_std,
+            result.turnover_proxy,
+            result.sharpe_proxy,
+            result.parsimony_penalty,
+            result.correlation_penalty,
+            prog.size,
+        )
     _cache_set(fp, result)
     return result

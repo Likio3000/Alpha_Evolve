@@ -218,6 +218,7 @@ def run(
                 ts_path = outdir / f"alpha_{idx:02d}_timeseries.csv"
                 df_ts.to_csv(ts_path, index=False)
                 metrics["TimeseriesFile"] = str(ts_path)
+                metrics["TS"] = ts_path.name  # short, tidy link label for tables
                 # Drop bulky arrays from summary entry
                 for k in ("RetNet", "EquityCurve", "ExposureMult", "Drawdown", "StopHitsPerBar"):
                     metrics.pop(k, None)
@@ -251,7 +252,7 @@ def run(
         with open(summary_json, "w") as fh:
             json.dump(results, fh, indent=2)
         try:
-            printable = df.drop(columns=["Program"], errors="ignore")
+            printable = df.drop(columns=["Program", "TimeseriesFile"], errors="ignore")
             lg.info("\n%s", printable.to_string(index=False))
         except Exception:
             pass
@@ -385,7 +386,7 @@ def main() -> None:
             json.dump(results, fh, indent=2)
         # Print compact table to stdout for human inspection
         try:
-            printable = df.drop(columns=["Program"], errors="ignore")
+            printable = df.drop(columns=["Program", "TimeseriesFile"], errors="ignore")
             logger.info("\n%s", printable.to_string(index=False))
         except Exception:
             pass
