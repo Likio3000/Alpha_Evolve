@@ -9,3 +9,7 @@ class BacktestError(AlphaEvolveError):
 class ConfigError(AlphaEvolveError):
     """Raised for invalid configuration values or combinations."""
 
+
+class DataLoadError(AlphaEvolveError):
+    """Raised when loading or validating input data fails."""
+

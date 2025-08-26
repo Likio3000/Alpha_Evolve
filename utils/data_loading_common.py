@@ -3,10 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType, Callable
 from collections import OrderedDict
 import pandas as pd
-
-
-class DataLoadError(Exception):
-    pass
+from utils.errors import DataLoadError
 
 
 @dataclass
@@ -39,7 +36,16 @@ def prepare_ohlcv_df(df: pd.DataFrame) -> pd.DataFrame:
     if "time" not in df.columns:
         raise DataLoadError("Missing 'time' column")
     df = df.copy()
-    df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
+    # Robust timestamp parsing: handle numeric epoch seconds and ISO8601 strings
+    time_col = df["time"]
+    try:
+        if pd.api.types.is_numeric_dtype(time_col):
+            parsed = pd.to_datetime(time_col, unit="s", errors="coerce")
+        else:
+            parsed = pd.to_datetime(time_col, errors="coerce", utc=False, infer_datetime_format=True)
+    except Exception:
+        parsed = pd.to_datetime(time_col, errors="coerce")
+    df["time"] = parsed
     df = df.dropna(subset=["time"]).sort_values("time").set_index("time")
     for col in REQUIRED_OHLC:
         if col not in df.columns:
@@ -164,5 +170,21 @@ def align_and_prune(
         overlap_start=common_index.min() if common_index is not None else None,
         overlap_end=common_index.max() if common_index is not None else None,
     )
+
+    # Friendly summary for operators – concise and consistent
+    try:
+        kept = list(aligned.keys())
+        logger.info(
+            "Aligned %d→%d symbols | overlap %d (%s → %s) | dropped: %s",
+            diags.n_symbols_before,
+            diags.n_symbols_after,
+            diags.overlap_len,
+            diags.overlap_start,
+            diags.overlap_end,
+            ", ".join(dropped) if dropped else "none",
+        )
+        logger.debug("Kept symbols: %s", ", ".join(kept))
+    except Exception:
+        pass
 
     return DataBundle(aligned, common_index, list(aligned.keys()), diags)

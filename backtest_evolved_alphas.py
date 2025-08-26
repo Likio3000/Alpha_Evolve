@@ -113,6 +113,9 @@ def _validate_config(cfg: BacktestConfig) -> None:
         raise ValueError("--long_short_n must be >= 0")
     if cfg.annualization_factor <= 0:
         raise ValueError("--annualization_factor must be > 0")
+    # Cross-module constraint: intrabar stop logic requires eval_lag == 1
+    if cfg.stop_loss_pct and cfg.stop_loss_pct > 0.0 and cfg.eval_lag != 1:
+        raise ValueError("--stop_loss_pct requires --eval_lag 1")
 
 
 def run(
