@@ -17,6 +17,7 @@ from utils.data_loading_common import DataLoadError
 from utils.logging_setup import setup_logging
 from utils.errors import BacktestError
 from utils.cli import add_dataclass_args
+from utils.config_layering import load_config_file, layer_dataclass_config, _flatten_sectioned_config  # type: ignore
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
@@ -81,6 +82,8 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
                    help="Logging level (DEBUG, INFO, WARNING, ERROR)")
     p.add_argument("--log-file", default=None,
                    help="Optional log file path")
+    p.add_argument("--config", default=None,
+                   help="Optional TOML/YAML config file (file < env < CLI)")
 
     # BacktestConfig flags auto-added from dataclass (normalized only; no aliases)
     choices_map = {
@@ -93,8 +96,28 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
 
     # feed only recognised fields into the dataclass (including inherited)
     bt_field_names = {f.name for f in dc_fields(BacktestConfig)}
-    cfg_kwargs = {k: v for k, v in vars(ns).items() if k in bt_field_names}
-    cfg = BacktestConfig(**cfg_kwargs)
+    cli_kwargs = {k: v for k, v in vars(ns).items() if k in bt_field_names}
+
+    # load config file (if any) and extract backtest section or flat
+    file_cfg: dict | None = None
+    if getattr(ns, "config", None):
+        raw = load_config_file(ns.config)
+        # backtest section preferred; common synonyms
+        for section in ("backtest", "bt"):
+            if section in raw:
+                file_cfg = _flatten_sectioned_config(raw, section)
+                break
+        if file_cfg is None:
+            file_cfg = _flatten_sectioned_config(raw, None)
+
+    # env precedence: common then BT-specific
+    merged = layer_dataclass_config(
+        BacktestConfig,
+        file_cfg=file_cfg,
+        env_prefixes=("AE_", "AE_BT_"),
+        cli_overrides=cli_kwargs,
+    )
+    cfg = BacktestConfig(**merged)
 
     return cfg, ns
 

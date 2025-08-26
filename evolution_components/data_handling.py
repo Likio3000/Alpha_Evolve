@@ -5,6 +5,7 @@ from collections import OrderedDict
 
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING, DataConfig
 from utils.data_loading_common import DataDiagnostics, DataLoadError, align_and_prune, load_symbol_dfs_from_dir
+from utils.cache import compute_align_cache_key, load_aligned_bundle_from_cache, save_aligned_bundle_to_cache
 import numpy as np
 import pandas as pd
 import logging
@@ -36,17 +37,29 @@ def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_common_points_param: int, eval_lag: int) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
-    raw_dfs: Dict[str, pd.DataFrame] = load_symbol_dfs_from_dir(
-        data_dir_param, _rolling_features_individual_df
+    # Try cache first
+    key = compute_align_cache_key(
+        data_dir=data_dir_param,
+        feature_fn_name="_rolling_features_individual_df",
+        strategy=strategy_param,
+        min_common_points=min_common_points_param,
+        eval_lag=eval_lag,
+        include_lag_in_required_length=True,
+        fixed_trim_include_lag=True,
     )
-
-    if strategy_param == 'specific_long_10k':
-        min_len_for_long = min_common_points_param
-        raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_len_for_long}
-        if len(raw_dfs) < 2:
-             raise DataLoadError(f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}")
-    # Use shared alignment + pruning
-    bundle = align_and_prune(raw_dfs, strategy_param, min_common_points_param, eval_lag, logger)
+    bundle = load_aligned_bundle_from_cache(key)
+    if bundle is None:
+        raw_dfs: Dict[str, pd.DataFrame] = load_symbol_dfs_from_dir(
+            data_dir_param, _rolling_features_individual_df
+        )
+        if strategy_param == 'specific_long_10k':
+            min_len_for_long = min_common_points_param
+            raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_len_for_long}
+            if len(raw_dfs) < 2:
+                 raise DataLoadError(f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}")
+        # Use shared alignment + pruning
+        bundle = align_and_prune(raw_dfs, strategy_param, min_common_points_param, eval_lag, logger)
+        save_aligned_bundle_to_cache(key, bundle)
     aligned_dfs_ordered = bundle.aligned_dfs
     common_index = bundle.common_index
     stock_symbols = bundle.symbols

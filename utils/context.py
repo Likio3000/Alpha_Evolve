@@ -1,10 +1,15 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
 from utils.data_loading_common import DataBundle, align_and_prune, load_symbol_dfs_from_dir
+from utils.cache import (
+    compute_align_cache_key,
+    load_aligned_bundle_from_cache,
+    save_aligned_bundle_to_cache,
+)
 
 
 @dataclass(frozen=True)
@@ -12,6 +17,8 @@ class EvalContext:
     bundle: DataBundle
     sector_ids: np.ndarray
     eval_lag: int
+    col_matrix_map: Optional[Dict[str, np.ndarray]] = field(default=None)
+    ts_pos: Optional[Dict[pd.Timestamp, int]] = field(default=None)
 
 
 def make_eval_context_from_globals(dh_module) -> EvalContext:
@@ -35,19 +42,51 @@ def make_eval_context_from_dir(
     eval_lag: int,
     dh_module,
     sector_mapping: dict | None = None,
+    precompute_columns: List[str] | None = None,
 ) -> EvalContext:
     """Load, align, and construct an EvalContext directly from a data directory.
 
     Uses the evolution feature builder present in the provided ``dh_module``.
     """
     feature_fn = getattr(dh_module, "_rolling_features_individual_df")
-    raw_dfs = load_symbol_dfs_from_dir(data_dir, feature_fn)
-    bundle = align_and_prune(raw_dfs, strategy, min_common_points, eval_lag, logger=_NullLogger())
+    # Try cache
+    key = compute_align_cache_key(
+        data_dir=data_dir,
+        feature_fn_name=getattr(feature_fn, "__name__", "feat"),
+        strategy=strategy,
+        min_common_points=min_common_points,
+        eval_lag=eval_lag,
+        include_lag_in_required_length=True,
+        fixed_trim_include_lag=True,
+    )
+    bundle = load_aligned_bundle_from_cache(key)
+    if bundle is None:
+        raw_dfs = load_symbol_dfs_from_dir(data_dir, feature_fn)
+        bundle = align_and_prune(raw_dfs, strategy, min_common_points, eval_lag, logger=_NullLogger())
+        save_aligned_bundle_to_cache(key, bundle)
     if sector_mapping is not None:
         sector_ids = dh_module.get_sector_groups(bundle.symbols, mapping=sector_mapping)
     else:
         sector_ids = dh_module.get_sector_groups(bundle.symbols)
-    return EvalContext(bundle=bundle, sector_ids=sector_ids, eval_lag=eval_lag)
+
+    col_map = None
+    ts_pos = None
+    if precompute_columns:
+        T = len(bundle.common_index)
+        N = len(bundle.symbols)
+        ts_pos = {ts: i for i, ts in enumerate(bundle.common_index)}
+        col_map = {}
+        for col in precompute_columns:
+            mat = np.zeros((T, N), dtype=float)
+            for j, sym in enumerate(bundle.symbols):
+                try:
+                    series = bundle.aligned_dfs[sym][col].reindex(bundle.common_index)
+                    mat[:, j] = np.nan_to_num(series.values, nan=0.0, posinf=0.0, neginf=0.0)
+                except Exception:
+                    mat[:, j] = 0.0
+            col_map[col] = mat
+
+    return EvalContext(bundle=bundle, sector_ids=sector_ids, eval_lag=eval_lag, col_matrix_map=col_map, ts_pos=ts_pos)
 
 
 class _NullLogger:

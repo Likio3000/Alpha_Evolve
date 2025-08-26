@@ -1,0 +1,23 @@
+[evolution]
+data_dir = "data_sp500"
+max_lookback_data_option = "full_overlap"
+min_common_points = 1200
+eval_lag = 1
+generations = 10
+hof_size = 20
+seed = 42
+sector_neutralize = true
+
+[backtest]
+data_dir = "data_sp500"
+max_lookback_data_option = "full_overlap"
+min_common_points = 1200
+eval_lag = 1
+top_to_backtest = 10
+fee = 0.5
+hold = 1
+scale = "zscore"
+long_short_n = 0
+annualization_factor = 252
+stop_loss_pct = 0.0
+sector_neutralize_positions = true

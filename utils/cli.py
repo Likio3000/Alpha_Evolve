@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 from dataclasses import fields as dc_fields
+import argparse
 
 
 def add_dataclass_args(
@@ -33,12 +34,21 @@ def add_dataclass_args(
         arg = f"--{name}"
         kwargs: dict = {"default": argparse.SUPPRESS}
         if ftype is bool:
-            kwargs["action"] = "store_true"
+            # Primary flag sets True
+            parser.add_argument(arg, dest=name, action="store_true", **kwargs)
+            # If default is True, also provide a --no-<name> to set False
+            default_val = getattr(dc_type, name, None)
+            try:
+                # Try to get default from dataclass instance if attribute exists
+                default_val = getattr(dc_type(), name)  # type: ignore
+            except Exception:
+                pass
+            if default_val is True:
+                parser.add_argument(f"--no-{name}", dest=name, action="store_false", default=argparse.SUPPRESS)
         else:
             kwargs["type"] = ftype
             if name in choices_map:
                 kwargs["choices"] = choices_map[name]
-        parser.add_argument(arg, **kwargs)
+            parser.add_argument(arg, **kwargs)
         added.add(name)
     return added
-

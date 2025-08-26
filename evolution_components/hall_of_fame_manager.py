@@ -1,6 +1,6 @@
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, List, Tuple, Dict, Set # Added Set
+from typing import TYPE_CHECKING, List, Tuple, Dict, Set, Any # Added Set
 from dataclasses import dataclass
 import textwrap # For printing HoF
 import logging
@@ -336,3 +336,26 @@ def clear_hof():
     _hof_raw_pred_matrix = []
     data_handling.clear_feature_cache()
     logging.getLogger(__name__).info("Hall of Fame cleared.")
+
+
+def snapshot(limit: int | None = None) -> List[Dict[str, Any]]:
+    """Return a lightweight snapshot of current HOF entries for diagnostics.
+
+    Includes fingerprint, generation (1-indexed), fitness, mean_ic, ops and a
+    short program string. ``limit`` limits the number of items returned.
+    """
+    out: List[Dict[str, Any]] = []
+    n = len(_hof_programs_data) if limit is None else min(limit, len(_hof_programs_data))
+    for entry in _hof_programs_data[:n]:
+        try:
+            out.append({
+                "fp": entry.fingerprint,
+                "gen": int(entry.generation) + 1,
+                "fitness": float(getattr(entry.metrics, "fitness", float("nan"))),
+                "mean_ic": float(getattr(entry.metrics, "mean_ic", float("nan"))),
+                "ops": int(getattr(entry.program, "size", 0)),
+                "program": entry.program.to_string(max_len=180),
+            })
+        except Exception:
+            continue
+    return out

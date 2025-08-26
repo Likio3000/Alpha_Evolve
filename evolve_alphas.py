@@ -39,6 +39,31 @@ from utils.context import make_eval_context_from_dir
 
 _RNG = np.random.default_rng()
 _CTX: EvalContext | None = None
+_WORKER_CTX: EvalContext | None = None
+
+def _pool_init(data_dir: str, strategy: str, min_common_points: int, eval_lag: int, sector_mapping: dict):
+    """Initializer for worker processes to build an EvalContext once per worker."""
+    from utils.context import make_eval_context_from_dir as _mk
+    from evolution_components import data_handling as _dh
+    global _WORKER_CTX
+    try:
+        # Precompute column matrices in each worker for vector features
+        try:
+            from alpha_framework.alpha_framework_types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN
+            cols = [c.replace("_t", "") for c in _VECN if c != "sector_id_vector"]
+        except Exception:
+            cols = None
+        _WORKER_CTX = _mk(
+            data_dir=data_dir,
+            strategy=strategy,
+            min_common_points=min_common_points,
+            eval_lag=eval_lag,
+            dh_module=_dh,
+            sector_mapping=sector_mapping,
+            precompute_columns=cols,
+        )
+    except Exception:
+        _WORKER_CTX = None
 
 
 def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signature changed
@@ -122,13 +147,15 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram:
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
     idx, prog = args
     try:
+        # Prefer per-worker context if present, otherwise fall back to parent context
+        ctx = _WORKER_CTX if _WORKER_CTX is not None else _CTX
         result = evaluate_program(
             prog,
             dh_module,
             hof_module,
             INITIAL_STATE_VARS,
             return_preds=True,
-            ctx=_CTX,
+            ctx=ctx,
         )
         return idx, result
     except Exception as e:
@@ -152,23 +179,20 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
 # EVOLVE LOOP ##############################################################
 ###############################################################################
 
-def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]: 
+def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaProgram, float]]:
+    """Evolve using an explicit EvalContext (context-first API).
+
+    This avoids any implicit module-level data. The traditional evolve() helper
+    will build a context from cfg and delegate to this function.
+    """
     _sync_evolution_configs_from_config(cfg)
     try:
         diag.reset()
     except Exception:
         pass
-    # Build evaluation context from initialized globals for consistent data access
+    # Store the provided context for local workers and sequential eval
     global _CTX
-    # Build EvalContext directly from disk to avoid global data state
-    _CTX = make_eval_context_from_dir(
-        data_dir=cfg.data_dir,
-        strategy=cfg.max_lookback_data_option,
-        min_common_points=cfg.min_common_points,
-        eval_lag=cfg.eval_lag,
-        dh_module=dh_module,
-        sector_mapping=cfg.sector_mapping,
-    )
+    _CTX = ctx
 
     logger = logging.getLogger(__name__)
 
@@ -250,7 +274,17 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
 
             # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1
             if (cfg.workers or 0) > 1:
-                with Pool(processes=cfg.workers or cpu_count()) as pool:
+                with Pool(
+                    processes=cfg.workers or cpu_count(),
+                    initializer=_pool_init,
+                    initargs=(
+                        cfg.data_dir,
+                        cfg.max_lookback_data_option,
+                        cfg.min_common_points,
+                        cfg.eval_lag,
+                        cfg.sector_mapping,
+                    ),
+                ) as pool:
                     results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
                     bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
                     for i, result in bar:
@@ -364,6 +398,11 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                         },
                         gen_eval_seconds=float(gen_eval_time),
                     )
+                    # Include a compact HOF snapshot for provenance
+                    try:
+                        diag.enrich_last(hof=hof_module.snapshot(limit=10))
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -579,3 +618,23 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
     
     final_top_programs_with_ic = get_final_hof_programs()
     return final_top_programs_with_ic
+
+
+def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
+    """Compatibility helper: build EvalContext from disk and delegate to context API."""
+    # Precompute column matrices for all cross-sectional vector features (strip _t)
+    try:
+        from alpha_framework.alpha_framework_types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN
+        cols = [c.replace("_t", "") for c in _VECN if c != "sector_id_vector"]
+    except Exception:
+        cols = None
+    ctx = make_eval_context_from_dir(
+        data_dir=cfg.data_dir,
+        strategy=cfg.max_lookback_data_option,
+        min_common_points=cfg.min_common_points,
+        eval_lag=cfg.eval_lag,
+        dh_module=dh_module,
+        sector_mapping=cfg.sector_mapping,
+        precompute_columns=cols,
+    )
+    return evolve_with_context(cfg, ctx)

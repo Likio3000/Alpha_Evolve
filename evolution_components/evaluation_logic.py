@@ -11,9 +11,10 @@ if TYPE_CHECKING:
     from evolution_components import data_handling # To access data
     from evolution_components import hall_of_fame_manager as hof_manager # To get HOF penalty
 
-from alpha_framework.alpha_framework_types import (  # Ensure these are correct based on where AlphaProgram is defined
+from alpha_framework.alpha_framework_types import (
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
     FINAL_PREDICTION_VECTOR_NAME,
+    SCALAR_FEATURE_NAMES,
 )
 
 
@@ -447,12 +448,39 @@ def evaluate_program(
     for t_idx in range(num_evaluation_steps):
         timestamp = common_time_index[t_idx]
 
-        if ctx is None and hasattr(dh_module, "get_features_cached"):
-            features_at_t = dh_module.get_features_cached(timestamp)
+        # Prefer fast-path from precomputed matrices if provided via context
+        if ctx is not None and getattr(ctx, "col_matrix_map", None):
+            features_at_t: Dict[str, Any] = {}
+            for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
+                if feat_name_template == "sector_id_vector":
+                    features_at_t[feat_name_template] = sector_groups_vec
+                    continue
+                col = feat_name_template.replace("_t", "")
+                mat = ctx.col_matrix_map.get(col)  # type: ignore[union-attr]
+                if mat is not None and 0 <= t_idx < mat.shape[0]:
+                    features_at_t[feat_name_template] = np.nan_to_num(mat[t_idx, :], nan=0.0, posinf=0.0, neginf=0.0)
+                else:
+                    # Fallback to dataframe lookup for missing columns
+                    try:
+                        vec = np.array([
+                            aligned_dfs[sym].loc[timestamp, col] for sym in stock_symbols
+                        ], dtype=float)
+                        features_at_t[feat_name_template] = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+                    except Exception:
+                        features_at_t[feat_name_template] = np.zeros(len(stock_symbols))
+            # Scalars
+            for sc in SCALAR_FEATURE_NAMES:
+                if sc == "const_1":
+                    features_at_t[sc] = 1.0
+                elif sc == "const_neg_1":
+                    features_at_t[sc] = -1.0
         else:
-            features_at_t = dh_module.get_features_at_time(
-                timestamp, aligned_dfs, stock_symbols, sector_groups_vec
-            )
+            if ctx is None and hasattr(dh_module, "get_features_cached"):
+                features_at_t = dh_module.get_features_cached(timestamp)
+            else:
+                features_at_t = dh_module.get_features_at_time(
+                    timestamp, aligned_dfs, stock_symbols, sector_groups_vec
+                )
 
         try:
             # prog.eval uses n_stocks for internal vector shaping/broadcasting.

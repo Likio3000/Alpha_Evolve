@@ -17,3 +17,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "yfinance>=0.2.65",
 ]
+
+[project.scripts]
+alpha-evolve-pipeline = "run_pipeline:main"
+alpha-evolve-backtest = "backtest_evolved_alphas:main"

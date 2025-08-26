@@ -30,6 +30,7 @@ import backtest_evolved_alphas as bt
 from utils.logging_setup import setup_logging
 import json as _json
 from utils.cli import add_dataclass_args
+from utils.config_layering import load_config_file, layer_dataclass_config, _flatten_sectioned_config  # type: ignore
 
 BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 
@@ -64,9 +65,18 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
                    help="File to additionally write logs to")
     p.add_argument("--dry-run", action="store_true",
                    help="Show resolved configs and planned outputs, then exit")
+    p.add_argument("--print-config", action="store_true",
+                   help="Print resolved Evolution and Backtest configs as JSON and exit")
     # Backtest-only overrides
     p.add_argument("--bt-scale", choices=["zscore", "rank", "sign", "madz", "winsor"],
                    default=None, help="Override backtest scaling (leaves evolution scale unchanged)")
+    # HOF snapshot persistence toggle
+    p.add_argument("--persist-hof-per-gen", dest="persist_hof_per_gen", action="store_true", default=True,
+                   help="Persist per-generation HOF snapshots under run_dir/meta")
+    p.add_argument("--no-persist-hof-per-gen", dest="persist_hof_per_gen", action="store_false")
+
+    p.add_argument("--config", default=None,
+                   help="Optional TOML/YAML config file (file < env < CLI)")
 
     ns = p.parse_args()
     d = vars(ns)
@@ -75,10 +85,38 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     evo_field_names = {f.name for f in dc_fields(EvolutionConfig)}
     bt_field_names = {f.name for f in dc_fields(BacktestConfig)}
 
-    evo_kwargs = {k: v for k, v in d.items() if k in evo_field_names}
-    evo_kwargs["generations"] = ns.generations
+    cli_evo = {k: v for k, v in d.items() if k in evo_field_names}
+    cli_bt  = {k: v for k, v in d.items() if k in bt_field_names}
+    cli_evo["generations"] = ns.generations
+
+    # Load config file if provided and split sections
+    evo_file_cfg: dict | None = None
+    bt_file_cfg: dict | None = None
+    if getattr(ns, "config", None):
+        raw = load_config_file(ns.config)
+        evo_file_cfg = _flatten_sectioned_config(raw, "evolution") if "evolution" in raw else None
+        bt_file_cfg = _flatten_sectioned_config(raw, "backtest") if "backtest" in raw else None
+        # If no explicit sections, use flat config for both as baseline
+        if evo_file_cfg is None and bt_file_cfg is None:
+            flat = _flatten_sectioned_config(raw, None)
+            evo_file_cfg = flat
+            bt_file_cfg = flat
+
+    evo_kwargs = layer_dataclass_config(
+        EvolutionConfig,
+        file_cfg=evo_file_cfg,
+        env_prefixes=("AE_", "AE_EVO_"),
+        cli_overrides=cli_evo,
+    )
+    bt_kwargs = layer_dataclass_config(
+        BacktestConfig,
+        file_cfg=bt_file_cfg,
+        env_prefixes=("AE_", "AE_BT_"),
+        cli_overrides=cli_bt,
+    )
+
     evo_cfg = EvolutionConfig(**evo_kwargs)
-    bt_cfg  = BacktestConfig(**{k: v for k, v in d.items() if k in bt_field_names})
+    bt_cfg  = BacktestConfig(**bt_kwargs)
     # Apply backtest-only overrides
     if getattr(ns, "bt_scale", None):
         bt_cfg.scale = ns.bt_scale
@@ -115,6 +153,39 @@ def _write_summary_json(run_dir: Path, pickle_path: Path, summary_csv: Path) -> 
     with open(out, "w") as fh:
         _json.dump(data, fh, indent=2)
     return out
+
+
+def _write_hof_snapshots(run_dir: Path) -> list[Path]:
+    """Write per-generation HOF snapshots into run_dir/meta/.
+
+    Uses utils.diagnostics.get_all() entries produced during evolution. Each
+    entry may include a 'hof' field added by evolve_alphas; if present, this
+    function writes meta/hof_gen_<N>.json where N is generation.
+    Returns the list of written file paths.
+    """
+    from utils import diagnostics as diag
+    out_paths: list[Path] = []
+    try:
+        entries = diag.get_all()
+    except Exception:
+        entries = []
+    if not entries:
+        return out_paths
+    meta_dir = run_dir / "meta"
+    meta_dir.mkdir(exist_ok=True)
+    for ent in entries:
+        try:
+            gen = int(ent.get("generation", 0))
+            hof = ent.get("hof")
+            if not hof or not gen:
+                continue
+            p = meta_dir / f"hof_gen_{gen:03d}.json"
+            with open(p, "w") as fh:
+                _json.dump(hof, fh, indent=2)
+            out_paths.append(p)
+        except Exception:
+            continue
+    return out_paths
 def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
     import time
     logger = logging.getLogger(__name__)
@@ -219,6 +290,13 @@ def _write_data_alignment_meta(run_dir: Path, evo_cfg: EvolutionConfig) -> Path:
 def main() -> None:
     evo_cfg, bt_cfg, cli = parse_args()
 
+    # Print merged configuration and exit early (no logging, no side-effects)
+    if getattr(cli, "print_config", False):
+        from dataclasses import asdict
+        payload = {"evolution": asdict(evo_cfg), "backtest": asdict(bt_cfg)}
+        print(_json.dumps(payload, indent=2))
+        return
+
     level = getattr(logging, str(cli.log_level).upper(), logging.INFO)
     if getattr(cli, "debug_prints", False):
         level = logging.DEBUG
@@ -309,6 +387,14 @@ def main() -> None:
             with open(diag_path, "w") as fh:
                 json.dump(diags, fh, indent=2)
             logging.getLogger(__name__).info(f"Saved diagnostics → {diag_path}")
+            # Persist per-generation HOF snapshots for auditability (optional)
+            if getattr(cli, "persist_hof_per_gen", True):
+                try:
+                    hof_paths = _write_hof_snapshots(run_dir)
+                    if hof_paths:
+                        logging.getLogger(__name__).info("Saved %d HOF snapshots under meta/", len(hof_paths))
+                except Exception:
+                    pass
     except Exception:
         pass
 

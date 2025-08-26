@@ -1,0 +1,22 @@
+[evolution]
+data_dir = "tests/data/good"
+max_lookback_data_option = "common_1200"
+min_common_points = 3
+eval_lag = 1
+generations = 5
+hof_size = 10
+seed = 42
+sector_neutralize = true
+
+[backtest]
+data_dir = "tests/data/good"
+max_lookback_data_option = "common_1200"
+min_common_points = 3
+eval_lag = 1
+top_to_backtest = 5
+fee = 1.0
+hold = 1
+scale = "zscore"
+long_short_n = 0
+stop_loss_pct = 0.0
+sector_neutralize_positions = false

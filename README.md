@@ -69,6 +69,38 @@ summary and should complete without failures:
 
 ```bash
 pytest -q
+
+## Configuration layering (TOML/YAML, env, CLI)
+
+You can now provide configuration via a file and environment variables, with the
+following precedence: file < env < CLI.
+
+- Use `--config configs/crypto.toml` (TOML preferred). YAML is supported if
+  `PyYAML` is installed.
+- Environment variables override file values. Use uppercase keys with prefixes:
+  `AE_` for common, `AE_EVO_` (evolution only) and `AE_BT_` (backtest only).
+  Examples: `AE_DATA_DIR=./data`, `AE_BT_TOP_TO_BACKTEST=5`.
+- CLI flags still take priority over both.
+
+Boolean flags accept a convenient `--no-<flag>` negation when their default is
+`True` in the dataclass. For example, to disable sector neutralization during
+evolution: `--no-sector_neutralize`.
+
+Console entry points are available when installed:
+
+- `alpha-evolve-pipeline` → `run_pipeline.py`
+- `alpha-evolve-backtest` → `backtest_evolved_alphas.py`
+
+## Pre-commit hooks (optional)
+
+To enable fast linting/formatting locally:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+This installs hooks for Ruff (lint + format) and Black.
 ```
 
 ## Usage
@@ -87,24 +119,14 @@ Call `run_pipeline.py` directly for quick experiments or when overriding just a
 few options.  Any parameter not supplied on the command line falls back to the
 defaults defined in [`config.py`](config.py).
 
-For a longer run using the parameters described in the paper you can simply run
+For a longer run using the parameters described in the paper, create a TOML
+config (see `configs/crypto.toml` and `configs/sp500.toml`) and run:
 
 ```bash
-sh scripts/recommended_pipeline.sh
+alpha-evolve-pipeline 100 --config configs/crypto.toml
 ```
 
-The script expands the meta‑hyper‑parameters and adds a few useful flags like
-`--run_baselines`.
-
-For a fully specified command where every parameter is explicitly set you can
-run
-
-```bash
-sh scripts/run_pipeline_all_args.sh
-```
-
-This convenience script mirrors all defaults from `config.py` so you can easily
-edit any knob or use it as a template for your own custom command.
+CLI flags override config and environment variables (precedence: file < env < CLI).
 
 The `--debug_prints` flag forwards verbose output to the back-tester.
 Use `--long_short_n` to trade only the top/bottom N ranked symbols in each
@@ -152,4 +174,3 @@ The dataset itself cannot be shared due to provider restrictions. In limited exp
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-
