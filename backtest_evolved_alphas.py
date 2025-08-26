@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from config import BacktestConfig
+from utils.data_loading_common import DataLoadError
 from utils.logging_setup import setup_logging
 from alpha_framework import (
     AlphaProgram,
@@ -81,7 +82,9 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
 
     # ­­­ back-test knobs – map straight into BacktestConfig ­­­ #
     p.add_argument("--top",               dest="top_to_backtest",     type=int,   default=argparse.SUPPRESS)
+    # Support both --data and --data_dir for symmetry
     p.add_argument("--data",              dest="data_dir",            default=argparse.SUPPRESS)
+    p.add_argument("--data_dir",          dest="data_dir",            default=argparse.SUPPRESS)
     p.add_argument("--fee",               type=float,                 default=argparse.SUPPRESS)
     p.add_argument("--hold",              type=int,                   default=argparse.SUPPRESS)
     p.add_argument("--long_short_n",      type=int,                   default=argparse.SUPPRESS,
@@ -92,7 +95,12 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--lag",               dest="eval_lag",            type=int,   default=argparse.SUPPRESS)
     p.add_argument("--stop_loss_pct",     type=float,                 default=argparse.SUPPRESS,
                    help="per-asset intrabar stop (e.g., 0.03 for 3%)")
+    # Support both long and short names for alignment strategy
     p.add_argument("--data_alignment_strategy",
+                   dest="max_lookback_data_option",
+                   choices=["common_1200", "specific_long_10k", "full_overlap"],
+                   default=argparse.SUPPRESS)
+    p.add_argument("--max_lookback_data_option",
                    dest="max_lookback_data_option",
                    choices=["common_1200", "specific_long_10k", "full_overlap"],
                    default=argparse.SUPPRESS)
@@ -153,12 +161,16 @@ def run(
 
     # Load and align data
     lg.info("Loading data from '%s' …", cfg.data_dir)
-    aligned_dfs, common_index, stock_symbols = load_and_align_data_for_backtest(
-        cfg.data_dir,
-        cfg.max_lookback_data_option,
-        cfg.min_common_points,
-        cfg.eval_lag,
-    )
+    try:
+        aligned_dfs, common_index, stock_symbols = load_and_align_data_for_backtest(
+            cfg.data_dir,
+            cfg.max_lookback_data_option,
+            cfg.min_common_points,
+            cfg.eval_lag,
+        )
+    except DataLoadError as e:
+        lg.error("Backtest data loading failed: %s", e)
+        raise
     lg.info("%d symbols | %d bars (%s → %s)",
             len(stock_symbols), len(common_index),
             getattr(common_index, 'min', lambda: '?')(),

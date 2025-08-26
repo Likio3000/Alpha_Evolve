@@ -27,6 +27,7 @@ _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFI
 # Store rank-transformed prediction vectors for correlation checks
 _hof_rank_pred_matrix: List[np.ndarray] = []
 _hof_corr_fingerprints: List[str] = []  # keep order to manage eviction
+_hof_raw_pred_matrix: List[np.ndarray] = []  # store raw flattened predictions for exact-match fast path
 # Default correlation penalty configuration mirrors Section 9
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 
@@ -42,6 +43,7 @@ def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, 
     
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
+    _hof_raw_pred_matrix = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
     logging.getLogger(__name__).info(
         "Hall of Fame initialized: max_size=%s, keep_dupes=%s, corr_penalty_w=%s, corr_cutoff=%s",
@@ -91,6 +93,12 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
         return 0.0
 
     cand_rank = _rank_vector(current_prog_flat_processed_ts)
+    # Fast-path: if an identical or numerically equal raw vector exists, full penalty
+    for raw in _hof_raw_pred_matrix:
+        if raw.shape == current_prog_flat_processed_ts.shape and (
+            np.array_equal(raw, current_prog_flat_processed_ts) or np.allclose(raw, current_prog_flat_processed_ts, rtol=0, atol=1e-8)
+        ):
+            return _corr_penalty_config["weight"]
     corrs: List[float] = []
     for hof_rank in _hof_rank_pred_matrix:
         if len(hof_rank) != len(cand_rank):
@@ -215,11 +223,14 @@ def add_program_to_hof(
     # Logic for maintaining the list used for correlation penalty.
     if processed_preds_matrix is not None and metrics.fitness > -float("inf"):
         if fp not in _hof_corr_fingerprints:
-            _hof_rank_pred_matrix.append(_rank_vector(processed_preds_matrix.ravel()))
+            flat = processed_preds_matrix.ravel()
+            _hof_rank_pred_matrix.append(_rank_vector(flat))
+            _hof_raw_pred_matrix.append(flat.copy())
             _hof_corr_fingerprints.append(fp)
             if len(_hof_rank_pred_matrix) > _hof_max_size:
                 _hof_rank_pred_matrix.pop(0)
                 _hof_corr_fingerprints.pop(0)
+                _hof_raw_pred_matrix.pop(0)
 
     if inserted:
         # Always keep HOF sorted by fitness, even on in-place updates
@@ -236,16 +247,19 @@ def add_program_to_hof(
 
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
     """Add a program's predictions to the correlation HOF, ensuring uniqueness."""
-    global _hof_rank_pred_matrix, _hof_corr_fingerprints
+    global _hof_rank_pred_matrix, _hof_corr_fingerprints, _hof_raw_pred_matrix
 
     if program_fp in _hof_corr_fingerprints:
         return
 
-    _hof_rank_pred_matrix.append(_rank_vector(processed_preds_matrix.ravel()))
+    flat = processed_preds_matrix.ravel()
+    _hof_rank_pred_matrix.append(_rank_vector(flat))
+    _hof_raw_pred_matrix.append(flat.copy())
     _hof_corr_fingerprints.append(program_fp)
     if len(_hof_rank_pred_matrix) > _hof_max_size:
         _hof_rank_pred_matrix.pop(0)
         _hof_corr_fingerprints.pop(0)
+        _hof_raw_pred_matrix.pop(0)
 
 
 def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
@@ -314,10 +328,11 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
         )
 def clear_hof():
     """Clears all HOF state."""
-    global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
+    global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints, _hof_raw_pred_matrix
     _hof_programs_data = []
     _hof_fingerprints_set = set()
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
+    _hof_raw_pred_matrix = []
     data_handling.clear_feature_cache()
     logging.getLogger(__name__).info("Hall of Fame cleared.")

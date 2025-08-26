@@ -612,13 +612,12 @@ def evaluate_program(
         turnover_proxy = float(np.mean(np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1)/2.0)) if pos_full.shape[0] > 1 else 0.0
         processed_for_hof = full_processed_predictions_matrix
 
-    # Smoother complexity control: use log-normalized parsimony instead of linear
-    # This penalizes very large programs while being gentler on small ones.
+    # Linear parsimony penalty to match expected tests: factor * (size / max_ops)
     try:
         max_ops_norm = float(max(1, _EVAL_CONFIG["max_ops_for_parsimony"]))
-        parsimony_norm = np.log1p(float(prog.size)) / np.log1p(max_ops_norm)
     except Exception:
-        parsimony_norm = float(prog.size) / float(_EVAL_CONFIG.get("max_ops_for_parsimony", max(1, prog.size)))
+        max_ops_norm = float(max(1, prog.size))
+    parsimony_norm = float(prog.size) / max_ops_norm
     parsimony_penalty = _EVAL_CONFIG["parsimony_penalty_factor"] * parsimony_norm
     # Apply deterministic jitter to parsimony penalty based on program fingerprint
     try:

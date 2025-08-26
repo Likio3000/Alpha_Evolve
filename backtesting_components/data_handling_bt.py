@@ -5,6 +5,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
+from utils.data_loading_common import DataLoadError, align_and_prune
 from collections import OrderedDict
 import pandas as pd
 # numpy is used by pandas operations, but not directly called here often.
@@ -48,125 +49,27 @@ def load_and_align_data_for_backtest(
             continue
 
     if not raw_dfs:
-        sys.exit(f"No valid CSV data loaded for backtesting from {data_dir_param}.")
+        raise DataLoadError(f"No valid CSV data loaded for backtesting from {data_dir_param}.")
 
     if strategy_param == 'specific_long_10k':
         raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_common_points_param}
         if len(raw_dfs) < 2:
-             sys.exit(f"Not enough long files (>= {min_common_points_param} data points) for 'specific_long_10k' backtest strategy. Found: {len(raw_dfs)}")
+             raise DataLoadError(f"Not enough long files (>= {min_common_points_param} data points) for 'specific_long_10k' backtest strategy. Found: {len(raw_dfs)}")
+    # Use shared alignment + pruning
+    bundle = align_and_prune(
+        raw_dfs,
+        strategy_param,
+        min_common_points_param,
+        eval_lag,
+        logging.getLogger(__name__),
+        include_lag_in_required_length=False,
+        fixed_trim_include_lag=False,
+    )
+    aligned_dfs_ordered = bundle.aligned_dfs
+    common_index = bundle.common_index
+    stock_symbols = bundle.symbols
 
-    common_index: Optional[pd.DatetimeIndex] = None
-    for sym_name, df_sym in raw_dfs.items():
-        if df_sym.index.has_duplicates:
-            # print(f"Warning (backtest): Duplicate timestamps found in {sym_name}. Keeping first.") # Optional
-            df_sym = df_sym[~df_sym.index.duplicated(keep='first')]
-            raw_dfs[sym_name] = df_sym
-        if common_index is None:
-            common_index = df_sym.index
-        else:
-            common_index = common_index.intersection(df_sym.index)
-    
-    # For backtests we also need to ensure there are enough points to compute
-    # forward returns for the chosen evaluation lag.
-    required_len = min_common_points_param
-    if common_index is None or len(common_index) < required_len:
-        # Attempt to prune symbols with the shortest overlapping window until requirement is met.
-        def _compute_bounds(dfs: Dict[str, pd.DataFrame]):
-            bounds: Dict[str, Tuple[pd.Timestamp, pd.Timestamp]] = {}
-            for s, dfx in dfs.items():
-                bounds[s] = (dfx.index[0], dfx.index[-1])
-            return bounds
-
-        def _common_len(dfs: Dict[str, pd.DataFrame]) -> int:
-            tmp_common: Optional[pd.DatetimeIndex] = None
-            for dfx in dfs.values():
-                tmp_common = dfx.index if tmp_common is None else tmp_common.intersection(dfx.index)
-            return 0 if tmp_common is None else len(tmp_common)
-
-        dropped: List[str] = []
-        while True:
-            cur_len = _common_len(raw_dfs)
-            if cur_len >= required_len:
-                # Recompute common_index for the pruned set
-                common_index = None
-                for dfx in raw_dfs.values():
-                    common_index = dfx.index if common_index is None else common_index.intersection(dfx.index)
-                break
-            if len(raw_dfs) <= 2:
-                sys.exit(
-                    f"Not enough common history for backtesting (need at least {required_len}, got {cur_len}). "
-                    f"After pruning {len(dropped)} symbols, only {len(raw_dfs)} remain."
-                )
-
-            bounds = _compute_bounds(raw_dfs)
-            latest_start_sym = max(bounds.items(), key=lambda kv: kv[1][0])[0]
-            earliest_end_sym = min(bounds.items(), key=lambda kv: kv[1][1])[0]
-
-            # Choose drop that maximizes common length
-            def _len_if_drop(sym: str) -> int:
-                tmp = dict(raw_dfs)
-                tmp.pop(sym, None)
-                return _common_len(tmp)
-
-            if _len_if_drop(latest_start_sym) >= _len_if_drop(earliest_end_sym):
-                to_drop = latest_start_sym
-            else:
-                to_drop = earliest_end_sym
-            dropped.append(to_drop)
-            raw_dfs.pop(to_drop, None)
-
-        if dropped:
-            logging.getLogger(__name__).info(
-                "[BT] Pruned %d symbols to reach required common history (%d). Remaining: %d. Dropped: %s",
-                len(dropped), required_len, len(raw_dfs), ", ".join(dropped)
-            )
-
-    if strategy_param == 'common_1200':  # fixed lookback window
-        # Keep exactly the evaluation steps plus extra bars for the forward return horizon
-        need = min_common_points_param
-        if len(common_index) > need:
-            common_index = common_index[-need:]
-    # For 'specific_long_10k' and 'full_overlap', use the full common_index found that meets min_common_points_param.
-
-    aligned_dfs_ordered = OrderedDict()
-    symbols_to_keep = sorted(list(raw_dfs.keys())) # Ensure we only iterate over symbols present after filtering
-
-    lg = logging.getLogger(__name__)
-
-    for sym in symbols_to_keep:
-        # Ensure symbol still exists in raw_dfs (it should if symbols_to_keep is from raw_dfs.keys())
-        if sym not in raw_dfs:
-            continue
-        
-        df_sym = raw_dfs[sym].reindex(common_index).ffill().bfill()
-
-        # Recompute forward returns to match the configured evaluation horizon
-        try:
-            df_sym["ret_fwd"] = (
-                df_sym["close"].pct_change(periods=eval_lag).shift(-eval_lag)
-            )
-        except Exception:
-            df_sym["ret_fwd"] = df_sym["close"].pct_change(periods=1).shift(-1)
-
-        # Allow NaNs in the last `eval_lag` rows for `ret_fwd` only; those rows
-        # are outside the evaluation window and exist solely to compute the
-        # final forward return used by the last eval step.
-        if eval_lag > 0 and "ret_fwd" in df_sym.columns and len(df_sym) >= eval_lag:
-            tail_ok_mask = pd.DataFrame(False, index=df_sym.index, columns=df_sym.columns)
-            tail_ok_mask.loc[df_sym.index[-eval_lag:], "ret_fwd"] = True
-            problematic_nans = df_sym.isna() & ~tail_ok_mask
-        else:
-            problematic_nans = df_sym.isna()
-
-        if problematic_nans.values.any():
-            lg.warning(
-                "DataFrame for %s contains NaNs after alignment (excluding expected tail NaNs in ret_fwd). This might affect backtest results.",
-                sym,
-            )
-        aligned_dfs_ordered[sym] = df_sym
-    
-    stock_symbols = list(aligned_dfs_ordered.keys())
     if len(stock_symbols) < 2:
-        sys.exit("Need at least two stock symbols after alignment for backtesting.")
+        raise DataLoadError("Need at least two stock symbols after alignment for backtesting.")
         
     return aligned_dfs_ordered, common_index, stock_symbols

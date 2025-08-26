@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
 
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING, DataConfig
+from utils.data_loading_common import DataDiagnostics, DataLoadError, align_and_prune
 import numpy as np
 import pandas as pd
 import logging
@@ -24,6 +25,7 @@ _STOCK_SYMBOLS: Optional[List[str]] = None
 _N_STOCKS: Optional[int] = None
 _EVAL_LAG_CACHE: int = 1 # Default, will be set by initialize_data
 _FEATURE_CACHE: Dict[pd.Timestamp, Dict[str, np.ndarray]] = {}
+_DATA_DIAGNOSTICS: Optional[DataDiagnostics] = None
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -62,154 +64,24 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
             continue
 
     if not raw_dfs:
-        sys.exit(f"No valid CSV data loaded from {data_dir_param}. Ensure files have 'time' and OHLCV columns.")
+        raise DataLoadError(f"No valid CSV data loaded from {data_dir_param}. Ensure files have 'time' and OHLCV columns.")
 
     if strategy_param == 'specific_long_10k':
         min_len_for_long = min_common_points_param
         raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_len_for_long}
         if len(raw_dfs) < 2:
-             sys.exit(f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}")
+             raise DataLoadError(f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}")
+    # Use shared alignment + pruning
+    bundle = align_and_prune(raw_dfs, strategy_param, min_common_points_param, eval_lag, logger)
+    aligned_dfs_ordered = bundle.aligned_dfs
+    common_index = bundle.common_index
+    stock_symbols = bundle.symbols
+    global _DATA_DIAGNOSTICS
+    _DATA_DIAGNOSTICS = bundle.diagnostics
 
-    common_index: Optional[pd.DatetimeIndex] = None
-    for sym_name, df_sym in raw_dfs.items(): # Iterate to find common index
-        if df_sym.index.has_duplicates:
-            logger.warning(
-                "Duplicate timestamps found in %s. Keeping first.", sym_name
-            )
-            df_sym = df_sym[~df_sym.index.duplicated(keep='first')]
-            raw_dfs[sym_name] = df_sym
-
-        if common_index is None:
-            common_index = df_sym.index
-        else:
-            common_index = common_index.intersection(df_sym.index)
-    
-    # The number of points needed for evaluation is min_common_points_param.
-    # The actual data slice needs to be longer by eval_lag to calculate the final forward returns.
-    required_length_for_data_slice = min_common_points_param + eval_lag
-
-    if common_index is None or len(common_index) < required_length_for_data_slice:
-        # Attempt to prune symbols with the shortest overlapping window until requirement is met.
-        # Heuristic: iteratively drop the symbol limiting the intersection (latest start or earliest end).
-        def _compute_bounds(dfs: Dict[str, pd.DataFrame]) -> Tuple[pd.Timestamp, pd.Timestamp, Dict[str, Tuple[pd.Timestamp, pd.Timestamp]]]:
-            bounds: Dict[str, Tuple[pd.Timestamp, pd.Timestamp]] = {}
-            starts: List[pd.Timestamp] = []
-            ends: List[pd.Timestamp] = []
-            for s, dfx in dfs.items():
-                st = dfx.index[0]
-                en = dfx.index[-1]
-                bounds[s] = (st, en)
-                starts.append(st)
-                ends.append(en)
-            return max(starts), min(ends), bounds
-
-        if not raw_dfs:
-            sys.exit("No data after initial load.")
-
-        inter_start, inter_end, bounds = _compute_bounds(raw_dfs)
-        dropped: List[str] = []
-
-        def _intersection_len(start, end) -> int:
-            if start >= end:
-                return 0
-            return len(pd.DatetimeIndex(sorted(set(raw_dfs[next(iter(raw_dfs))].index)).intersection(pd.date_range(start, end, freq=None))))
-
-        # Loop: drop limiting symbols until intersection long enough or not enough symbols remain
-        while True:
-            # Recompute common index directly from current raw_dfs
-            current_common: Optional[pd.DatetimeIndex] = None
-            for dfv in raw_dfs.values():
-                current_common = dfv.index if current_common is None else current_common.intersection(dfv.index)
-            cur_len = 0 if current_common is None else len(current_common)
-            if cur_len >= required_length_for_data_slice:
-                common_index = current_common
-                break
-            if len(raw_dfs) <= 2:
-                # Give up – not enough symbols to form cross-section
-                sys.exit(
-                    f"Not enough common history across all symbols. Need {required_length_for_data_slice} (for {min_common_points_param} eval steps + lag {eval_lag}), "
-                    f"got {cur_len}). After pruning {len(dropped)} symbols, only {len(raw_dfs)} remain."
-                )
-
-            # Identify candidates causing tight bounds
-            inter_start, inter_end, bounds = _compute_bounds(raw_dfs)
-            # Find symbols with latest start and earliest end
-            latest_start_sym = max(bounds.items(), key=lambda kv: kv[1][0])[0]
-            earliest_end_sym = min(bounds.items(), key=lambda kv: kv[1][1])[0]
-
-            # Evaluate which drop improves intersection length more
-            def _len_if_drop(sym: str) -> int:
-                tmp_common: Optional[pd.DatetimeIndex] = None
-                for s, dfx in raw_dfs.items():
-                    if s == sym:
-                        continue
-                    tmp_common = dfx.index if tmp_common is None else tmp_common.intersection(dfx.index)
-                return 0 if tmp_common is None else len(tmp_common)
-
-            len_drop_start = _len_if_drop(latest_start_sym)
-            len_drop_end = _len_if_drop(earliest_end_sym)
-            drop_sym = latest_start_sym if len_drop_start >= len_drop_end else earliest_end_sym
-            dropped.append(drop_sym)
-            raw_dfs.pop(drop_sym, None)
-
-        if dropped:
-            logger.info(
-                "Pruned %d symbols with shortest overlap to satisfy required length (%d). Remaining symbols: %d. Dropped: %s",
-                len(dropped), required_length_for_data_slice, len(raw_dfs), ", ".join(dropped)
-            )
-
-    # Truncate common_index if using 'common_1200' or 'specific_long_10k' (unless 'full_overlap')
-    if strategy_param == 'common_1200' or strategy_param == 'specific_long_10k':
-        # We need `min_common_points_param` for the evaluation period,
-        # plus `eval_lag` more for the forward returns needed by the last evaluation point.
-        num_points_to_keep_in_slice = min_common_points_param + eval_lag
-        if len(common_index) > num_points_to_keep_in_slice:
-            common_index = common_index[-num_points_to_keep_in_slice:]
-    
-    # Now `common_index` is the definitive index for all dataframes.
-    # Its length will be `min_common_points_param + eval_lag` (or longer if 'full_overlap' and data allows).
-
-    aligned_dfs_ordered = OrderedDict()
-    symbols_to_keep = sorted(raw_dfs.keys())
-
-    for sym in symbols_to_keep:
-        df_sym = raw_dfs[sym]
-        # Reindex to common_index. ffill/bfill to handle any gaps from individual symbol histories not perfectly matching.
-        reindexed_df = df_sym.reindex(common_index).ffill().bfill()
-
-        # Ensure forward return matches the configured evaluation horizon.
-        # We recompute 'ret_fwd' here so that evaluation at t uses the cumulative
-        # return over `eval_lag` bars ending at t+eval_lag.
-        try:
-            reindexed_df["ret_fwd"] = (
-                reindexed_df["close"].pct_change(periods=eval_lag).shift(-eval_lag)
-            )
-        except Exception:
-            # Fall back to 1-step forward return if something goes wrong
-            reindexed_df["ret_fwd"] = reindexed_df["close"].pct_change(periods=1).shift(-1)
-        
-        # Final check for NaNs after alignment. It's expected that the last
-        # `eval_lag` rows have NaN in `ret_fwd` (shifted forward returns).
-        # Ignore those when deciding whether to warn.
-        if eval_lag > 0 and "ret_fwd" in reindexed_df.columns and len(reindexed_df) >= eval_lag:
-            tail_ok_mask = pd.DataFrame(False, index=reindexed_df.index, columns=reindexed_df.columns)
-            tail_ok_mask.loc[reindexed_df.index[-eval_lag:], "ret_fwd"] = True
-            problematic_nans = reindexed_df.isna() & ~tail_ok_mask
-        else:
-            problematic_nans = reindexed_df.isna()
-
-        if problematic_nans.values.any():
-            logger.warning(
-                "DataFrame for %s still contains NaNs after alignment (excluding expected tail NaNs in ret_fwd).",
-                sym,
-            )
-            # Potentially drop this symbol or handle NaNs further, for now, we proceed.
-        aligned_dfs_ordered[sym] = reindexed_df
-
-    stock_symbols = list(aligned_dfs_ordered.keys())
     if len(stock_symbols) < 2: # Need at least 2 for cross-sectional
-        sys.exit("Need at least two stock symbols after alignment for cross-sectional evolution.")
-        
+        raise DataLoadError("Need at least two stock symbols after alignment for cross-sectional evolution.")
+    
     return aligned_dfs_ordered, common_index, stock_symbols
 
 def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_lag: int):
@@ -251,6 +123,10 @@ def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_l
             _COMMON_TIME_INDEX.min(),
             _COMMON_TIME_INDEX.max(),
         )
+
+
+def get_data_diagnostics():
+    return _DATA_DIAGNOSTICS
 
 
 def get_aligned_dfs() -> OrderedDictType[str, pd.DataFrame]:

@@ -24,6 +24,7 @@ from pathlib import Path
 from dataclasses import fields as dc_fields
 
 from config import EvolutionConfig, BacktestConfig
+from utils.data_loading_common import DataLoadError
 import evolve_alphas as ae
 import backtest_evolved_alphas as bt
 from utils.logging_setup import setup_logging
@@ -249,7 +250,34 @@ def main() -> None:
             pass
         return
 
-    pickle_path = _evolve_and_save(evo_cfg, run_dir)
+    try:
+        pickle_path = _evolve_and_save(evo_cfg, run_dir)
+    except DataLoadError as e:
+        logging.getLogger(__name__).exception("Evolution failed due to data loading error: %s", e)
+        sys.exit(1)
+    except Exception as e:
+        logging.getLogger(__name__).exception("Evolution failed: %s", e)
+        sys.exit(1)
+
+    # Persist data alignment diagnostics if available
+    try:
+        from evolution_components import data_handling as evo_dh
+        di = evo_dh.get_data_diagnostics()
+        if di is not None:
+            import json
+            meta_dir = run_dir / "meta"
+            meta_dir.mkdir(exist_ok=True)
+            with open(meta_dir / "data_alignment.json", "w") as fh:
+                json.dump({
+                    "n_symbols_before": di.n_symbols_before,
+                    "n_symbols_after": di.n_symbols_after,
+                    "dropped_symbols": di.dropped_symbols,
+                    "overlap_len": di.overlap_len,
+                    "overlap_start": str(di.overlap_start) if di.overlap_start is not None else None,
+                    "overlap_end": str(di.overlap_end) if di.overlap_end is not None else None,
+                }, fh, indent=2)
+    except Exception:
+        pass
 
     # Save per-generation diagnostics if available
     try:

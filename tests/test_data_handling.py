@@ -8,6 +8,7 @@ from evolution_components.data_handling import (
 )
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
+from utils.data_loading_common import DataLoadError
 
 DATA_DIR = "tests/data/good"
 MISSING_DIR = "tests/data/missing_cols"
@@ -39,22 +40,22 @@ def test_load_and_align_for_backtest_success():
 
 
 def test_internal_missing_columns_raises():
-    with pytest.raises(SystemExit):
+    with pytest.raises(DataLoadError):
         _load_and_align_data_internal(MISSING_DIR, "full_overlap", 3, 1)
 
 
 def test_internal_insufficient_overlap_raises():
-    with pytest.raises(SystemExit):
+    with pytest.raises(DataLoadError):
         _load_and_align_data_internal(BAD_OVERLAP_DIR, "common_1200", 3, 1)
 
 
 def test_backtest_missing_columns_raises():
-    with pytest.raises(SystemExit):
+    with pytest.raises(DataLoadError):
         load_and_align_data_for_backtest(MISSING_DIR, "full_overlap", 3)
 
 
 def test_backtest_insufficient_overlap_raises():
-    with pytest.raises(SystemExit):
+    with pytest.raises(DataLoadError):
         load_and_align_data_for_backtest(BAD_OVERLAP_DIR, "common_1200", 4)
 
 
