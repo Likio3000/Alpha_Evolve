@@ -15,6 +15,8 @@ import pandas as pd
 from config import BacktestConfig
 from utils.data_loading_common import DataLoadError
 from utils.logging_setup import setup_logging
+from utils.errors import BacktestError
+from utils.cli import add_dataclass_args
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
@@ -53,13 +55,13 @@ def _derive_state_vars(prog: AlphaProgram) -> Dict[str, str]:
 def load_programs_from_pickle(n_to_load: int, pickle_filepath: str) \
         -> List[Tuple[AlphaProgram, float]]:
     if not Path(pickle_filepath).exists():
-        sys.exit(f"Pickle file not found: {pickle_filepath}")
+        raise BacktestError(f"Pickle file not found: {pickle_filepath}")
     try:
         with open(pickle_filepath, "rb") as fh:
             data: List[Tuple[AlphaProgram, float]] = pickle.load(fh)
         return data[:n_to_load]
     except Exception as e:
-        sys.exit(f"Error loading pickle {pickle_filepath}: {e}")
+        raise BacktestError(f"Error loading pickle {pickle_filepath}: {e}")
 
 
 # --------------------------------------------------------------------------- #
@@ -80,33 +82,21 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--log-file", default=None,
                    help="Optional log file path")
 
-    # ­­­ back-test knobs – map straight into BacktestConfig ­­­ #
-    p.add_argument("--top",               dest="top_to_backtest",     type=int,   default=argparse.SUPPRESS)
-    # Support both --data and --data_dir for symmetry
-    p.add_argument("--data",              dest="data_dir",            default=argparse.SUPPRESS)
-    p.add_argument("--data_dir",          dest="data_dir",            default=argparse.SUPPRESS)
-    p.add_argument("--fee",               type=float,                 default=argparse.SUPPRESS)
-    p.add_argument("--hold",              type=int,                   default=argparse.SUPPRESS)
-    p.add_argument("--long_short_n",      type=int,                   default=argparse.SUPPRESS,
-                   help="trade only top/bottom N symbols")
-    p.add_argument("--annualization_factor", type=float, default=argparse.SUPPRESS)
-    p.add_argument("--scale",             choices=["zscore", "rank", "sign", "madz", "winsor"],
-                                                                  default=argparse.SUPPRESS)
-    p.add_argument("--lag",               dest="eval_lag",            type=int,   default=argparse.SUPPRESS)
-    p.add_argument("--stop_loss_pct",     type=float,                 default=argparse.SUPPRESS,
-                   help="per-asset intrabar stop (e.g., 0.03 for 3%)")
-    # Support both long and short names for alignment strategy
+    # BacktestConfig flags auto-added from dataclass
+    choices_map = {
+        "scale": ["zscore", "rank", "sign", "madz", "winsor"],
+        "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
+    }
+    add_dataclass_args(p, BacktestConfig, choices_map=choices_map)
+    # Legacy aliases
+    p.add_argument("--data", dest="data_dir", default=argparse.SUPPRESS)
+    p.add_argument("--lag", dest="eval_lag", type=int, default=argparse.SUPPRESS)
     p.add_argument("--data_alignment_strategy",
                    dest="max_lookback_data_option",
                    choices=["common_1200", "specific_long_10k", "full_overlap"],
                    default=argparse.SUPPRESS)
-    p.add_argument("--max_lookback_data_option",
-                   dest="max_lookback_data_option",
-                   choices=["common_1200", "specific_long_10k", "full_overlap"],
-                   default=argparse.SUPPRESS)
     p.add_argument("--min_common_data_points",
-                   dest="min_common_points", type=int,                default=argparse.SUPPRESS)
-    p.add_argument("--seed",              type=int,                   default=argparse.SUPPRESS)
+                   dest="min_common_points", type=int, default=argparse.SUPPRESS)
 
     ns = p.parse_args()
 
@@ -313,7 +303,11 @@ def main() -> None:
                 getattr(common_index, 'max', lambda: '?')())
 
     # Load programs
-    programs = load_programs_from_pickle(cfg.top_to_backtest, cli.input)
+    try:
+        programs = load_programs_from_pickle(cfg.top_to_backtest, cli.input)
+    except BacktestError as e:
+        logger.error(str(e))
+        sys.exit(2)
     if not programs:
         sys.exit("Nothing to back-test – pickle empty or --top 0?")
 

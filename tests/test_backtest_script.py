@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from backtest_evolved_alphas import parse_args, load_programs_from_pickle
+from utils.errors import BacktestError
 
 
 # -------------------------------------------------------------------
@@ -48,13 +49,12 @@ def test_load_programs_from_pickle_valid(tmp_path):
 
 
 def test_load_programs_from_pickle_missing(tmp_path):
-    with pytest.raises(SystemExit):
+    with pytest.raises(BacktestError):
         load_programs_from_pickle(1, str(tmp_path / "missing.pkl"))
 
 
 def test_load_programs_from_pickle_invalid(tmp_path):
     fp = tmp_path / "bad.pkl"
     fp.write_text("not a pickle")
-    with pytest.raises(SystemExit):
+    with pytest.raises(BacktestError):
         load_programs_from_pickle(1, str(fp))
-

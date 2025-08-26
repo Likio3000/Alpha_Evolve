@@ -28,6 +28,8 @@ from utils.data_loading_common import DataLoadError
 import evolve_alphas as ae
 import backtest_evolved_alphas as bt
 from utils.logging_setup import setup_logging
+import json as _json
+from utils.cli import add_dataclass_args
 
 BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 
@@ -35,37 +37,6 @@ BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
 # ─────────────────────────────────────────────────────────────────────────────
 #  CLI → two dataclass configs (auto-generated from dataclasses)
 # ─────────────────────────────────────────────────────────────────────────────
-def _add_dataclass_args(parser: argparse.ArgumentParser,
-                        dc_type,
-                        *,
-                        skip: set[str] | None = None,
-                        choices_map: dict[str, list[str]] | None = None,
-                        already_added: set[str] | None = None) -> set[str]:
-    skip = skip or set()
-    choices_map = choices_map or {}
-    added = set() if already_added is None else set(already_added)
-    for f in dc_fields(dc_type):
-        name = f.name
-        if name in skip or name in added:
-            continue
-        ftype = f.type
-        if ftype not in (int, float, str, bool):
-            continue
-        if name == "generations":
-            # Keep positional form for compatibility
-            continue
-        arg = f"--{name}"
-        kwargs: dict = {"default": argparse.SUPPRESS}
-        if ftype is bool:
-            kwargs["action"] = "store_true"
-        else:
-            kwargs["type"] = ftype
-            if name in choices_map:
-                kwargs["choices"] = choices_map[name]
-        parser.add_argument(arg, **kwargs)
-        added.add(name)
-    return added
-
 
 def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
@@ -78,8 +49,8 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
         "scale": ["zscore", "rank", "sign", "madz", "winsor"],
         "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
     }
-    added = _add_dataclass_args(p, EvolutionConfig, choices_map=choices_map)
-    _add_dataclass_args(p, BacktestConfig, choices_map=choices_map, already_added=added)
+    added = add_dataclass_args(p, EvolutionConfig, choices_map=choices_map)
+    add_dataclass_args(p, BacktestConfig, choices_map=choices_map, already_added=added)
 
     # Pipeline-only flags
     p.add_argument("--debug_prints", action="store_true")
@@ -118,6 +89,32 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
 # ─────────────────────────────────────────────────────────────────────────────
 #  helpers
 # ─────────────────────────────────────────────────────────────────────────────
+def _write_summary_json(run_dir: Path, pickle_path: Path, summary_csv: Path) -> Path:
+    """Write a compact run summary JSON with key artefacts.
+
+    Returns path to the created SUMMARY.json.
+    """
+    summary_json = summary_csv.with_suffix(".json")
+    data = {
+        "run_dir": str(run_dir),
+        "programs_pickle": str(pickle_path),
+        "backtest_summary_csv": str(summary_csv),
+        "backtest_summary_json": str(summary_json),
+    }
+    meta_dir = run_dir / "meta"
+    if (meta_dir / "data_alignment.json").exists():
+        data["data_alignment"] = str(meta_dir / "data_alignment.json")
+    # Optionally include counts
+    try:
+        import pandas as _pd
+        df = _pd.read_csv(summary_csv)
+        data["backtested_alphas"] = int(len(df))
+    except Exception:
+        pass
+    out = run_dir / "SUMMARY.json"
+    with open(out, "w") as fh:
+        _json.dump(data, fh, indent=2)
+    return out
 def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
     import time
     logger = logging.getLogger(__name__)
@@ -306,7 +303,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     logger.info("\n— Back-testing …")
     try:
-        bt.run(
+        summary_csv_path = bt.run(
             bt_cfg,
             outdir=run_dir / "backtest_portfolio_csvs",
             programs_pickle=pickle_path,
@@ -317,6 +314,13 @@ def main() -> None:
     except Exception as e:
         logger.exception("Back-testing failed: %s", e)
         sys.exit(1)
+
+    # Compact SUMMARY.json with key artefacts
+    try:
+        summary_path = _write_summary_json(run_dir, pickle_path, summary_csv_path)
+        logger.info("Wrote run summary → %s", summary_path)
+    except Exception:
+        logger.info("Failed to write SUMMARY.json; continuing.")
 
     # Attempt to generate per-alpha timeseries plots (works for both crypto and SP500 data)
     try:
