@@ -82,21 +82,12 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p.add_argument("--log-file", default=None,
                    help="Optional log file path")
 
-    # BacktestConfig flags auto-added from dataclass
+    # BacktestConfig flags auto-added from dataclass (normalized only; no aliases)
     choices_map = {
         "scale": ["zscore", "rank", "sign", "madz", "winsor"],
         "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
     }
     add_dataclass_args(p, BacktestConfig, choices_map=choices_map)
-    # Legacy aliases
-    p.add_argument("--data", dest="data_dir", default=argparse.SUPPRESS)
-    p.add_argument("--lag", dest="eval_lag", type=int, default=argparse.SUPPRESS)
-    p.add_argument("--data_alignment_strategy",
-                   dest="max_lookback_data_option",
-                   choices=["common_1200", "specific_long_10k", "full_overlap"],
-                   default=argparse.SUPPRESS)
-    p.add_argument("--min_common_data_points",
-                   dest="min_common_points", type=int, default=argparse.SUPPRESS)
 
     ns = p.parse_args()
 

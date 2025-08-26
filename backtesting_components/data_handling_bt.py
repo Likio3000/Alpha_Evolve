@@ -1,13 +1,11 @@
 from __future__ import annotations
-import os
-import glob
-import sys
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from utils.data_loading_common import DataLoadError, align_and_prune
 from collections import OrderedDict
 import pandas as pd
+from utils.data_loading_common import load_symbol_dfs_from_dir
 # numpy is used by pandas operations, but not directly called here often.
 
 def _rolling_features_individual_df_bt(df: pd.DataFrame) -> pd.DataFrame:
@@ -27,29 +25,9 @@ def load_and_align_data_for_backtest(
     min_common_points_param: int,
     eval_lag: int = 1,
 ) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
-    raw_dfs: Dict[str, pd.DataFrame] = {}
-    for csv_file in glob.glob(os.path.join(data_dir_param, "*.csv")):
-        try:
-            df = pd.read_csv(csv_file)
-            if 'time' not in df.columns:
-                continue
-            df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
-            df = df.dropna(subset=['time']).sort_values("time").set_index("time")
-            if df.empty:
-                continue
-            
-            required_cols = ['open', 'high', 'low', 'close']
-            if not all(col in df.columns for col in required_cols):
-                continue
-
-            df_with_features = _rolling_features_individual_df_bt(df)
-            raw_dfs[Path(csv_file).stem] = df_with_features.dropna()
-        except Exception:
-            # print(f"Error processing {csv_file} for backtest data: {e}") # Optional debug
-            continue
-
-    if not raw_dfs:
-        raise DataLoadError(f"No valid CSV data loaded for backtesting from {data_dir_param}.")
+    raw_dfs: Dict[str, pd.DataFrame] = load_symbol_dfs_from_dir(
+        data_dir_param, _rolling_features_individual_df_bt
+    )
 
     if strategy_param == 'specific_long_10k':
         raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_common_points_param}

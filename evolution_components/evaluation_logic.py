@@ -372,10 +372,11 @@ def _average_rank_ties(x: np.ndarray) -> np.ndarray:
 
 def evaluate_program(
     prog: AlphaProgram,
-    dh_module: data_handling, # Pass the data_handling module for access
-    hof_module: hof_manager,  # Pass the hall_of_fame_manager module
-    initial_prog_state_vars_config: Dict[str, Any], # e.g. evolve_alphas.INITIAL_STATE_VARS
-    return_preds: bool = True
+    dh_module: data_handling,  # Pass the data_handling module for access
+    hof_module: hof_manager,   # Pass the hall_of_fame_manager module
+    initial_prog_state_vars_config: Dict[str, Any],  # e.g. evolve_alphas.INITIAL_STATE_VARS
+    return_preds: bool = True,
+    ctx=None,
 ) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
@@ -399,14 +400,21 @@ def evaluate_program(
         _cache_set(fp, result)
         return result
 
-    # Get data from data_handling module
-    aligned_dfs = dh_module.get_aligned_dfs()
-    common_time_index = dh_module.get_common_time_index()
-    stock_symbols = dh_module.get_stock_symbols()
-    n_stocks = dh_module.get_n_stocks()
-    eval_lag = dh_module.get_eval_lag() # Get eval_lag from data_handling
-
-    sector_groups_vec = dh_module.get_sector_groups(stock_symbols).astype(float)
+    # Get data, either from provided context or from the data_handling module
+    if ctx is not None:
+        aligned_dfs = ctx.bundle.aligned_dfs
+        common_time_index = ctx.bundle.common_index
+        stock_symbols = ctx.bundle.symbols
+        n_stocks = len(stock_symbols)
+        eval_lag = ctx.eval_lag
+        sector_groups_vec = ctx.sector_ids.astype(float)
+    else:
+        aligned_dfs = dh_module.get_aligned_dfs()
+        common_time_index = dh_module.get_common_time_index()
+        stock_symbols = dh_module.get_stock_symbols()
+        n_stocks = dh_module.get_n_stocks()
+        eval_lag = dh_module.get_eval_lag()  # Get eval_lag from data_handling
+        sector_groups_vec = dh_module.get_sector_groups(stock_symbols).astype(float)
 
     program_state: Dict[str, Any] = prog.new_state() # AlphaProgram's own new_state
     for s_name, s_type in initial_prog_state_vars_config.items():  # Use passed config
@@ -439,7 +447,7 @@ def evaluate_program(
     for t_idx in range(num_evaluation_steps):
         timestamp = common_time_index[t_idx]
 
-        if hasattr(dh_module, "get_features_cached"):
+        if ctx is None and hasattr(dh_module, "get_features_cached"):
             features_at_t = dh_module.get_features_cached(timestamp)
         else:
             features_at_t = dh_module.get_features_at_time(

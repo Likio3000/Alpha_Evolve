@@ -1,13 +1,10 @@
 from __future__ import annotations
-import os
-import glob
-import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
 
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING, DataConfig
-from utils.data_loading_common import DataDiagnostics, DataLoadError, align_and_prune
+from utils.data_loading_common import DataDiagnostics, DataLoadError, align_and_prune, load_symbol_dfs_from_dir
 import numpy as np
 import pandas as pd
 import logging
@@ -39,32 +36,9 @@ def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_common_points_param: int, eval_lag: int) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
-    raw_dfs: Dict[str, pd.DataFrame] = {}
-    for csv_file in glob.glob(os.path.join(data_dir_param, "*.csv")):
-        try:
-            df = pd.read_csv(csv_file)
-            if 'time' not in df.columns:
-                # print(f"Skipping {csv_file}: 'time' column missing.")
-                continue
-            df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
-            df = df.dropna(subset=['time']).sort_values("time").set_index("time")
-            if df.empty:
-                # print(f"Skipping {csv_file}: empty after time processing.")
-                continue
-            
-            required_cols = ['open', 'high', 'low', 'close']
-            if not all(col in df.columns for col in required_cols):
-                # print(f"Skipping {csv_file}: missing one of {required_cols}.")
-                continue
-
-            df_with_features = _rolling_features_individual_df(df)
-            raw_dfs[Path(csv_file).stem] = df_with_features.dropna() # Drop NaNs from rolling features
-        except Exception:
-            # print(f"Error processing {csv_file}: {e}")
-            continue
-
-    if not raw_dfs:
-        raise DataLoadError(f"No valid CSV data loaded from {data_dir_param}. Ensure files have 'time' and OHLCV columns.")
+    raw_dfs: Dict[str, pd.DataFrame] = load_symbol_dfs_from_dir(
+        data_dir_param, _rolling_features_individual_df
+    )
 
     if strategy_param == 'specific_long_10k':
         min_len_for_long = min_common_points_param

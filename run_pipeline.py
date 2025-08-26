@@ -176,6 +176,43 @@ def _train_baselines(data_dir: str, out_dir: Path, *, retrain: bool = False) -> 
     logger.info(f"Saved baseline metrics → {out_file}")
 
 
+def _write_data_alignment_meta(run_dir: Path, evo_cfg: EvolutionConfig) -> Path:
+    """Persist standardized data alignment diagnostics.
+
+    Always writes a JSON file with config-level provenance; if diagnostics are
+    available from the evolution loader they are included.
+    """
+    from evolution_components import data_handling as evo_dh
+    di = None
+    try:
+        di = evo_dh.get_data_diagnostics()
+    except Exception:
+        di = None
+
+    payload = {
+        "data_dir": evo_cfg.data_dir,
+        "strategy": evo_cfg.max_lookback_data_option,
+        "min_common_points": evo_cfg.min_common_points,
+        "eval_lag": evo_cfg.eval_lag,
+        "source": "evolution_loader",
+    }
+    if di is not None:
+        payload.update({
+            "n_symbols_before": di.n_symbols_before,
+            "n_symbols_after": di.n_symbols_after,
+            "dropped_symbols": di.dropped_symbols,
+            "overlap_len": di.overlap_len,
+            "overlap_start": str(di.overlap_start) if di.overlap_start is not None else None,
+            "overlap_end": str(di.overlap_end) if di.overlap_end is not None else None,
+        })
+    meta_dir = run_dir / "meta"
+    meta_dir.mkdir(exist_ok=True)
+    out = meta_dir / "data_alignment.json"
+    with open(out, "w") as fh:
+        _json.dump(payload, fh, indent=2)
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  main
 # ─────────────────────────────────────────────────────────────────────────────
@@ -256,29 +293,15 @@ def main() -> None:
         logging.getLogger(__name__).exception("Evolution failed: %s", e)
         sys.exit(1)
 
-    # Persist data alignment diagnostics if available
+    # Persist standardized data alignment metadata (always writes, with or without diagnostics)
     try:
-        from evolution_components import data_handling as evo_dh
-        di = evo_dh.get_data_diagnostics()
-        if di is not None:
-            import json
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(exist_ok=True)
-            with open(meta_dir / "data_alignment.json", "w") as fh:
-                json.dump({
-                    "n_symbols_before": di.n_symbols_before,
-                    "n_symbols_after": di.n_symbols_after,
-                    "dropped_symbols": di.dropped_symbols,
-                    "overlap_len": di.overlap_len,
-                    "overlap_start": str(di.overlap_start) if di.overlap_start is not None else None,
-                    "overlap_end": str(di.overlap_end) if di.overlap_end is not None else None,
-                }, fh, indent=2)
+        _write_data_alignment_meta(run_dir, evo_cfg)
     except Exception:
-        pass
+        logging.getLogger(__name__).warning("Failed to write data alignment metadata.")
 
-    # Save per-generation diagnostics if available
+    # Save per-generation diagnostics if available (centralized hub)
     try:
-        from evolution_components import diagnostics as diag
+        from utils import diagnostics as diag
         diags = diag.get_all()
         if diags:
             import json

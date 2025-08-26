@@ -22,10 +22,10 @@ def test_parse_args_defaults(monkeypatch):
 def test_parse_args_overrides(monkeypatch):
     argv = [
         "backtest_evolved_alphas.py",
-        "--top", "3",
+        "--top_to_backtest", "3",
         "--fee", "0.5",
         "--scale", "rank",
-        "--data", "data_dir",
+        "--data_dir", "data_dir",
         "--long_short_n", "2",
     ]
     monkeypatch.setattr(sys, "argv", argv)

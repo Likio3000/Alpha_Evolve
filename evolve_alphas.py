@@ -25,9 +25,11 @@ from evolution_components import (
 from evolution_components import data_handling as dh_module
 from evolution_components import hall_of_fame_manager as hof_module
 from evolution_components import evaluation_logic as el_module
+from utils.context import make_eval_context_from_globals, EvalContext
 from evolution_components import diagnostics as diag
 
 from config import EvoConfig  # New import
+from utils.context import make_eval_context_from_dir
 
 ###############################################################################
 # CLI & CONFIG REMOVED ########################################################
@@ -36,6 +38,7 @@ from config import EvoConfig  # New import
 # Global args object initialization REMOVED
 
 _RNG = np.random.default_rng()
+_CTX: EvalContext | None = None
 
 
 def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signature changed
@@ -43,13 +46,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
     _RNG = np.random.default_rng(cfg.seed)
-    
-    initialize_data(
-        data_dir=cfg.data_dir,
-        strategy=cfg.max_lookback_data_option,
-        min_common_points=cfg.min_common_points,
-        eval_lag=cfg.eval_lag
-    )
+    # No longer initialize global data; EvalContext will be used instead
     el_module.configure_evaluation(
         parsimony_penalty=cfg.parsimony_penalty,
         max_ops=cfg.max_ops,
@@ -129,7 +126,9 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
             prog,
             dh_module,
             hof_module,
-            INITIAL_STATE_VARS
+            INITIAL_STATE_VARS,
+            return_preds=True,
+            ctx=_CTX,
         )
         return idx, result
     except Exception as e:
@@ -159,6 +158,17 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
         diag.reset()
     except Exception:
         pass
+    # Build evaluation context from initialized globals for consistent data access
+    global _CTX
+    # Build EvalContext directly from disk to avoid global data state
+    _CTX = make_eval_context_from_dir(
+        data_dir=cfg.data_dir,
+        strategy=cfg.max_lookback_data_option,
+        min_common_points=cfg.min_common_points,
+        eval_lag=cfg.eval_lag,
+        dh_module=dh_module,
+        sector_mapping=cfg.sector_mapping,
+    )
 
     logger = logging.getLogger(__name__)
 
@@ -342,18 +352,18 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                         eval_events=events,
                         best=(top_summary[0] if top_summary else {}),
                     )
-                    # Also stash distribution and top-K under synthetic keys for downstream report scripts
-                    if hasattr(diag, "_GEN_DIAGNOSTICS"):
-                        try:
-                            diag._GEN_DIAGNOSTICS[-1]["pop_quantiles"] = q or {}
-                            diag._GEN_DIAGNOSTICS[-1]["topK"] = top_summary
-                            diag._GEN_DIAGNOSTICS[-1]["ramp"] = {"corr_w": float(cfg.corr_penalty_w * ramp),
-                                                                   "ic_std_w": float(cfg.ic_std_penalty_w * ramp),
-                                                                   "turnover_w": float(cfg.turnover_penalty_w * ramp),
-                                                                   "sharpe_w": float(cfg.sharpe_proxy_w * ramp)}
-                            diag._GEN_DIAGNOSTICS[-1]["gen_eval_seconds"] = float(gen_eval_time)
-                        except Exception:
-                            pass
+                    # Enrich entry with additional optional fields for downstream reporting
+                    diag.enrich_last(
+                        pop_quantiles=(q or {}),
+                        topK=top_summary,
+                        ramp={
+                            "corr_w": float(cfg.corr_penalty_w * ramp),
+                            "ic_std_w": float(cfg.ic_std_penalty_w * ramp),
+                            "turnover_w": float(cfg.turnover_penalty_w * ramp),
+                            "sharpe_w": float(cfg.sharpe_proxy_w * ramp),
+                        },
+                        gen_eval_seconds=float(gen_eval_time),
+                    )
                 except Exception:
                     pass
 
@@ -370,7 +380,7 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
                     try:
                         prog_k = pop[prog_idx_k]
                         metrics_k = el_module.evaluate_program(
-                            prog_k, dh_module, hof_module, INITIAL_STATE_VARS, return_preds=True
+                            prog_k, dh_module, hof_module, INITIAL_STATE_VARS, return_preds=True, ctx=_CTX
                         )
                         add_program_to_hof(prog_k, metrics_k, gen)
                         if metrics_k.processed_predictions is not None:

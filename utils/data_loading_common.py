@@ -26,6 +26,55 @@ class DataBundle:
     symbols: List[str]
     diagnostics: DataDiagnostics
 
+REQUIRED_OHLC = ("open", "high", "low", "close")
+
+
+def prepare_ohlcv_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate and normalize a raw OHLCV dataframe.
+
+    - Requires a "time" column with seconds since epoch or ISO8601; converts to datetime index.
+    - Ensures required OHLC columns are present.
+    - Sorts by time and removes duplicate timestamps (keeping first).
+    """
+    if "time" not in df.columns:
+        raise DataLoadError("Missing 'time' column")
+    df = df.copy()
+    df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
+    df = df.dropna(subset=["time"]).sort_values("time").set_index("time")
+    for col in REQUIRED_OHLC:
+        if col not in df.columns:
+            raise DataLoadError(f"Missing required column: {col}")
+    if df.index.has_duplicates:
+        df = df[~df.index.duplicated(keep="first")]
+    return df
+
+
+def load_symbol_dfs_from_dir(
+    data_dir: str,
+    feature_fn: Callable[[pd.DataFrame], pd.DataFrame],
+) -> Dict[str, pd.DataFrame]:
+    """Load CSVs from a directory, validate schema, and compute features.
+
+    Returns a mapping {symbol -> prepared_dataframe}. Skips invalid files; if none
+    valid, raises DataLoadError.
+    """
+    import os, glob
+    from pathlib import Path
+    out: Dict[str, pd.DataFrame] = {}
+    for csv_file in glob.glob(os.path.join(data_dir, "*.csv")):
+        try:
+            raw = pd.read_csv(csv_file)
+            base = prepare_ohlcv_df(raw)
+            with_feat = feature_fn(base)
+            with_feat = with_feat.dropna()
+            if not with_feat.empty:
+                out[Path(csv_file).stem] = with_feat
+        except Exception:
+            continue
+    if not out:
+        raise DataLoadError(f"No valid CSV data loaded from {data_dir}.")
+    return out
+
 
 def align_and_prune(
     raw_dfs: Dict[str, pd.DataFrame],
