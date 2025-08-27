@@ -50,6 +50,24 @@ data/
 You can override the location with the `--data-dir` option when running the
 pipeline.
 
+### Sector mapping (crypto vs SP500)
+
+The project ships with a simple crypto‑oriented sector mapping used by some
+operators and for optional sector‑neutralization during evolution/backtests. For
+symbols not present in the mapping (e.g., most SP500 tickers), we assign `-1`
+as a catch‑all sector. In that case:
+
+- The `sector_id_vector` feature is a constant `-1` vector.
+- Sector neutralization degenerates to global de‑meaning (equivalent to
+  subtracting the cross‑sectional mean), so it’s safe but redundant.
+
+Recommendations:
+
+- Crypto: leave sector neutralization enabled (default).
+- SP500: you can disable it for clarity with `--no-sector_neutralize` on
+  evolution and `--sector_neutralize_positions false` on backtests, or set those
+  in `configs/sp500.toml`.
+
 ## Running tests
 
 Before running `pytest` you **must** install the project's dependencies:
@@ -90,6 +108,62 @@ Console entry points are available when installed:
 
 - `alpha-evolve-pipeline` → `run_pipeline.py`
 - `alpha-evolve-backtest` → `backtest_evolved_alphas.py`
+
+### Alignment cache controls
+
+To speed up repeated runs, aligned data is cached under `.cache/align_cache` by
+default. You can control the cache via CLI or environment variables:
+
+- Disable cache: `--disable-align-cache` or `AE_DISABLE_ALIGN_CACHE=1`
+- Custom cache dir: `--align-cache-dir <path>` or `AE_ALIGN_CACHE_DIR=<path>`
+
+### New evolution flags (selection and novelty)
+
+- `--selection_metric`: choose `ramped` (default), `fixed`, `ic`, `auto`, or `phased`.
+  - `auto`: ramped early, switches to fixed after the ramp period completes.
+  - `phased`: early gens use IC, mid gens use ramped fitness, late gens use fixed fitness. Control with `--ic_phase_gens`.
+- `--novelty_boost_w`: add a bonus to selection for low correlation vs current HOF predictions (0 disables).
+
+Recommended settings
+
+- Crypto:
+  - `--selection_metric auto` (or `phased` with `--ic_phase_gens 5`)
+  - `--ramp_fraction 0.33 --ramp_min_gens 5`
+  - `--novelty_boost_w 0.02` to `0.05`
+  - Keep `sector_neutralize` enabled (default)
+- SP500:
+  - Same selection settings as above
+  - Disable sector neutralization (already disabled in `configs/sp500.toml`)
+  - `annualization_factor = 252` (already in `configs/sp500.toml`)
+
+### Flags overview (quick reference)
+
+- `--config <file>`: Load TOML/YAML; precedence is file < env < CLI.
+- `--data_dir <dir>`: Directory of CSVs (`time,open,high,low,close`).
+- `--max_lookback_data_option`: `common_1200` | `specific_long_10k` | `full_overlap`.
+- `--min_common_points <N>`: Required common eval points (strategy dependent).
+- `--eval_lag <N>`: Forward-return lag (1 recommended; required for stops).
+- `--workers <N>`: Evolution evaluation workers; try 1–2 if overhead is high.
+- `--selection_metric`: `ramped` | `fixed` | `ic` | `auto` | `phased`.
+- `--ic_phase_gens <N>`: Length of the IC‑only phase when using `phased`.
+- `--novelty_boost_w <w>`: Diversity boost vs HOF (0 disables).
+- Cache: `--disable-align-cache`, `--align-cache-dir <path>`.
+- Backtest only: `--top_to_backtest`, `--fee`, `--hold`, `--long_short_n`,
+  `--stop_loss_pct`, `--annualization_factor`, `--sector_neutralize_positions`.
+
+### Tuning guide (practical)
+
+- Exploration → exploitation:
+  - Start with `--selection_metric auto` (or `phased` + `--ic_phase_gens 5`).
+  - Use `--ramp_fraction 0.33 --ramp_min_gens 5` to avoid “best=gen1”.
+- Diversity:
+  - Set `--novelty_boost_w 0.02`–`0.05` to prefer novel candidates.
+  - Keep `hof_per_gen >= 3`; avoid `keep_dupes_in_hof` unless benchmarking.
+- Penalties:
+  - If overly harsh early on, lower `corr_penalty_w` or increase ramp length.
+  - If churn dominates, increase `turnover_penalty_w` slightly.
+- Parallelism:
+  - Try `--workers 1` or 2 first. If CPU‑bound and stable, scale up.
 
 ## Pre-commit hooks (optional)
 
@@ -138,6 +212,28 @@ running the pipeline.
 
 Back-test summaries now include an `Ops` column showing the operation count of each alpha.
 
+### Selection metric “auto” (explore → exploit)
+
+During evolution you can let the selection switch from ramped fitness to
+fixed‑weight fitness automatically after the ramp period:
+
+```bash
+uv run run_pipeline.py 50 --selection_metric auto --ramp_fraction 0.33 --ramp_min_gens 5
+```
+This keeps correlation/variance penalties light early (exploration) and then
+compares candidates on fixed weights (exploitation) to avoid the “best gen is
+first gen” effect you may see with strong, always‑on penalties.
+
+For a tiny end‑to‑end check, use `scripts/smoke_run.sh`.
+
+### Adapting new data
+
+As long as your CSVs have the same schema (`time,open,high,low,close` with `time` as epoch seconds or ISO8601) and one file per symbol, the loaders and alignment will work out of the box:
+
+- Place files under a directory and point `--data_dir` to it (or set in config).
+- The shared feature builder adds rolling MAs/volatility, range metrics; forward returns are recomputed after alignment.
+- If you don’t have a sector mapping for your universe, the `sector_id_vector` will default to `-1` (single bucket). You can disable sector neutralization with `--no-sector_neutralize` during evolution and `--sector_neutralize_positions false` in backtests.
+
 ## Default hyperparameters
 
 The values in `config.py` mirror the meta‑hyper‑parameters listed in
@@ -160,6 +256,18 @@ Aligned OHLC data is loaded from a directory of CSV files. (I did not have acces
 `full_overlap` strategy is recommended as it keeps the maximum number of
 datapoints shared across all symbols.  After alignment you can obtain
 train/validation/test splits via `evolution_components.get_data_splits`.
+
+### Quickstart: SP500
+
+Fetch 20y of split/dividend‑adjusted OHLC from Yahoo and run a short pipeline:
+
+```bash
+python scripts/fetch_sp500_data.py --out data_sp500 --years 20
+uv run run_pipeline.py 5 --config configs/sp500.toml --selection_metric auto \
+  --disable-align-cache --debug_prints
+```
+By default SP500 runs don’t use a custom sector mapping; you can disable sector
+neutralization explicitly if desired.
 
 ## Limitations and Future Work
 

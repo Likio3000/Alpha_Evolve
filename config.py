@@ -126,6 +126,10 @@ class EvolutionConfig(DataConfig):
     # selection criterion for breeding/elites while logging can still show ramped
     # Options: 'ramped' (default fitness), 'fixed' (fitness_static), 'ic' (mean_ic)
     selection_metric: str = "ramped"
+    # optional: boost selection for novelty against HOF (0.0 disables)
+    novelty_boost_w: float = 0.0
+    # optional: phased selection – use pure IC for the first N generations
+    ic_phase_gens: int = 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

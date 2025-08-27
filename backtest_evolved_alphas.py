@@ -84,6 +84,11 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
                    help="Optional log file path")
     p.add_argument("--config", default=None,
                    help="Optional TOML/YAML config file (file < env < CLI)")
+    # Cache controls (mirror pipeline)
+    p.add_argument("--disable-align-cache", action="store_true",
+                   help="Disable alignment cache (AE_DISABLE_ALIGN_CACHE=1)")
+    p.add_argument("--align-cache-dir", default=None,
+                   help="Custom directory for alignment cache (AE_ALIGN_CACHE_DIR)")
 
     # BacktestConfig flags auto-added from dataclass (normalized only; no aliases)
     choices_map = {
@@ -284,6 +289,16 @@ def run(
 
 def main() -> None:
     cfg, cli = parse_args()
+
+    # Apply cache controls early so loaders honor them
+    try:
+        import os
+        if getattr(cli, "disable_align_cache", False):
+            os.environ["AE_DISABLE_ALIGN_CACHE"] = "1"
+        if getattr(cli, "align_cache_dir", None):
+            os.environ["AE_ALIGN_CACHE_DIR"] = str(cli.align_cache_dir)
+    except Exception:
+        pass
 
     # Prepare logging for standalone invocation (tqdm-friendly, colored)
     level = getattr(logging, str(cli.log_level).upper(), logging.INFO)

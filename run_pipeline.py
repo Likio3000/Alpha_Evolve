@@ -67,6 +67,11 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
                    help="Show resolved configs and planned outputs, then exit")
     p.add_argument("--print-config", action="store_true",
                    help="Print resolved Evolution and Backtest configs as JSON and exit")
+    # Cache controls
+    p.add_argument("--disable-align-cache", action="store_true",
+                   help="Disable alignment cache (equivalent to AE_DISABLE_ALIGN_CACHE=1)")
+    p.add_argument("--align-cache-dir", default=None,
+                   help="Custom directory for alignment cache (AE_ALIGN_CACHE_DIR)")
     # Backtest-only overrides
     p.add_argument("--bt-scale", choices=["zscore", "rank", "sign", "madz", "winsor"],
                    default=None, help="Override backtest scaling (leaves evolution scale unchanged)")
@@ -290,6 +295,16 @@ def _write_data_alignment_meta(run_dir: Path, evo_cfg: EvolutionConfig) -> Path:
 def main() -> None:
     evo_cfg, bt_cfg, cli = parse_args()
 
+    # Apply cache controls early so loaders honor them
+    try:
+        import os
+        if getattr(cli, "disable_align_cache", False):
+            os.environ["AE_DISABLE_ALIGN_CACHE"] = "1"
+        if getattr(cli, "align_cache_dir", None):
+            os.environ["AE_ALIGN_CACHE_DIR"] = str(cli.align_cache_dir)
+    except Exception:
+        pass
+
     # Print merged configuration and exit early (no logging, no side-effects)
     if getattr(cli, "print_config", False):
         from dataclasses import asdict
@@ -328,6 +343,20 @@ def main() -> None:
         try:
             sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
             meta["git_commit"] = sha
+        except Exception:
+            pass
+        # Best-effort: capture environment packages for reproducibility
+        try:
+            import pkgutil
+            import importlib.metadata as ilmd
+            pkgs = []
+            for dist in sorted(ilmd.distributions(), key=lambda d: d.metadata["Name"].lower() if d.metadata and d.metadata.get("Name") else ""):
+                try:
+                    pkgs.append({"name": dist.metadata["Name"], "version": dist.version})
+                except Exception:
+                    continue
+            if pkgs:
+                meta["packages"] = pkgs
         except Exception:
             pass
         with open(run_dir / "meta" / "run_metadata.json", "w") as fh:

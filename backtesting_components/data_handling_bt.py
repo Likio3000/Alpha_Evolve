@@ -6,19 +6,16 @@ from utils.data_loading_common import DataLoadError, align_and_prune
 from collections import OrderedDict
 import pandas as pd
 from utils.data_loading_common import load_symbol_dfs_from_dir
+from utils.features import compute_basic_features
 from utils.cache import compute_align_cache_key, load_aligned_bundle_from_cache, save_aligned_bundle_to_cache
 # numpy is used by pandas operations, but not directly called here often.
 
 def _rolling_features_individual_df_bt(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    for w in (5, 10, 20, 30):
-        df[f"ma{w}"] = df["close"].rolling(w, min_periods=1).mean()
-        df[f"vol{w}"] = df["close"].rolling(w, min_periods=1).std(ddof=0)
-    df["range"] = df["high"] - df["low"]
-    df["ret_1d"] = df["close"].pct_change().fillna(0.0)
-    df["range_rel"] = (df["high"] - df["low"]) / df["close"]
-    df["ret_fwd"] = df["close"].pct_change(periods=1).shift(-1)
-    return df
+    """Compatibility wrapper to use the shared feature builder.
+
+    ``ret_fwd`` is recomputed after alignment; we purposefully omit it here.
+    """
+    return compute_basic_features(df)
 
 def load_and_align_data_for_backtest(
     data_dir_param: str,
@@ -29,7 +26,7 @@ def load_and_align_data_for_backtest(
     # Cache key
     key = compute_align_cache_key(
         data_dir=data_dir_param,
-        feature_fn_name="_rolling_features_individual_df_bt",
+        feature_fn_name="compute_basic_features",
         strategy=strategy_param,
         min_common_points=min_common_points_param,
         eval_lag=eval_lag,

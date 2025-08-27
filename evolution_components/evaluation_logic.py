@@ -410,6 +410,17 @@ def evaluate_program(
         eval_lag = ctx.eval_lag
         sector_groups_vec = ctx.sector_ids.astype(float)
     else:
+        # Context-first migration: prefer explicit EvalContext.
+        # Fall back to module globals for compatibility (warn once at INFO).
+        try:
+            _warned = globals().get("_CTXLESS_WARNED", False)
+            if not _warned:
+                logging.getLogger(__name__).info(
+                    "evaluate_program called without EvalContext; falling back to globals."
+                )
+                globals()["_CTXLESS_WARNED"] = True
+        except Exception:
+            pass
         aligned_dfs = dh_module.get_aligned_dfs()
         common_time_index = dh_module.get_common_time_index()
         stock_symbols = dh_module.get_stock_symbols()

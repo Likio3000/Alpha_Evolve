@@ -13,6 +13,7 @@ from alpha_framework.alpha_framework_types import (
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
     SCALAR_FEATURE_NAMES,
 )
+from utils.features import compute_basic_features
 
 logger = logging.getLogger(__name__)
 
@@ -24,23 +25,20 @@ _N_STOCKS: Optional[int] = None
 _EVAL_LAG_CACHE: int = 1 # Default, will be set by initialize_data
 _FEATURE_CACHE: Dict[pd.Timestamp, Dict[str, np.ndarray]] = {}
 _DATA_DIAGNOSTICS: Optional[DataDiagnostics] = None
+_DEPRECATION_WARNED = False
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    for w in (5, 10, 20, 30):
-        df[f"ma{w}"] = df["close"].rolling(w, min_periods=1).mean()
-        df[f"vol{w}"] = df["close"].rolling(w, min_periods=1).std(ddof=0)
-    df["range"] = df["high"] - df["low"]
-    df["ret_1d"] = df["close"].pct_change().fillna(0.0)
-    df["range_rel"] = (df["high"] - df["low"]) / df["close"]
-    df["ret_fwd"] = df["close"].pct_change(periods=1).shift(-1) # Shift by -1 for ret_fwd
-    return df
+    """Compatibility wrapper that delegates to the shared feature builder.
+
+    ``ret_fwd`` is recomputed after alignment; we purposefully omit it here.
+    """
+    return compute_basic_features(df)
 
 def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_common_points_param: int, eval_lag: int) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
     # Try cache first
     key = compute_align_cache_key(
         data_dir=data_dir_param,
-        feature_fn_name="_rolling_features_individual_df",
+        feature_fn_name="compute_basic_features",
         strategy=strategy_param,
         min_common_points=min_common_points_param,
         eval_lag=eval_lag,
@@ -98,6 +96,11 @@ def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_l
             _FEATURE_CACHE[ts] = get_features_at_time(
                 ts, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec
             )
+        try:
+            n_buckets = int(len(np.unique(sector_groups_vec)))
+            logger.info("Sector buckets detected: %d (unknowns map to -1)", n_buckets)
+        except Exception:
+            pass
 
     logger.info(
         "Data initialized: %s symbols, %s common time steps.",
@@ -117,6 +120,15 @@ def get_data_diagnostics():
 
 
 def get_aligned_dfs() -> OrderedDictType[str, pd.DataFrame]:
+    global _DEPRECATION_WARNED
+    if not _DEPRECATION_WARNED:
+        try:
+            logger.info(
+                "[DEPRECATED] data_handling getters will be removed; prefer EvalContext (utils.context)."
+            )
+        except Exception:
+            pass
+        _DEPRECATION_WARNED = True
     if _ALIGNED_DFS is None:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     return _ALIGNED_DFS

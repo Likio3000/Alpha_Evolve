@@ -48,11 +48,8 @@ def _pool_init(data_dir: str, strategy: str, min_common_points: int, eval_lag: i
     global _WORKER_CTX
     try:
         # Precompute column matrices in each worker for vector features
-        try:
-            from alpha_framework.alpha_framework_types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN
-            cols = [c.replace("_t", "") for c in _VECN if c != "sector_id_vector"]
-        except Exception:
-            cols = None
+        # Avoid heavy precompute in workers to reduce init overhead and memory.
+        cols = None
         _WORKER_CTX = _mk(
             data_dir=data_dir,
             strategy=strategy,
@@ -264,13 +261,46 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             # Helper to choose selection score based on configuration
             def _sel_score(res: el_module.EvalResult) -> float:
                 sel = getattr(cfg, "selection_metric", "ramped")
-                if sel == "fixed":
+                base_score: float
+                # Auto strategy: ramped early, fixed after ramp completes
+                if sel == "auto":
+                    use_fixed = (ramp >= 0.999)
+                    if use_fixed:
+                        fs = getattr(res, "fitness_static", None)
+                        base_score = float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                    else:
+                        base_score = float(res.fitness)
+                elif sel == "fixed":
                     fs = getattr(res, "fitness_static", None)
-                    return float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
-                if sel == "ic":
-                    return float(res.mean_ic)
-                # default ramped fitness
-                return float(res.fitness)
+                    base_score = float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                elif sel == "ic":
+                    base_score = float(res.mean_ic)
+                elif sel == "phased":
+                    # Early phase: pure IC, mid: ramped, late: fixed
+                    if (gen < int(getattr(cfg, "ic_phase_gens", 0))):
+                        base_score = float(res.mean_ic)
+                    elif ramp < 0.999:
+                        base_score = float(res.fitness)
+                    else:
+                        fs = getattr(res, "fitness_static", None)
+                        base_score = float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                else:
+                    # default ramped fitness
+                    base_score = float(res.fitness)
+
+                # Optional novelty boost: reward low correlation w.r.t. HOF
+                nb_w = float(getattr(cfg, "novelty_boost_w", 0.0))
+                if nb_w > 0.0:
+                    try:
+                        proc = getattr(res, "processed_predictions", None)
+                        if proc is not None and proc.size > 0:
+                            flat = proc.ravel()
+                            mean_corr = hof_module.get_mean_corr_component_with_hof(flat)
+                            # Boost by (1 - corr); if HOF empty, mean_corr=0 → neutral boost
+                            base_score = base_score + nb_w * float(1.0 - mean_corr)
+                    except Exception:
+                        pass
+                return base_score
 
             # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1
             if (cfg.workers or 0) > 1:

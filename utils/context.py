@@ -22,7 +22,19 @@ class EvalContext:
 
 
 def make_eval_context_from_globals(dh_module) -> EvalContext:
-    """Build an EvalContext from the currently initialized evolution data_handling globals."""
+    """Build an EvalContext from the currently initialized evolution data_handling globals.
+
+    DEPRECATED: Prefer building contexts directly from disk via
+    ``make_eval_context_from_dir`` or from a prebuilt ``DataBundle`` using
+    ``make_eval_context_from_bundle``. This helper exists for back‑compat only.
+    """
+    try:
+        import logging
+        logging.getLogger(__name__).info(
+            "[DEPRECATED] make_eval_context_from_globals: prefer context from dir or bundle."
+        )
+    except Exception:
+        pass
     aligned = dh_module.get_aligned_dfs()
     symbols = dh_module.get_stock_symbols()
     common_index = dh_module.get_common_time_index()
@@ -32,6 +44,44 @@ def make_eval_context_from_globals(dh_module) -> EvalContext:
                         diagnostics=dh_module.get_data_diagnostics())
     sector_ids = dh_module.get_sector_groups(symbols)
     return EvalContext(bundle=bundle, sector_ids=sector_ids, eval_lag=eval_lag)
+
+
+def make_eval_context_from_bundle(
+    bundle: DataBundle,
+    *,
+    eval_lag: int,
+    dh_module,
+    sector_mapping: dict | None = None,
+    precompute_columns: List[str] | None = None,
+) -> EvalContext:
+    """Construct an EvalContext from an existing DataBundle.
+
+    Useful when composing multiple runs or for tests that already have aligned
+    data. Optionally precomputes column matrices and a timestamp→position map.
+    """
+    if sector_mapping is not None:
+        sector_ids = dh_module.get_sector_groups(bundle.symbols, mapping=sector_mapping)
+    else:
+        sector_ids = dh_module.get_sector_groups(bundle.symbols)
+
+    col_map = None
+    ts_pos = None
+    if precompute_columns:
+        T = len(bundle.common_index)
+        N = len(bundle.symbols)
+        ts_pos = {ts: i for i, ts in enumerate(bundle.common_index)}
+        col_map = {}
+        for col in precompute_columns:
+            mat = np.zeros((T, N), dtype=float)
+            for j, sym in enumerate(bundle.symbols):
+                try:
+                    series = bundle.aligned_dfs[sym][col].reindex(bundle.common_index)
+                    mat[:, j] = np.nan_to_num(series.values, nan=0.0, posinf=0.0, neginf=0.0)
+                except Exception:
+                    mat[:, j] = 0.0
+            col_map[col] = mat
+
+    return EvalContext(bundle=bundle, sector_ids=sector_ids, eval_lag=eval_lag, col_matrix_map=col_map, ts_pos=ts_pos)
 
 
 def make_eval_context_from_dir(

@@ -6,7 +6,7 @@ eval_lag = 1
 generations = 10
 hof_size = 20
 seed = 42
-sector_neutralize = true
+sector_neutralize = false
 
 [backtest]
 data_dir = "data_sp500"
@@ -20,4 +20,4 @@ scale = "zscore"
 long_short_n = 0
 annualization_factor = 252
 stop_loss_pct = 0.0
-sector_neutralize_positions = true
+sector_neutralize_positions = false
