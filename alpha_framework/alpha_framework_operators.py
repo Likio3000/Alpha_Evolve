@@ -3,7 +3,7 @@ from typing import Callable, Tuple
 import numpy as np
 
 # Imports from the types module
-from .alpha_framework_types import TypeId, OpSpec, OP_REGISTRY, SAFE_MAX
+from .alpha_framework_types import TypeId, OpSpec, OP_REGISTRY, SAFE_MAX, EPS
 
 ###############################################################################
 # 2 -- Primitive operators (and helpers)
@@ -43,6 +43,33 @@ def register_op(name: str, *, in_types: Tuple[TypeId, ...], out: TypeId,
     return _wrapper
 
 
+def _average_rank_ties_1d(x: np.ndarray) -> np.ndarray:
+    """Average-tie ranks [0..n-1] with stable sorting.
+
+    Returns float ranks with ties assigned the mean of their index ranges.
+    """
+    n = x.size
+    if n == 0:
+        return x.astype(float)
+    order = np.argsort(x, kind="mergesort")
+    ranks = np.empty(n, dtype=float)
+    xs = x[order]
+    boundaries = np.empty(n + 1, dtype=bool)
+    boundaries[0] = True
+    if n > 1:
+        boundaries[1:-1] = xs[1:] != xs[:-1]
+    else:
+        boundaries[1:-1] = False
+    boundaries[-1] = True
+    idx = np.flatnonzero(boundaries)
+    for i in range(len(idx) - 1):
+        start = idx[i]
+        end = idx[i + 1]
+        avg_rank = 0.5 * (start + end - 1)
+        ranks[order[start:end]] = avg_rank
+    return ranks
+
+
 @register_op("add", in_types=("scalar", "scalar"), out="scalar", is_elementwise=True)
 def _add(a, b): return a + b
 
@@ -61,7 +88,7 @@ def _div(a, b):
 
     res = np.divide(a, b_arr,
                     out=np.zeros_like(out_shape_ref, dtype=float) if hasattr(out_shape_ref, 'shape') else 0.0,
-                    where=np.abs(b_arr) > 1e-9)
+                    where=np.abs(b_arr) > EPS)
     if np.isscalar(a) and np.isscalar(b):
         return res.item() if isinstance(res, np.ndarray) else res
     return res
@@ -81,7 +108,7 @@ def _abs(a): return np.abs(a)
 
 @register_op("log", in_types=("scalar",), out="scalar", is_elementwise=True)
 def _log(a):
-    return np.log(np.maximum(np.asarray(a), 1e-9))
+    return np.log(np.maximum(np.asarray(a), EPS))
 
 @register_op("sqrt", in_types=("scalar",), out="scalar", is_elementwise=True)
 def _sqrt(a): return np.sqrt(np.maximum(np.asarray(a), 0))
@@ -142,8 +169,8 @@ def _power(a, b):
         if b_val == -1:
             return _clip(_div(1.0, a_arr))  # Uses _div from this module
 
-        is_a_zero = np.all(np.abs(a_arr) < 1e-9) if isinstance(a_arr, np.ndarray) \
-                    else abs(a_arr) < 1e-9
+        is_a_zero = np.all(np.abs(a_arr) < EPS) if isinstance(a_arr, np.ndarray) \
+                    else abs(a_arr) < EPS
         if is_a_zero:
             if b_val > 0:
                 return np.zeros_like(a_arr, dtype=float)
@@ -164,7 +191,7 @@ def _power(a, b):
         b_arr = b_val
         result = np.full_like(a_arr, np.nan, dtype=float)
 
-        mask0 = np.abs(a_arr) < 1e-9
+        mask0 = np.abs(a_arr) < EPS
         result[mask0 & (b_arr > 0)]  = 0.0
         result[mask0 & (b_arr == 0)] = 1.0
         zneg = mask0 & (b_arr < 0)
@@ -208,9 +235,7 @@ def _cs_std(v): return float(np.std(v, ddof=0)) if v.size > 1 else 0.0
 def _cs_rank(v):
     if v.size <= 1:
         return np.zeros_like(v)
-    temp = v.argsort()
-    ranks = np.empty_like(temp, dtype=float)
-    ranks[temp] = np.arange(len(v))
+    ranks = _average_rank_ties_1d(v.astype(float, copy=False))
     return (ranks / (len(v) - 1 + 1e-9)) * 2.0 - 1.0
 
 @register_op("cs_demean", in_types=("vector",), out="vector")
@@ -220,31 +245,52 @@ def _cs_demean(v): return v - (_cs_mean(v) if v.size > 0 else 0.0)
 def _relation_rank(v, groups):
     v_arr = np.asarray(v, dtype=float)
     grp_arr = np.asarray(groups, dtype=int)
-    result = np.zeros_like(v_arr, dtype=float)
-    for g in np.unique(grp_arr):
-        mask = grp_arr == g
-        vals = v_arr[mask]
-        if vals.size <= 1:
-            result[mask] = 0.0
+    n = v_arr.size
+    out = np.zeros_like(v_arr, dtype=float)
+    if n <= 1:
+        return out
+    # Process per-group using a single stable sort to improve cache locality
+    order = np.lexsort((v_arr, grp_arr))  # primary: grp, secondary: value
+    gs = grp_arr[order]
+    xs = v_arr[order]
+    # group boundaries
+    boundaries = np.empty(n + 1, dtype=bool)
+    boundaries[0] = True
+    if n > 1:
+        boundaries[1:-1] = gs[1:] != gs[:-1]
+    else:
+        boundaries[1:-1] = False
+    boundaries[-1] = True
+    idx = np.flatnonzero(boundaries)
+    tmp = np.empty(n, dtype=float)
+    for i in range(len(idx) - 1):
+        start = idx[i]
+        end = idx[i + 1]
+        if end - start <= 1:
+            tmp[start:end] = 0.0
             continue
-        order = vals.argsort()
-        ranks = np.empty_like(order, dtype=float)
-        ranks[order] = np.arange(vals.size)
-        result[mask] = (ranks / (vals.size - 1 + 1e-9)) * 2.0 - 1.0
-    return result
+        ranks = _average_rank_ties_1d(xs[start:end])
+        tmp[start:end] = (ranks / (float(end - start) - 1.0 + EPS)) * 2.0 - 1.0
+    out[order] = tmp
+    return out
 
 @register_op("relation_demean", in_types=("vector", "vector"), out="vector")
 def _relation_demean(v, groups):
     v_arr = np.asarray(v, dtype=float)
     grp_arr = np.asarray(groups, dtype=int)
-    result = np.zeros_like(v_arr, dtype=float)
-    for g in np.unique(grp_arr):
-        mask = grp_arr == g
-        if not np.any(mask):
-            continue
-        group_mean = float(np.mean(v_arr[mask]))
-        result[mask] = v_arr[mask] - group_mean
-    return result
+    out = np.empty_like(v_arr, dtype=float)
+    # Map group ids to 0..G-1 for compact accumulation
+    uniq, inv = np.unique(grp_arr, return_inverse=True)
+    g = inv
+    G = uniq.size
+    sums = np.zeros(G, dtype=float)
+    counts = np.zeros(G, dtype=float)
+    np.add.at(sums, g, v_arr)
+    np.add.at(counts, g, 1.0)
+    means = np.zeros(G, dtype=float)
+    np.divide(sums, counts, out=means, where=counts > 0)
+    out = v_arr - means[g]
+    return out
 
 @register_op("vec_add_scalar", in_types=("vector", "scalar"), out="vector")
 def _vec_add_scalar(v, s): return v + s
@@ -257,7 +303,7 @@ def _vec_mul_scalar(v, s): return v * s
 @safe_op  # safe_op will handle _clean_num for inputs
 def _vec_div_scalar(v, s):
     """Divide vector ``v`` by scalar ``s`` while avoiding zero denominators."""
-    safe_sign = np.sign(s) if abs(s) > 1e-9 else 1.0
+    safe_sign = np.sign(s) if abs(s) > EPS else 1.0
     denom = safe_sign * max(abs(s), 1e-3)
     return v / denom
 

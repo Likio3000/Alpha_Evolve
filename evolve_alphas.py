@@ -82,6 +82,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         sharpe_proxy_weight=cfg.sharpe_proxy_w,
         ic_std_penalty_weight=cfg.ic_std_penalty_w,
         turnover_penalty_weight=cfg.turnover_penalty_w,
+        ic_tstat_weight=cfg.ic_tstat_w,
         use_train_val_splits=cfg.use_train_val_splits,
         train_points=cfg.train_points,
         val_points=cfg.val_points,
@@ -93,6 +94,9 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         fixed_ic_std_penalty_weight=cfg.ic_std_penalty_w,
         fixed_turnover_penalty_weight=cfg.turnover_penalty_w,
         fixed_corr_penalty_weight=cfg.corr_penalty_w,
+        fixed_ic_tstat_weight=cfg.ic_tstat_w,
+        hof_corr_mode=getattr(cfg, "hof_corr_mode", "flat"),
+        temporal_decay_half_life=getattr(cfg, "temporal_decay_half_life", 0.0),
     )
     initialize_hof(
         max_size=cfg.hof_size,
@@ -229,17 +233,21 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     sharpe_proxy_weight=cfg.sharpe_proxy_w * ramp,
                     ic_std_penalty_weight=cfg.ic_std_penalty_w * ramp,
                     turnover_penalty_weight=cfg.turnover_penalty_w * ramp,
+                    ic_tstat_weight=cfg.ic_tstat_w * ramp,
                     use_train_val_splits=cfg.use_train_val_splits,
                     train_points=cfg.train_points,
                     val_points=cfg.val_points,
                     sector_neutralize=cfg.sector_neutralize,
                     winsor_p=cfg.winsor_p,
+                    hof_corr_mode=getattr(cfg, "hof_corr_mode", "flat"),
+                    temporal_decay_half_life=getattr(cfg, "temporal_decay_half_life", 0.0),
                     parsimony_jitter_pct=cfg.parsimony_jitter_pct,
                     # Fixed weights stay at targets
                     fixed_sharpe_proxy_weight=cfg.sharpe_proxy_w,
                     fixed_ic_std_penalty_weight=cfg.ic_std_penalty_w,
                     fixed_turnover_penalty_weight=cfg.turnover_penalty_w,
                     fixed_corr_penalty_weight=cfg.corr_penalty_w,
+                    fixed_ic_tstat_weight=cfg.ic_tstat_w,
                 )
             except Exception:
                 pass
@@ -298,6 +306,29 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             mean_corr = hof_module.get_mean_corr_component_with_hof(flat)
                             # Boost by (1 - corr); if HOF empty, mean_corr=0 → neutral boost
                             base_score = base_score + nb_w * float(1.0 - mean_corr)
+                    except Exception:
+                        pass
+                # Optional structural novelty boost: reward opcode diversity vs HOF
+                ns_w = float(getattr(cfg, "novelty_struct_w", 0.0))
+                if ns_w > 0.0:
+                    try:
+                        # Candidate opcode set
+                        ops = [*getattr(pop[i], 'setup', []), *getattr(pop[i], 'predict_ops', []), *getattr(pop[i], 'update_ops', [])]
+                        cand_set = {getattr(o, 'opcode', '') for o in ops if hasattr(o, 'opcode')}
+                        hof_sets = hof_module.get_hof_opcode_sets(None)
+                        if hof_sets:
+                            # Jaccard distance vs closest HOF program
+                            dists = []
+                            for s in hof_sets:
+                                if not s and not cand_set:
+                                    dists.append(0.0)
+                                    continue
+                                inter = len(cand_set.intersection(s))
+                                union = max(1, len(cand_set.union(s)))
+                                jaccard = inter / union
+                                dists.append(1.0 - jaccard)
+                            novelty_struct = max(0.0, float(max(dists)))
+                            base_score = base_score + ns_w * novelty_struct
                     except Exception:
                         pass
                 return base_score
@@ -565,8 +596,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 ranks = np.empty(len(valid_scores), dtype=float)
                 ranks[order] = np.arange(len(valid_scores))
                 rank_norm = ranks / max(1, len(valid_scores) - 1)
-                # Temperature decreases with ramp to increase pressure over time
-                beta = 2.0 * ramp  # 0..2
+                # Temperature schedule: floor + (target - floor) * ramp
+                beta_floor = float(getattr(cfg, 'rank_softmax_beta_floor', 0.0))
+                beta_target = float(getattr(cfg, 'rank_softmax_beta_target', 2.0))
+                beta = beta_floor + (beta_target - beta_floor) * float(ramp)
                 # Use exp(beta * rank_norm) so top ranks dominate as beta grows
                 w = np.exp(beta * rank_norm)
                 # Guard against inf/nan

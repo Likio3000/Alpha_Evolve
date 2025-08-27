@@ -20,6 +20,7 @@ SCALAR_FEATURE_NAMES = ["const_1", "const_neg_1"]
 FINAL_PREDICTION_VECTOR_NAME = "s1_predictions_vector"
 
 SAFE_MAX = 1e6  # Moved here as it's a general constant for safe operations
+EPS = 1e-9      # Unified small epsilon for numeric guards
 
 @dataclass
 class OpSpec:

@@ -86,10 +86,14 @@ class EvolutionConfig(DataConfig):
     sharpe_proxy_w: float = 0.0
     ic_std_penalty_w: float = 0.10
     turnover_penalty_w: float = 0.05
+    ic_tstat_w: float = 0.0                 # weight for IC t-stat component
     use_train_val_splits: bool = True
     train_points: int = 840
     val_points: int = 360
     keep_dupes_in_hof: bool = False
+    # Correlation penalty mode: 'flat' flattens time-series before comparing
+    # to HOF; 'per_bar' averages per-bar Spearman correlations over time.
+    hof_corr_mode: str = "flat"
 
     # ops variance controls
     # Introduce deterministic jitter to the parsimony penalty per program
@@ -107,6 +111,10 @@ class EvolutionConfig(DataConfig):
     # Optional preprocessing tweaks
     sector_neutralize: bool = True       # Demean positions by sector before IC
     winsor_p: float = 0.02               # Tail prob for 'winsor' scale
+    # When using train/val splits, how to combine metrics: 'equal' or 'by_points'
+    split_weighting: str = "equal"
+    # Exponential temporal decay half-life (bars). 0 disables decay.
+    temporal_decay_half_life: float = 0.0
 
     # evaluation cache
     eval_cache_size: int = 128
@@ -128,8 +136,13 @@ class EvolutionConfig(DataConfig):
     selection_metric: str = "ramped"
     # optional: boost selection for novelty against HOF (0.0 disables)
     novelty_boost_w: float = 0.0
+    # Structural novelty bonus: boost selection by structural distance vs HOF
+    novelty_struct_w: float = 0.0
     # optional: phased selection – use pure IC for the first N generations
     ic_phase_gens: int = 0
+    # Rank-based tournament weighting temperature (softmax beta)
+    rank_softmax_beta_target: float = 2.0  # final beta when ramp completes
+    rank_softmax_beta_floor: float = 0.0   # starting beta at ramp=0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,6 +154,7 @@ class BacktestConfig(DataConfig):
     fee: float = 1.0                      # round-trip commission (bps)
     hold: int = 1                         # holding period (bars)
     scale: str = "zscore"
+    winsor_p: float = 0.02               # Tail prob for 'winsor' scale
     long_short_n: int = 0                 # 0 → use all symbols
     # For 4 hour bars on 24/7 crypto data use 365 days × 6 bars/day
     annualization_factor: float = 365 * 6

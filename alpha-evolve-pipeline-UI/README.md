@@ -4,11 +4,25 @@ This contains everything you need to run your app locally.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+Prerequisites: Node.js for the UI; Python env for the backend (see project README).
 
+1) Install UI deps and run the dev server
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```
+npm install
+npm run dev
+```
+
+2) Start the Iterative Dashboard backend (for live mode)
+
+```
+uv run scripts/iterative_dashboard_server.py
+```
+
+3) Open the UI in your browser (Vite default: http://localhost:5173)
+
+Use the mode toggle at the top to switch among:
+
+- Pipeline: Generate a `run_pipeline.py` command.
+- Iterative: Generate a `scripts/auto_improve.py` command with passthrough flags.
+- Dashboard: Launch and monitor the iterative improver with live updates, best Sharpe sparkline, current candidate info, and last run summary.

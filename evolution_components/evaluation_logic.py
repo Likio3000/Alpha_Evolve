@@ -63,11 +63,15 @@ _EVAL_CONFIG = {
     "sharpe_proxy_weight": 0.0,
     "ic_std_penalty_weight": 0.0,
     "turnover_penalty_weight": 0.0,
+    "ic_tstat_weight": 0.0,
     # Fixed weights for comparability (no ramping)
     "fixed_sharpe_proxy_weight": 0.0,
     "fixed_ic_std_penalty_weight": 0.0,
     "fixed_turnover_penalty_weight": 0.0,
     "fixed_corr_penalty_weight": 0.0,
+    "fixed_ic_tstat_weight": 0.0,
+    "hof_corr_mode": "flat",   # 'flat' (default) or 'per_bar'
+    "temporal_decay_half_life": 0.0,
     "use_train_val_splits": False,
     "train_points": 0,
     "val_points": 0,
@@ -124,6 +128,7 @@ def configure_evaluation(
     sharpe_proxy_weight: float = 0.0,
     ic_std_penalty_weight: float = 0.0,
     turnover_penalty_weight: float = 0.0,
+    ic_tstat_weight: float = 0.0,
     use_train_val_splits: bool = False,
     train_points: int = 0,
     val_points: int = 0,
@@ -137,6 +142,9 @@ def configure_evaluation(
     fixed_ic_std_penalty_weight: Optional[float] = None,
     fixed_turnover_penalty_weight: Optional[float] = None,
     fixed_corr_penalty_weight: Optional[float] = None,
+    fixed_ic_tstat_weight: Optional[float] = None,
+    hof_corr_mode: str | None = None,
+    temporal_decay_half_life: float | None = None,
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -153,6 +161,7 @@ def configure_evaluation(
     _EVAL_CONFIG["sharpe_proxy_weight"] = sharpe_proxy_weight
     _EVAL_CONFIG["ic_std_penalty_weight"] = ic_std_penalty_weight
     _EVAL_CONFIG["turnover_penalty_weight"] = turnover_penalty_weight
+    _EVAL_CONFIG["ic_tstat_weight"] = ic_tstat_weight
     _EVAL_CONFIG["use_train_val_splits"] = use_train_val_splits
     _EVAL_CONFIG["train_points"] = int(train_points)
     _EVAL_CONFIG["val_points"] = int(val_points)
@@ -169,6 +178,13 @@ def configure_evaluation(
     _EVAL_CONFIG["fixed_corr_penalty_weight"] = (
         float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0)) if fixed_corr_penalty_weight is None else float(fixed_corr_penalty_weight)
     )
+    _EVAL_CONFIG["fixed_ic_tstat_weight"] = (
+        float(ic_tstat_weight) if fixed_ic_tstat_weight is None else float(fixed_ic_tstat_weight)
+    )
+    if hof_corr_mode is not None:
+        _EVAL_CONFIG["hof_corr_mode"] = str(hof_corr_mode)
+    if temporal_decay_half_life is not None:
+        _EVAL_CONFIG["temporal_decay_half_life"] = float(temporal_decay_half_life)
     # Clamp jitter into [0, 1] and store
     try:
         pj = float(parsimony_jitter_pct)
@@ -200,21 +216,21 @@ def initialize_evaluation_cache(max_size: int = 128):
 def _safe_corr_eval(a: np.ndarray, b: np.ndarray) -> float:  # Specific to evaluation logic's needs
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
         return 0.0
-    # Check for near-constant arrays robustly
-    std_a = np.std(a, ddof=0)
-    std_b = np.std(b, ddof=0)
-    if std_a < 1e-9 or std_b < 1e-9:
-        return 0.0
     if len(a) != len(b) or len(a) < 2:
         return 0.0
-    
-    with np.errstate(invalid='ignore'): # Suppress "invalid value encountered in true_divide"
-        corr_matrix = np.corrcoef(a, b)
-    
-    if np.isnan(corr_matrix[0, 1]):
-        # This can happen if, despite std > 1e-9, one array is effectively constant for corrcoef
+    # Center and compute via dot product for speed/stability
+    a = a.astype(float, copy=False)
+    b = b.astype(float, copy=False)
+    a = a - np.mean(a)
+    b = b - np.mean(b)
+    denom = np.sqrt(np.sum(a * a)) * np.sqrt(np.sum(b * b))
+    if not np.isfinite(denom) or denom < 1e-9:
         return 0.0
-    return float(corr_matrix[0, 1])
+    corr = float(np.dot(a, b) / denom)
+    # Guard tiny numerical drift
+    if not np.isfinite(corr):
+        return 0.0
+    return max(-1.0, min(1.0, corr))
 
 
 def _uses_feature_vector_check(prog: AlphaProgram) -> bool:
@@ -324,21 +340,22 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
 def _demean_by_groups(x: np.ndarray, groups: np.ndarray) -> np.ndarray:
     """Demean vector x within integer group IDs, then re-center and clip.
 
-    Groups with ID < 0 are treated as a separate bucket. If a group
-    has size 0 (shouldn't happen) it is skipped. Returns a vector of
-    same shape.
+    Vectorized implementation using indexed accumulation for speed.
     """
     if x.size == 0:
         return x
-    g = groups.astype(int, copy=False)
-    out = x.copy()
-    # unique groups
-    uniq = np.unique(g)
-    for gid in uniq:
-        mask = g == gid
-        if not np.any(mask):
-            continue
-        out[mask] = out[mask] - np.mean(out[mask])
+    g_raw = groups.astype(int, copy=False)
+    # Compact group ids to 0..G-1
+    uniq, inv = np.unique(g_raw, return_inverse=True)
+    g = inv
+    G = uniq.size
+    sums = np.zeros(G, dtype=float)
+    counts = np.zeros(G, dtype=float)
+    np.add.at(sums, g, x)
+    np.add.at(counts, g, 1.0)
+    means = np.zeros(G, dtype=float)
+    np.divide(sums, counts, out=means, where=counts > 0)
+    out = x - means[g]
     # Re-center overall and clip to keep parity with scaling
     out = out - np.mean(out)
     return np.clip(out, -1, 1)
@@ -628,8 +645,23 @@ def evaluate_program(
     use_splits = bool(_EVAL_CONFIG.get("use_train_val_splits", False))
     t_points = int(_EVAL_CONFIG.get("train_points", 0))
     v_points = int(_EVAL_CONFIG.get("val_points", 0))
+    split_weighting = str(_EVAL_CONFIG.get("split_weighting", "equal")) if _EVAL_CONFIG.get("split_weighting") is not None else "equal"
 
-    mean_daily_ic = float(np.mean(daily_ic_values))
+    # Optional temporal decay weighting for mean IC (recent bars matter more)
+    def _decay_weights(T: int, half_life: float) -> np.ndarray:
+        if T <= 0 or half_life <= 0.0:
+            return np.ones(T, dtype=float)
+        ages = np.arange(T-1, -1, -1, dtype=float)  # 0 for newest bar
+        return 0.5 ** (ages / float(half_life))
+
+    hl = float(_EVAL_CONFIG.get("temporal_decay_half_life", 0.0) or 0.0)
+    if not use_splits and hl > 0.0:
+        T = len(daily_ic_values)
+        w = _decay_weights(T, hl)
+        ws = np.sum(w) if T > 0 else 1.0
+        mean_daily_ic = float(np.sum(w * np.array(daily_ic_values)) / (ws if ws > 0 else 1.0))
+    else:
+        mean_daily_ic = float(np.mean(daily_ic_values))
     mean_pnl = pnl_sum / num_evaluation_steps
     var_pnl = pnl_sq_sum / num_evaluation_steps - mean_pnl ** 2
     std_pnl = var_pnl ** 0.5 if var_pnl > 0 else 0.0
@@ -640,23 +672,64 @@ def evaluate_program(
     if use_splits and t_points > 0 and v_points > 0 and (t_points + v_points) <= total_steps:
         tr = slice(0, t_points)
         va = slice(t_points, t_points + v_points)
-        ic_tr = float(np.mean(daily_ic_values[tr])) if t_points > 0 else 0.0
-        ic_va = float(np.mean(daily_ic_values[va])) if v_points > 0 else 0.0
+        if hl > 0.0:
+            arr_tr = np.array(daily_ic_values[tr], dtype=float)
+            arr_va = np.array(daily_ic_values[va], dtype=float)
+            w_tr = _decay_weights(arr_tr.size, hl)
+            w_va = _decay_weights(arr_va.size, hl)
+            ic_tr = float(np.sum(w_tr * arr_tr) / (np.sum(w_tr) if np.sum(w_tr) > 0 else 1.0)) if t_points > 0 else 0.0
+            ic_va = float(np.sum(w_va * arr_va) / (np.sum(w_va) if np.sum(w_va) > 0 else 1.0)) if v_points > 0 else 0.0
+        else:
+            ic_tr = float(np.mean(daily_ic_values[tr])) if t_points > 0 else 0.0
+            ic_va = float(np.mean(daily_ic_values[va])) if v_points > 0 else 0.0
         ic_std_tr = float(np.std(daily_ic_values[tr], ddof=0)) if t_points > 1 else 0.0
         ic_std_va = float(np.std(daily_ic_values[va], ddof=0)) if v_points > 1 else 0.0
 
         pos_tr = _neutralize(full_processed_predictions_matrix[tr])
         pos_va = _neutralize(full_processed_predictions_matrix[va])
-        turn_tr = float(np.mean(np.sum(np.abs(np.diff(pos_tr, axis=0)), axis=1)/2.0)) if pos_tr.shape[0] > 1 else 0.0
-        turn_va = float(np.mean(np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1)/2.0)) if pos_va.shape[0] > 1 else 0.0
+        if pos_tr.shape[0] > 1:
+            per_step_tr = np.sum(np.abs(np.diff(pos_tr, axis=0)), axis=1)/2.0
+            if hl > 0.0:
+                wt_tr = _decay_weights(per_step_tr.size + 1, hl)[1:]
+                turn_tr = float(np.sum(wt_tr * per_step_tr) / (np.sum(wt_tr) if np.sum(wt_tr) > 0 else 1.0))
+            else:
+                turn_tr = float(np.mean(per_step_tr))
+        else:
+            turn_tr = 0.0
+        if pos_va.shape[0] > 1:
+            per_step_va = np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1)/2.0
+            if hl > 0.0:
+                wt_va = _decay_weights(per_step_va.size + 1, hl)[1:]
+                turn_va = float(np.sum(wt_va * per_step_va) / (np.sum(wt_va) if np.sum(wt_va) > 0 else 1.0))
+            else:
+                turn_va = float(np.mean(per_step_va))
+        else:
+            turn_va = 0.0
 
-        mean_daily_ic = 0.5 * (ic_tr + ic_va)
-        ic_std = 0.5 * (ic_std_tr + ic_std_va)
-        turnover_proxy = 0.5 * (turn_tr + turn_va)
+        if split_weighting == "by_points":
+            w_tr = float(t_points)
+            w_va = float(v_points)
+            w_sum = max(1.0, w_tr + w_va)
+            mean_daily_ic = (w_tr * ic_tr + w_va * ic_va) / w_sum
+            ic_std = (w_tr * ic_std_tr + w_va * ic_std_va) / w_sum
+            turnover_proxy = (w_tr * turn_tr + w_va * turn_va) / w_sum
+        else:
+            mean_daily_ic = 0.5 * (ic_tr + ic_va)
+            ic_std = 0.5 * (ic_std_tr + ic_std_va)
+            turnover_proxy = 0.5 * (turn_tr + turn_va)
         processed_for_hof = full_processed_predictions_matrix[va]
     else:
         pos_full = _neutralize(full_processed_predictions_matrix)
-        turnover_proxy = float(np.mean(np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1)/2.0)) if pos_full.shape[0] > 1 else 0.0
+        if pos_full.shape[0] > 1:
+            per_step_turn = np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1)/2.0
+            if hl > 0.0 and not use_splits:
+                wt = _decay_weights(per_step_turn.size + 1, hl)[1:]
+                wts = float(np.sum(wt))
+                turnover_proxy = float(np.sum(wt * per_step_turn) / (wts if wts > 0 else 1.0))
+            else:
+                turnover_proxy = float(np.mean(per_step_turn))
+        else:
+            turnover_proxy = 0.0
         processed_for_hof = full_processed_predictions_matrix
 
     # Linear parsimony penalty to match expected tests: factor * (size / max_ops)
@@ -680,12 +753,35 @@ def evaluate_program(
         # Scale to [-pj, +pj]
         jitter_factor = 1.0 + pj * (2.0 * u - 1.0)
         parsimony_penalty *= jitter_factor
+    # IC t-statistic component (optional)
+    ic_tstat = 0.0
+    try:
+        if daily_ic_values:
+            arr_ic = np.array(daily_ic_values, dtype=float)
+            if not use_splits and hl > 0.0:
+                w = _decay_weights(arr_ic.size, hl)
+                mu_w = float(np.sum(w * arr_ic) / (np.sum(w) if np.sum(w) > 0 else 1.0))
+                # Kish effective sample size for weighted mean
+                wsum = float(np.sum(w))
+                w2sum = float(np.sum(w * w))
+                neff = wsum * wsum / (w2sum if w2sum > 0 else 1.0)
+                s = float(np.std(arr_ic, ddof=0))
+                ic_tstat = float(mu_w / (s / np.sqrt(max(1.0, neff)))) if s > 1e-12 else 0.0
+            else:
+                mu = float(np.mean(arr_ic))
+                s = float(np.std(arr_ic, ddof=0))
+                n = float(arr_ic.size)
+                ic_tstat = float(mu / (s / np.sqrt(n))) if s > 1e-12 and n > 1 else 0.0
+    except Exception:
+        ic_tstat = 0.0
+
     score = (
         mean_daily_ic
         + _EVAL_CONFIG.get("sharpe_proxy_weight", 0.0) * sharpe_proxy
         - _EVAL_CONFIG.get("ic_std_penalty_weight", 0.0) * ic_std
         - _EVAL_CONFIG.get("turnover_penalty_weight", 0.0) * turnover_proxy
         - parsimony_penalty
+        + _EVAL_CONFIG.get("ic_tstat_weight", 0.0) * ic_tstat
     )
     correlation_penalty = 0.0
 
@@ -805,7 +901,11 @@ def evaluate_program(
 
     # HOF correlation penalty (uses processed predictions)
     if score > -float('inf') and processed_for_hof.size > 0:
-        correlation_penalty = hof_module.get_correlation_penalty_with_hof(processed_for_hof.flatten())
+        mode = str(_EVAL_CONFIG.get("hof_corr_mode", "flat"))
+        if mode == "per_bar" and processed_for_hof.ndim == 2 and processed_for_hof.shape[0] > 0:
+            correlation_penalty = hof_module.get_correlation_penalty_per_bar(processed_for_hof)
+        else:
+            correlation_penalty = hof_module.get_correlation_penalty_with_hof(processed_for_hof.flatten())
         if correlation_penalty > 0:
             logger.debug(
                 "Correlation penalty for %s: %.6f",
@@ -832,7 +932,11 @@ def evaluate_program(
             fixed_turnover_w = float(_EVAL_CONFIG.get("fixed_turnover_penalty_weight", 0.0))
             fixed_corr_w = float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0))
             # Use HOF helper at provided weight (cutoff stays as configured in HOF)
-            corr_pen_fixed = hof_module.get_correlation_penalty_with_weight(processed_for_hof.flatten(), weight=fixed_corr_w)
+            mode = str(_EVAL_CONFIG.get("hof_corr_mode", "flat"))
+            if mode == "per_bar" and processed_for_hof.ndim == 2 and processed_for_hof.shape[0] > 0:
+                corr_pen_fixed = hof_module.get_correlation_penalty_with_weight_per_bar(processed_for_hof, weight=fixed_corr_w)
+            else:
+                corr_pen_fixed = hof_module.get_correlation_penalty_with_weight(processed_for_hof.flatten(), weight=fixed_corr_w)
             score_fixed = (
                 mean_daily_ic
                 + fixed_sharpe_w * sharpe_proxy
@@ -841,6 +945,10 @@ def evaluate_program(
                 - parsimony_penalty
                 - corr_pen_fixed
             )
+            # Include IC t-stat in fixed fitness at configured fixed weight
+            fixed_ic_t_w = float(_EVAL_CONFIG.get("fixed_ic_tstat_weight", 0.0))
+            if fixed_ic_t_w != 0.0:
+                score_fixed += fixed_ic_t_w * ic_tstat
             result.fitness_static = float(score_fixed)
     except Exception:
         # Keep fitness_static as None on any failure

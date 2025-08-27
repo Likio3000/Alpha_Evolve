@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 # For cleaner design, these should ideally be passed to backtest_cross_sectional_alpha if they can vary.
 
 # Helper function to scale signals
-def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str) -> np.ndarray:
+def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str, winsor_p: float | None = None) -> np.ndarray:
     if raw_signal_vector.size == 0:
         return raw_signal_vector
     
@@ -23,13 +23,28 @@ def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str) 
     if method == "sign":
         scaled = np.sign(clean_signal_vector)
     elif method == "rank":
-        if clean_signal_vector.size <= 1:
+        # Tie-aware average ranks mapped to [-1, 1]
+        n = clean_signal_vector.size
+        if n <= 1:
             scaled = np.zeros_like(clean_signal_vector)
         else:
-            temp = clean_signal_vector.argsort()
-            ranks = np.empty_like(temp, dtype=float)
-            ranks[temp] = np.arange(len(clean_signal_vector))
-            scaled = (ranks / (len(clean_signal_vector) - 1 + 1e-9)) * 2.0 - 1.0
+            order = np.argsort(clean_signal_vector, kind="mergesort")
+            ranks = np.empty(n, dtype=float)
+            xs = clean_signal_vector[order]
+            boundaries = np.empty(n + 1, dtype=bool)
+            boundaries[0] = True
+            if n > 1:
+                boundaries[1:-1] = xs[1:] != xs[:-1]
+            else:
+                boundaries[1:-1] = False
+            boundaries[-1] = True
+            idx = np.flatnonzero(boundaries)
+            for i in range(len(idx) - 1):
+                start = idx[i]
+                end = idx[i + 1]
+                avg_rank = 0.5 * (start + end - 1)
+                ranks[order[start:end]] = avg_rank
+            scaled = (ranks / (n - 1 + 1e-9)) * 2.0 - 1.0
     elif method == "madz" or method == "mad":
         med = np.nanmedian(clean_signal_vector)
         mad = np.nanmedian(np.abs(clean_signal_vector - med))
@@ -39,7 +54,8 @@ def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str) 
         else:
             scaled = (clean_signal_vector - med) / scale
     elif method == "winsor":
-        p = 0.02
+        # Use configured tail probability if provided; clamp to [0, 0.2]
+        p = 0.02 if winsor_p is None else float(min(max(winsor_p, 0.0), 0.2))
         lo = np.nanquantile(clean_signal_vector, p)
         hi = np.nanquantile(clean_signal_vector, 1.0 - p)
         w = np.clip(clean_signal_vector, lo, hi)
@@ -89,8 +105,9 @@ def backtest_cross_sectional_alpha(
     initial_state_vars_config: Dict[str, str], # e.g. {"prev_s1_vec": "vector"}
     scalar_feature_names: List[str], # Pass these from calling script
     cross_sectional_feature_vector_names: List[str], # Pass these
+    winsor_p: float | None = None,
     debug_prints: bool = False, # For optional debug prints
-    annualization_factor: float = (365 * 6), # Default for 4H bars, 365 days (crypto)
+    annualization_factor: float | None = (365 * 6), # Default for 4H bars; if None, infer from index
     stop_loss_pct: float = 0.0,
     # Optional risk controls
     sector_neutralize_positions: bool = False,
@@ -116,6 +133,7 @@ def backtest_cross_sectional_alpha(
 
     # sector ids are constant across time; compute once for efficiency
     sector_groups_vec = get_sector_groups(stock_symbols).astype(float)
+    sector_groups_vec_int = sector_groups_vec.astype(int)
     if np.all(sector_groups_vec == 0):
         raise RuntimeError("sector_id_vector is all zeros – check data handling")
 
@@ -149,7 +167,7 @@ def backtest_cross_sectional_alpha(
 
     target_positions_matrix = np.zeros_like(signal_matrix)
     for t in range(signal_matrix.shape[0]):
-        scaled_signal_t = _scale_signal_cross_sectionally(signal_matrix[t, :], scale_method)
+        scaled_signal_t = _scale_signal_cross_sectionally(signal_matrix[t, :], scale_method, winsor_p)
         if long_short_n > 0:
             k = min(long_short_n, n_stocks // 2)
             order = np.argsort(scaled_signal_t)
@@ -163,10 +181,9 @@ def backtest_cross_sectional_alpha(
         centered_signal_t = scaled_signal_t - np.mean(scaled_signal_t)
         neutralized_signal_t = centered_signal_t
         if sector_neutralize_positions:
-            # Demean within sector buckets
-            groups = get_sector_groups(stock_symbols).astype(int)
-            for gid in np.unique(groups):
-                mask = groups == gid
+            # Demean within sector buckets using precomputed groups
+            for gid in np.unique(sector_groups_vec_int):
+                mask = sector_groups_vec_int == gid
                 if np.any(mask):
                     neutralized_signal_t[mask] -= np.mean(neutralized_signal_t[mask])
         # Final L1 neutralization
@@ -318,6 +335,23 @@ def backtest_cross_sectional_alpha(
 
     if len(daily_portfolio_returns_net) < 2:
         return {"Sharpe": 0.0, "AnnReturn": 0.0, "AnnVol": 0.0, "MaxDD": 0.0, "Turnover": 0.0, "Bars": len(daily_portfolio_returns_net)}
+
+    # Determine annualization factor (bars per year)
+    if annualization_factor is None:
+        try:
+            diffs = pd.Series(common_time_index).diff().dropna()
+            if not diffs.empty:
+                sec = diffs.median().total_seconds()
+                if sec > 0:
+                    annualization_factor = float((365.0 * 24.0 * 3600.0) / sec)
+                else:
+                    annualization_factor = float(365 * 6)
+            else:
+                annualization_factor = float(365 * 6)
+        except Exception:
+            annualization_factor = float(365 * 6)
+    else:
+        annualization_factor = float(annualization_factor)
 
     equity_curve = np.cumprod(1 + daily_portfolio_returns_net)
     peak_curve = np.maximum.accumulate(equity_curve)

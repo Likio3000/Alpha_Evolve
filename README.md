@@ -119,10 +119,16 @@ default. You can control the cache via CLI or environment variables:
 
 ### New evolution flags (selection and novelty)
 
-- `--selection_metric`: choose `ramped` (default), `fixed`, `ic`, `auto`, or `phased`.
+- `--selection_metric`: `ramped` (default), `fixed`, `ic`, `auto`, `phased`.
   - `auto`: ramped early, switches to fixed after the ramp period completes.
   - `phased`: early gens use IC, mid gens use ramped fitness, late gens use fixed fitness. Control with `--ic_phase_gens`.
-- `--novelty_boost_w`: add a bonus to selection for low correlation vs current HOF predictions (0 disables).
+- `--novelty_boost_w`: diversity bonus for low correlation vs HOF predictions (0 disables).
+- `--novelty_struct_w`: structural novelty bonus based on opcode-set Jaccard distance vs HOF (0 disables).
+- `--rank_softmax_beta_floor`, `--rank_softmax_beta_target`: soften→sharpen tournament selection weights over the ramp.
+- `--hof_corr_mode`: HOF correlation penalty mode: `flat` (default; flattened time × cross-section) or `per_bar` (average of per-bar Spearman correlations).
+- `--split_weighting`: combine train/val metrics as `equal` (default) or `by_points`.
+- `--ic_tstat_w`: add IC t-stat to fitness to balance magnitude and stability (0 disables).
+- `--temporal_decay_half_life`: exponential half-life (in bars) to weight recent bars more in IC/turnover (0 disables).
 
 Recommended settings
 
@@ -149,7 +155,12 @@ Recommended settings
 - `--novelty_boost_w <w>`: Diversity boost vs HOF (0 disables).
 - Cache: `--disable-align-cache`, `--align-cache-dir <path>`.
 - Backtest only: `--top_to_backtest`, `--fee`, `--hold`, `--long_short_n`,
-  `--stop_loss_pct`, `--annualization_factor`, `--sector_neutralize_positions`.
+  `--stop_loss_pct`, `--annualization_factor`, `--sector_neutralize_positions`,
+  `--winsor_p`.
+
+Evolution-only notable flags: `--novelty_boost_w`, `--novelty_struct_w`,
+`--rank_softmax_beta_floor`, `--rank_softmax_beta_target`, `--hof_corr_mode`,
+`--split_weighting`, `--ic_tstat_w`, `--temporal_decay_half_life`.
 
 ### Tuning guide (practical)
 

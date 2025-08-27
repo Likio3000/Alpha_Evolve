@@ -65,25 +65,44 @@ def set_correlation_penalty(weight: float | None = None, cutoff: float | None = 
     if cutoff is not None:
         _corr_penalty_config["cutoff"] = float(cutoff)
 
-def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Copied from evolve_alphas, will be used for HOF penalty
+def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Stable, finite-safe Spearman/Pearson helper
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
-        return 0.0
-    if a.std(ddof=0) < 1e-9 or b.std(ddof=0) < 1e-9:
         return 0.0
     if len(a) != len(b) or len(a) < 2:
         return 0.0
-    # np.corrcoef can still return NaNs if one array is constant, even if std > 1e-9 due to float precision
-    with np.errstate(invalid='ignore'): # Suppress "invalid value encountered in true_divide"
-        corr_matrix = np.corrcoef(a, b)
-    if np.isnan(corr_matrix[0, 1]):
+    a = a.astype(float, copy=False)
+    b = b.astype(float, copy=False)
+    a = a - np.mean(a)
+    b = b - np.mean(b)
+    denom = np.sqrt(np.sum(a * a)) * np.sqrt(np.sum(b * b))
+    if not np.isfinite(denom) or denom < 1e-9:
         return 0.0
-    return float(corr_matrix[0, 1])
+    corr = float(np.dot(a, b) / denom)
+    if not np.isfinite(corr):
+        return 0.0
+    return max(-1.0, min(1.0, corr))
 
 def _rank_vector(vec: np.ndarray) -> np.ndarray:
-    """Return zero-mean ranks for ``vec`` used in Spearman correlation."""
-    order = np.argsort(vec)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(len(vec), dtype=float)
+    """Return zero-mean average-tie ranks for ``vec`` used in Spearman correlation."""
+    n = vec.size
+    if n == 0:
+        return vec.astype(float)
+    order = np.argsort(vec, kind="mergesort")
+    ranks = np.empty(n, dtype=float)
+    xs = vec[order].astype(float, copy=False)
+    boundaries = np.empty(n + 1, dtype=bool)
+    boundaries[0] = True
+    if n > 1:
+        boundaries[1:-1] = xs[1:] != xs[:-1]
+    else:
+        boundaries[1:-1] = False
+    boundaries[-1] = True
+    idx = np.flatnonzero(boundaries)
+    for i in range(len(idx) - 1):
+        start = idx[i]
+        end = idx[i + 1]
+        avg_rank = 0.5 * (start + end - 1)
+        ranks[order[start:end]] = avg_rank
     ranks -= ranks.mean()
     return ranks
 
@@ -110,6 +129,46 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
     if not corrs:
         return 0.0
     return _corr_penalty_config["weight"] * float(np.mean(corrs))
+
+def get_correlation_penalty_per_bar(processed_preds_matrix: np.ndarray) -> float:
+    """Compute correlation penalty by averaging per-bar Spearman correlations.
+
+    Expects a 2D matrix [time, cross_section]; returns a single penalty value.
+    """
+    if processed_preds_matrix.ndim != 2 or processed_preds_matrix.shape[0] == 0:
+        return 0.0
+    # Fallback to flat if no HOF entries
+    if not _hof_rank_pred_matrix:
+        return 0.0
+    # Build candidate ranks per bar (zero-mean ranks along axis=1)
+    t, n = processed_preds_matrix.shape
+    # Flatten per bar and average correlation to HOF flattened per-bar shapes
+    # Since HOF stores flattened whole-series ranks, approximate by comparing
+    # each bar against the corresponding segments if lengths match; otherwise
+    # fall back to flat behavior (rare in practice if same eval window used).
+    # For a robust generic implementation, compute flat penalty as proxy.
+    try:
+        # Rank each bar
+        corrs: list[float] = []
+        for bar in range(t):
+            v = processed_preds_matrix[bar, :]
+            if v.size < 2 or not np.all(np.isfinite(v)):
+                continue
+            vr = _rank_vector(v)
+            for hof_rank in _hof_rank_pred_matrix:
+                # Extract trailing segment of matching length if possible
+                if hof_rank.size % t == 0:
+                    seg_len = hof_rank.size // t
+                    if seg_len == v.size:
+                        seg = hof_rank[bar * seg_len : (bar + 1) * seg_len]
+                        c = abs(_safe_corr(vr, seg))
+                        if not np.isnan(c) and c > _corr_penalty_config["cutoff"]:
+                            corrs.append(c)
+        if not corrs:
+            return 0.0
+        return _corr_penalty_config["weight"] * float(np.mean(corrs))
+    except Exception:
+        return 0.0
 
 def get_mean_corr_component_with_hof(current_prog_flat_processed_ts: np.ndarray, cutoff: float | None = None) -> float:
     """Return the mean absolute Spearman correlation (above cutoff) with HOF entries.
@@ -142,6 +201,35 @@ def get_correlation_penalty_with_weight(current_prog_flat_processed_ts: np.ndarr
     if mean_corr <= 0:
         return 0.0
     return float(weight) * mean_corr
+
+def get_correlation_penalty_with_weight_per_bar(processed_preds_matrix: np.ndarray, *, weight: float, cutoff: float | None = None) -> float:
+    """Per-bar variant mirroring get_correlation_penalty_per_bar with custom weight."""
+    if processed_preds_matrix.ndim != 2 or processed_preds_matrix.shape[0] == 0:
+        return 0.0
+    if not _hof_rank_pred_matrix:
+        return 0.0
+    try:
+        t, n = processed_preds_matrix.shape
+        corrs: list[float] = []
+        for bar in range(t):
+            v = processed_preds_matrix[bar, :]
+            if v.size < 2 or not np.all(np.isfinite(v)):
+                continue
+            vr = _rank_vector(v)
+            for hof_rank in _hof_rank_pred_matrix:
+                if hof_rank.size % t == 0:
+                    seg_len = hof_rank.size // t
+                    if seg_len == v.size:
+                        seg = hof_rank[bar * seg_len : (bar + 1) * seg_len]
+                        c = abs(_safe_corr(vr, seg))
+                        co = _corr_penalty_config["cutoff"] if cutoff is None else float(cutoff)
+                        if not np.isnan(c) and c > co:
+                            corrs.append(c)
+        if not corrs:
+            return 0.0
+        return float(weight) * float(np.mean(corrs))
+    except Exception:
+        return 0.0
 
 def add_program_to_hof(
     program: AlphaProgram,
@@ -356,6 +444,23 @@ def snapshot(limit: int | None = None) -> List[Dict[str, Any]]:
                 "ops": int(getattr(entry.program, "size", 0)),
                 "program": entry.program.to_string(max_len=180),
             })
+        except Exception:
+            continue
+    return out
+
+def get_hof_opcode_sets(limit: int | None = None) -> List[Set[str]]:
+    """Return a list of opcode sets for programs currently in HOF.
+
+    Useful for computing simple structural similarity/novelty proxies.
+    """
+    out: List[Set[str]] = []
+    n = len(_hof_programs_data) if limit is None else min(limit, len(_hof_programs_data))
+    for entry in _hof_programs_data[:n]:
+        try:
+            prog = entry.program
+            ops = [*getattr(prog, 'setup', []), *getattr(prog, 'predict_ops', []), *getattr(prog, 'update_ops', [])]
+            opcodes = {getattr(o, 'opcode', '') for o in ops if hasattr(o, 'opcode')}
+            out.append(opcodes)
         except Exception:
             continue
     return out

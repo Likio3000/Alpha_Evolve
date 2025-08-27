@@ -7,6 +7,10 @@ generations = 5
 hof_size = 10
 seed = 42
 sector_neutralize = true
+winsor_p = 0.02
+selection_metric = "auto"
+ramp_fraction = 0.33
+ramp_min_gens = 5
 
 [backtest]
 data_dir = "tests/data/good"
@@ -17,6 +21,7 @@ top_to_backtest = 5
 fee = 1.0
 hold = 1
 scale = "zscore"
+winsor_p = 0.02
 long_short_n = 0
 stop_loss_pct = 0.0
 sector_neutralize_positions = false

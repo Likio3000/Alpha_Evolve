@@ -1,0 +1,111 @@
+# Full configuration template with all tunable parameters.
+# Copy and modify as needed, then pass with --config <this_file>.
+
+[evolution]
+# Data handling
+data_dir = "./data"
+max_lookback_data_option = "common_1200"   # one of: common_1200 | specific_long_10k | full_overlap
+min_common_points = 1200
+eval_lag = 1
+
+# Reproducibility & population
+generations = 10
+seed = 42
+pop_size = 100
+tournament_k = 10
+elite_keep = 1
+fresh_rate = 0.12
+p_mut = 0.9
+p_cross = 0.0
+
+# Hall of Fame
+hof_size = 20
+hof_per_gen = 3
+keep_dupes_in_hof = false
+hof_corr_mode = "flat"                   # flat | per_bar
+
+# Op/complexity limits
+max_ops = 87
+max_setup_ops = 21
+max_predict_ops = 21
+max_update_ops = 45
+max_scalar_operands = 10
+max_vector_operands = 16
+max_matrix_operands = 4
+
+# Fitness weights and guards
+parsimony_penalty = 0.002
+corr_penalty_w = 0.35
+corr_cutoff = 0.15
+sharpe_proxy_w = 0.0
+ic_std_penalty_w = 0.10
+turnover_penalty_w = 0.05
+# Weight for IC t-stat contribution
+ic_tstat_w = 0.0
+xs_flat_guard = 0.05
+t_flat_guard = 0.05
+early_abort_bars = 20
+early_abort_xs = 0.05
+early_abort_t = 0.05
+flat_bar_threshold = 0.25
+
+# Scaling/preprocessing
+scale = "madz"                            # zscore | rank | sign | madz | winsor
+winsor_p = 0.02
+sector_neutralize = true
+
+# Splits & caching
+use_train_val_splits = true
+train_points = 840
+val_points = 360
+split_weighting = "equal"                 # equal | by_points
+# Temporal decay half-life for more recent bars (0 disables)
+temporal_decay_half_life = 0.0
+eval_cache_size = 128
+
+# Ramping / selection strategy
+ramp_fraction = 0.3333333333              # fraction of generations to ramp
+ramp_min_gens = 5
+selection_metric = "ramped"               # ramped | fixed | ic | auto | phased
+novelty_boost_w = 0.0
+novelty_struct_w = 0.0
+ic_phase_gens = 0
+
+# Rank-based tournament weighting temperature (softmax beta schedule)
+rank_softmax_beta_target = 2.0
+rank_softmax_beta_floor = 0.0
+
+# Parallel workers (0/None → auto; 1 → sequential)
+workers = 1
+
+
+[backtest]
+# Data handling
+data_dir = "./data"
+max_lookback_data_option = "common_1200"
+min_common_points = 1200
+eval_lag = 1
+
+# Universe/selection
+top_to_backtest = 10
+
+# Trading params
+fee = 1.0                                 # bps round-trip
+hold = 1
+scale = "zscore"
+winsor_p = 0.02
+long_short_n = 0                           # 0 → use all
+annualization_factor = 2190                # 365*6 for 4H crypto; set 252 for daily equities
+stop_loss_pct = 0.0
+sector_neutralize_positions = false
+
+# Risk controls
+volatility_target = 0.0
+volatility_lookback = 30
+max_leverage = 2.0
+min_leverage = 0.25
+dd_limit = 0.0
+dd_reduction = 0.5
+
+# Common seed (used by scripts that need repeatability)
+seed = 42
