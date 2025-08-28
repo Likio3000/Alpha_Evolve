@@ -194,6 +194,15 @@ def _candidate_perturbations(base: Dict[str, ParamVal]) -> List[Dict[str, ParamV
     b.setdefault("fresh_rate", "0.12")
     b.setdefault("pop_size", "100")
     b.setdefault("hof_per_gen", "3")
+    # New math defaults to improve search and robustness
+    b.setdefault("moea_enabled", True)
+    b.setdefault("moea_elite_frac", "0.25")
+    b.setdefault("mf_enabled", True)
+    b.setdefault("mf_initial_fraction", "0.4")
+    b.setdefault("mf_promote_fraction", "0.3")
+    b.setdefault("mf_min_promote", "8")
+    b.setdefault("cv_k_folds", "4")
+    b.setdefault("cv_embargo", "5")
 
     cands: List[Dict[str, str]] = []
     # 0) current base as-is
@@ -250,6 +259,18 @@ def _candidate_perturbations(base: Dict[str, ParamVal]) -> List[Dict[str, ParamV
     # 13) stronger late-stage selection pressure
     c = {**b}
     c["rank_softmax_beta_target"] = "3.0"
+    cands.append(c)
+    # 14) enable MOEA elites
+    c = {**b}
+    c.update({"moea_enabled": True, "moea_elite_frac": "0.25"})
+    cands.append(c)
+    # 15) enable multi-fidelity
+    c = {**b}
+    c.update({"mf_enabled": True, "mf_initial_fraction": "0.4", "mf_promote_fraction": "0.3"})
+    cands.append(c)
+    # 16) enable purged CV
+    c = {**b}
+    c.update({"cv_k_folds": "4", "cv_embargo": "5"})
     cands.append(c)
     return cands
 

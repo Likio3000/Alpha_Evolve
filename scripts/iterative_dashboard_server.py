@@ -127,8 +127,17 @@ async def start_run(payload: Dict[str, Any]):
             args += [flag, str(val)]
     # passthrough flags appended after separator
     passthrough_keys = [
+        # Selection and exploration
         "selection_metric","ramp_fraction","ramp_min_gens","novelty_boost_w","novelty_struct_w","hof_corr_mode",
-        "ic_tstat_w","temporal_decay_half_life","rank_softmax_beta_floor","rank_softmax_beta_target","corr_penalty_w"
+        "ic_tstat_w","temporal_decay_half_life","rank_softmax_beta_floor","rank_softmax_beta_target","corr_penalty_w",
+        # Multi-objective elites
+        "moea_enabled","moea_elite_frac",
+        # Multi-fidelity
+        "mf_enabled","mf_initial_fraction","mf_promote_fraction","mf_min_promote",
+        # Cross-validation
+        "cv_k_folds","cv_embargo",
+        # Backtest ensemble
+        "ensemble_mode","ensemble_size","ensemble_max_corr",
     ]
     has_pt = any(k in payload for k in passthrough_keys)
     if has_pt:

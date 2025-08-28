@@ -144,6 +144,27 @@ class EvolutionConfig(DataConfig):
     rank_softmax_beta_target: float = 2.0  # final beta when ramp completes
     rank_softmax_beta_floor: float = 0.0   # starting beta at ramp=0
 
+    # ─────────────────────────────────────────────────────────────────────
+    #  advanced search (optional; defaults keep legacy behavior)
+    # ─────────────────────────────────────────────────────────────────────
+    # Enable a Pareto multi-objective selection pressure (NSGA-II style)
+    moea_enabled: bool = False
+    # Portion of next generation taken as elites from the first Pareto front
+    moea_elite_frac: float = 0.2
+    # Multi-fidelity evaluation: first evaluate on a truncated window, then
+    # promote top-K to full evaluation for final selection/HOF logging.
+    mf_enabled: bool = False
+    mf_initial_fraction: float = 0.4     # fraction of eval bars for the cheap pass
+    mf_promote_fraction: float = 0.3     # fraction of population to re-evaluate fully
+    mf_min_promote: int = 8              # minimum number to promote regardless of fraction
+
+    # Operator bandits (optional): adapt fresh/mutate/crossover rates online
+    bandit_enabled: bool = False
+
+    # Cross-validation (purged CPCV-style)
+    cv_k_folds: int = 0         # 0 disables; K>1 enables CPCV over contiguous folds
+    cv_embargo: int = 0         # bars to embargo around each validation fold
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  cross-sectional back-test
@@ -174,6 +195,12 @@ class BacktestConfig(DataConfig):
     # Drawdown limiter: reduce exposure when DD exceeds threshold.
     dd_limit: float = 0.0                 # e.g., 0.15 for 15%; if <=0 disabled
     dd_reduction: float = 0.5             # multiply exposure when beyond dd_limit
+
+    # Optional ensemble backtest (disabled by default)
+    ensemble_mode: bool = False           # when true, also backtest an ensemble of top alphas
+    ensemble_size: int = 0                # 0 disables; otherwise picks up to this many
+    ensemble_max_corr: float = 0.3        # target max pairwise corr (IC proxy) for selection
+    ensemble_weighting: str = "equal"     # equal | risk_parity (reserved)
 
 
 # keep old import path alive

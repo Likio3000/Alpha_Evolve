@@ -16,6 +16,12 @@ ops_split_jitter = 0.1
 sector_neutralize = true
 workers = 1
 seed = 42
+moea_enabled = true
+moea_elite_frac = 0.25
+mf_enabled = true
+mf_initial_fraction = 0.4
+mf_promote_fraction = 0.3
+mf_min_promote = 12
 
 [backtest]
 data_dir = "./data"
@@ -29,4 +35,6 @@ scale = "rank"
 long_short_n = 6
 stop_loss_pct = 0.0
 sector_neutralize_positions = false
-
+ensemble_mode = true
+ensemble_size = 5
+ensemble_max_corr = 0.3

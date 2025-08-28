@@ -29,12 +29,22 @@ if command -v uv >/dev/null 2>&1; then
     --data_dir "${DATA_DIR}" \
     --max_lookback_data_option "${LOOKBACK}" \
     --annualization_factor "${ANNUAL}" \
+    --selection_metric phased --ic_phase_gens 5 \
+    --moea_enabled --moea_elite_frac 0.25 \
+    --cv_k_folds 4 --cv_embargo 5 \
+    --hof_corr_mode per_bar \
+    --ensemble_mode --ensemble_size 5 --ensemble_max_corr 0.3 \
     "$@"
 else
   python run_pipeline.py "${GENS}" \
     --data_dir "${DATA_DIR}" \
     --max_lookback_data_option "${LOOKBACK}" \
     --annualization_factor "${ANNUAL}" \
+    --selection_metric phased --ic_phase_gens 5 \
+    --moea_enabled --moea_elite_frac 0.25 \
+    --cv_k_folds 4 --cv_embargo 5 \
+    --hof_corr_mode per_bar \
+    --ensemble_mode --ensemble_size 5 --ensemble_max_corr 0.3 \
     "$@"
 fi
 

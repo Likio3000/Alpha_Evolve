@@ -97,6 +97,8 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         fixed_ic_tstat_weight=cfg.ic_tstat_w,
         hof_corr_mode=getattr(cfg, "hof_corr_mode", "flat"),
         temporal_decay_half_life=getattr(cfg, "temporal_decay_half_life", 0.0),
+        cv_k_folds=getattr(cfg, "cv_k_folds", 0),
+        cv_embargo=getattr(cfg, "cv_embargo", 0),
     )
     initialize_hof(
         max_size=cfg.hof_size,
@@ -198,6 +200,14 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
     logger = logging.getLogger(__name__)
 
     pop: List[AlphaProgram] = [_random_prog(cfg) for _ in range(cfg.pop_size)]
+    # Optional multi-fidelity context for a cheaper first-pass evaluation
+    mf_ctx: EvalContext | None = None
+    if getattr(cfg, "mf_enabled", False):
+        try:
+            mf_frac = float(getattr(cfg, "mf_initial_fraction", 0.4))
+            mf_ctx = slice_eval_context(ctx, eval_fraction=mf_frac)
+        except Exception:
+            mf_ctx = None
     gen_eval_times_history: List[float] = []
 
     try:
@@ -333,8 +343,45 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         pass
                 return base_score
 
-            # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1
-            if (cfg.workers or 0) > 1:
+            # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1.
+            # If multi-fidelity is enabled and we're not using a pool, perform a cheap pass then promote top-K for full eval.
+            if mf_ctx is not None and (cfg.workers or 0) <= 1:
+                # Sequential multi-fidelity evaluation
+                iterator = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations} [mf-cheap]", disable=cfg.quiet, total=cfg.pop_size)
+                _CTX = mf_ctx  # type: ignore
+                tmp_results: List[Tuple[int, el_module.EvalResult]] = []
+                for i in iterator:
+                    _, result = _eval_worker((i, pop[i]))
+                    tmp_results.append((i, result))
+                try:
+                    promote_frac = float(getattr(cfg, "mf_promote_fraction", 0.3))
+                    promote_n = max(int(round(cfg.pop_size * promote_frac)), int(getattr(cfg, "mf_min_promote", 8)))
+                except Exception:
+                    promote_n = max(8, cfg.pop_size // 3)
+                def _sel_score_local(res: el_module.EvalResult) -> float:
+                    sel = getattr(cfg, "selection_metric", "ramped")
+                    if sel == "ic":
+                        return float(res.mean_ic)
+                    if sel == "fixed":
+                        fs = getattr(res, "fitness_static", None)
+                        return float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                    if sel == "phased" and (gen < int(getattr(cfg, "ic_phase_gens", 0))):
+                        return float(res.mean_ic)
+                    return float(res.fitness)
+                tmp_results.sort(key=lambda t: _sel_score_local(t[1]), reverse=True)
+                promote_idx = {i for (i, _) in tmp_results[:promote_n]}
+                _CTX = ctx  # type: ignore
+                iterator2 = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations} [mf-full]", disable=cfg.quiet, total=cfg.pop_size)
+                for i in iterator2:
+                    if i in promote_idx:
+                        _, result = _eval_worker((i, pop[i]))
+                    else:
+                        result = next((r for (j, r) in tmp_results if j == i), None)
+                        if result is None:
+                            _, result = _eval_worker((i, pop[i]))
+                    eval_results.append((i, result))
+                    pop_fitness_scores[i] = _sel_score(result)
+            elif (cfg.workers or 0) > 1:
                 with Pool(
                     processes=cfg.workers or cpu_count(),
                     initializer=_pool_init,
@@ -511,6 +558,39 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         },
                         gen_eval_seconds=float(gen_eval_time),
                     )
+                    # Optional Pareto front summary for diagnostics
+                    try:
+                        if getattr(cfg, "moea_enabled", False):
+                            def _objs(res: el_module.EvalResult) -> tuple[float, float, float, float]:
+                                return (
+                                    float(res.mean_ic),
+                                    float(res.sharpe_proxy),
+                                    float(-res.turnover_proxy),
+                                    float(-res.parsimony_penalty),
+                                )
+                            # Build naive first-front (non-dominated set)
+                            objs = [(_i, _objs(_r)) for _i, _r in eval_results if np.isfinite(_r.fitness)]
+                            # Simple O(n^2) check for front 0
+                            pareto = []
+                            for i, oi in objs:
+                                dominated = False
+                                for j, oj in objs:
+                                    if i == j:
+                                        continue
+                                    if all(oj[k] >= oi[k] for k in range(len(oi))) and any(oj[k] > oi[k] for k in range(len(oi))):
+                                        dominated = True
+                                        break
+                                if not dominated:
+                                    pareto.append((i, oi))
+                            pf = [{
+                                "idx": int(i),
+                                "fp": pop[i].fingerprint,
+                                "obj": {"ic": oi[0], "sh": oi[1], "neg_turn": oi[2], "neg_complex": oi[3]},
+                                "ops": int(pop[i].size),
+                            } for (i, oi) in pareto[: min(10, len(pareto))]]
+                            diag.enrich_last(pareto_front=pf)
+                    except Exception:
+                        pass
                     # Novelty vs HOF for best-of-gen (mean Spearman component)
                     try:
                         if tmp_sorted:
@@ -651,6 +731,91 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             )
 
             new_pop: List[AlphaProgram] = []
+            # Optional Pareto-based elite selection (NSGA-II style fronts)
+            if getattr(cfg, "moea_enabled", False):
+                def _objectives(res: el_module.EvalResult) -> tuple[float, float, float, float]:
+                    return (
+                        float(res.mean_ic),                 # maximize
+                        float(res.sharpe_proxy),            # maximize
+                        float(-res.turnover_proxy),         # minimize turnover
+                        float(-res.parsimony_penalty),      # minimize complexity
+                    )
+                def _nondominated_sort(objs: list[tuple[float, ...]]):
+                    n = len(objs)
+                    S = [set() for _ in range(n)]
+                    n_dom = [0] * n
+                    fronts: list[list[int]] = []
+                    for p in range(n):
+                        for q in range(n):
+                            if p == q:
+                                continue
+                            op, oq = objs[p], objs[q]
+                            if all(op[i] >= oq[i] for i in range(len(op))) and any(op[i] > oq[i] for i in range(len(op))):
+                                S[p].add(q)
+                            elif all(oq[i] >= op[i] for i in range(len(op))) and any(oq[i] > op[i] for i in range(len(op))):
+                                n_dom[p] += 1
+                        if n_dom[p] == 0:
+                            if not fronts:
+                                fronts.append([])
+                            fronts[0].append(p)
+                    i_f = 0
+                    while i_f < len(fronts):
+                        next_front: list[int] = []
+                        for p in fronts[i_f]:
+                            for q in S[p]:
+                                n_dom[q] -= 1
+                                if n_dom[q] == 0:
+                                    next_front.append(q)
+                        if next_front:
+                            fronts.append(next_front)
+                        i_f += 1
+                    return fronts
+                def _crowding(front: list[int], objs: list[tuple[float, ...]]):
+                    if not front:
+                        return {}
+                    m = len(objs[0])
+                    dist = {i: 0.0 for i in front}
+                    for k in range(m):
+                        front_sorted = sorted(front, key=lambda i: objs[i][k])
+                        dist[front_sorted[0]] = float("inf")
+                        dist[front_sorted[-1]] = float("inf")
+                        vals = [objs[i][k] for i in front_sorted]
+                        vmin, vmax = vals[0], vals[-1]
+                        rng = (vmax - vmin) if (vmax > vmin) else 1.0
+                        for j in range(1, len(front_sorted) - 1):
+                            prev_v = objs[front_sorted[j - 1]][k]
+                            next_v = objs[front_sorted[j + 1]][k]
+                            dist[front_sorted[j]] += (next_v - prev_v) / rng
+                    return dist
+                # Build objective vectors aligned by index
+                # Default to using only valid results
+                objs_list: list[tuple[float, ...]] = [None] * len(pop)  # type: ignore
+                valid_idx: list[int] = []
+                for idx_in_pop, res in eval_results:
+                    if np.isfinite(res.fitness):
+                        objs_list[idx_in_pop] = _objectives(res)
+                        valid_idx.append(idx_in_pop)
+                # Map to a compact list for sorting
+                idx_map = {idx: k for k, idx in enumerate(valid_idx)}
+                compact_objs = [objs_list[i] for i in valid_idx]
+                fronts_local = _nondominated_sort(compact_objs)
+                # Elite fraction cap
+                elite_cap = max(0, min(cfg.pop_size, int(round(cfg.pop_size * float(getattr(cfg, "moea_elite_frac", 0.2))))))
+                picked = 0
+                for f in fronts_local:
+                    # Convert compact indices back to population indices
+                    front_pop_idx = [valid_idx[i] for i in f]
+                    cd = _crowding([idx_map[i] for i in front_pop_idx], compact_objs)
+                    for i in sorted(front_pop_idx, key=lambda x: cd.get(idx_map.get(x, -1), 0.0), reverse=True):
+                        new_pop.append(pop[i].copy())
+                        picked += 1
+                        if picked >= elite_cap:
+                            break
+                    if picked >= elite_cap:
+                        break
+                # Fallback to at least one elite
+                if not new_pop and valid_idx:
+                    new_pop.append(pop[valid_idx[0]].copy())
 
             # Diversity proxy and adaptive breeding rates
             try:
@@ -703,17 +868,19 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 if np.all(np.isfinite(w)) and np.any(w > 0):
                     rank_weights = w.tolist()
             
-            elites_added_fingerprints = set()
-            for res_idx, res_metrics in eval_results:
-                if res_metrics.fitness <= -float('inf'):
-                    continue
-                prog_candidate = pop[res_idx]
-                fp_cand = prog_candidate.fingerprint
-                if fp_cand not in elites_added_fingerprints or cfg.keep_dupes_in_hof: 
-                    new_pop.append(prog_candidate.copy())
-                    elites_added_fingerprints.add(fp_cand)
-                if len(new_pop) >= cfg.elite_keep:
-                    break
+            # Legacy scalar elites when MOEA is disabled
+            if not getattr(cfg, "moea_enabled", False):
+                elites_added_fingerprints = set()
+                for res_idx, res_metrics in eval_results:
+                    if res_metrics.fitness <= -float('inf'):
+                        continue
+                    prog_candidate = pop[res_idx]
+                    fp_cand = prog_candidate.fingerprint
+                    if fp_cand not in elites_added_fingerprints or cfg.keep_dupes_in_hof: 
+                        new_pop.append(prog_candidate.copy())
+                        elites_added_fingerprints.add(fp_cand)
+                    if len(new_pop) >= cfg.elite_keep:
+                        break
             
             if not new_pop and eval_results and eval_results[0][1].fitness > -float('inf'):
                  new_pop.append(pop[eval_results[0][0]].copy())
@@ -743,8 +910,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     new_pop.append(_random_prog(cfg))
                     continue
 
-                parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=lambda i_tour: pop_fitness_scores[i_tour])
-                parent2_idx = max(tournament_indices_pool[cfg.tournament_k:], key=lambda i_tour: pop_fitness_scores[i_tour])
+                if getattr(cfg, "moea_enabled", False):
+                    # Binary tournament by selection rank (fallback to scalar if undefined)
+                    def _score_for_tour(i_tour: int) -> float:
+                        # Use scalar selection score as fallback
+                        return float(pop_fitness_scores[i_tour])
+                    parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=_score_for_tour)
+                    parent2_idx = max(tournament_indices_pool[cfg.tournament_k:], key=_score_for_tour)
+                else:
+                    parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=lambda i_tour: pop_fitness_scores[i_tour])
+                    parent2_idx = max(tournament_indices_pool[cfg.tournament_k:], key=lambda i_tour: pop_fitness_scores[i_tour])
                 parent_a, parent_b = pop[parent1_idx], pop[parent2_idx]
 
                 child: AlphaProgram

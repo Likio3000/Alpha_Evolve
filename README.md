@@ -136,6 +136,9 @@ default. You can control the cache via CLI or environment variables:
 - `--split_weighting`: combine train/val metrics as `equal` (default) or `by_points`.
 - `--ic_tstat_w`: add IC t-stat to fitness to balance magnitude and stability (0 disables).
 - `--temporal_decay_half_life`: exponential half-life (in bars) to weight recent bars more in IC/turnover (0 disables).
+- Multi-objective selection (Pareto/NSGA-II-lite): `--moea_enabled` to enable, `--moea_elite_frac` to control Pareto-front elites.
+- Multi-fidelity evaluation: `--mf_enabled` to turn on a cheap first pass over a truncated window then re-evaluate top candidates fully. Control with `--mf_initial_fraction`, `--mf_promote_fraction`, `--mf_min_promote`.
+ - Purged CV across time folds: `--cv_k_folds <K>` and `--cv_embargo <bars>` to use CPCV-like validation when computing selection metrics.
 
 Recommended settings
 
@@ -163,7 +166,7 @@ Recommended settings
 - Cache: `--disable-align-cache`, `--align-cache-dir <path>`.
 - Backtest only: `--top_to_backtest`, `--fee`, `--hold`, `--long_short_n`,
   `--stop_loss_pct`, `--annualization_factor`, `--sector_neutralize_positions`,
-  `--winsor_p`.
+  `--winsor_p`, `--ensemble_mode`, `--ensemble_size`, `--ensemble_max_corr`.
 
 Evolution-only notable flags: `--novelty_boost_w`, `--novelty_struct_w`,
 `--rank_softmax_beta_floor`, `--rank_softmax_beta_target`, `--hof_corr_mode`,

@@ -116,6 +116,26 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
 
     logging.basicConfig(level=level, handlers=handlers, force=True)
 
+    # Silence extremely chatty third-party loggers at DEBUG level
+    try:
+        # Matplotlib font manager can spam DEBUG logs; keep it quiet
+        import matplotlib  # type: ignore
+        try:
+            matplotlib.set_loglevel("warning")  # available on recent versions
+        except Exception:
+            pass
+    except Exception:
+        pass
+    for noisy in (
+        "matplotlib",
+        "matplotlib.font_manager",
+        "matplotlib.category",
+    ):
+        try:
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+        except Exception:
+            pass
+
     # Print the date once at the start to avoid per-line date clutter
     try:
         import time as _t

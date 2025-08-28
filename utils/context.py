@@ -139,6 +139,53 @@ def make_eval_context_from_dir(
     return EvalContext(bundle=bundle, sector_ids=sector_ids, eval_lag=eval_lag, col_matrix_map=col_map, ts_pos=ts_pos)
 
 
+def slice_eval_context(ctx: EvalContext, *, eval_fraction: float | None = None, last_steps: int | None = None) -> EvalContext:
+    """Create a shallowly sliced EvalContext limited to a trailing window.
+
+    - If ``last_steps`` is provided, keep the last ``last_steps`` evaluation bars.
+    - Otherwise, use ``eval_fraction`` of available evaluation bars (0<frac<=1).
+
+    The resulting context includes the additional ``eval_lag`` rows required by
+    consumers that compute forward returns, matching the semantics of
+    ``get_data_splits``.
+    """
+    bundle = ctx.bundle
+    eval_lag = int(ctx.eval_lag)
+    total = max(0, len(bundle.common_index) - eval_lag)
+    if total <= 0:
+        return ctx
+    if last_steps is None:
+        f = float(eval_fraction or 1.0)
+        f = max(0.0, min(1.0, f))
+        points = max(1, int(round(total * f)))
+    else:
+        points = max(1, int(last_steps))
+    points = min(points, total)
+    keep = points + eval_lag
+    # Take trailing window
+    new_index = bundle.common_index[-keep:]
+    new_dfs: Dict[str, pd.DataFrame] = {}
+    for sym, df in bundle.aligned_dfs.items():
+        try:
+            new_dfs[sym] = df.loc[new_index]
+        except Exception:
+            new_dfs[sym] = df.iloc[-keep:]
+    from utils.data_loading_common import DataBundle
+    new_bundle = DataBundle(
+        aligned_dfs=new_dfs,
+        common_index=new_index,
+        symbols=list(bundle.symbols),
+        diagnostics=bundle.diagnostics,
+    )
+    # Slice precomputed matrices and timestamp map if present
+    col_map = None
+    ts_pos = None
+    if ctx.col_matrix_map is not None:
+        col_map = {k: v[-keep:, :].copy() for k, v in ctx.col_matrix_map.items()}
+        ts_pos = {ts: i for i, ts in enumerate(new_index)}
+    return EvalContext(bundle=new_bundle, sector_ids=ctx.sector_ids, eval_lag=eval_lag, col_matrix_map=col_map, ts_pos=ts_pos)
+
+
 class _NullLogger:
     def __getattr__(self, name):
         def _noop(*args, **kwargs):

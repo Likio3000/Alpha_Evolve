@@ -245,6 +245,8 @@ def run(
         raise ValueError("Nothing to back-test – pickle empty or --top 0?")
 
     results: List[Dict[str, Any]] = []
+    # Keep per-alpha net return series for optional ensemble building
+    per_alpha_returns: List[tuple[str, List[float]]] = []
     for idx, (prog, evo_ic) in enumerate(programs, 1):
         lg.info("Back-testing alpha #%02d (evo IC %+0.4f)", idx, evo_ic)
         lg.debug("Program: %s", prog.to_string(max_len=200))
@@ -301,6 +303,11 @@ def run(
                 df_ts.to_csv(ts_path, index=False)
                 metrics["TimeseriesFile"] = str(ts_path)
                 metrics["TS"] = ts_path.name  # short, tidy link label for tables
+                # Save returns for ensemble selection before dropping arrays
+                try:
+                    per_alpha_returns.append((f"Alpha_{idx:02d}", list(metrics.get("RetNet", []))))
+                except Exception:
+                    pass
                 # Drop bulky arrays from summary entry
                 for k in (
                     "RetNet",
@@ -341,6 +348,75 @@ def run(
         summary_json = outdir / f"backtest_summary_top{actual_n}.json"
         with open(summary_json, "w") as fh:
             json.dump(results, fh, indent=2)
+        # Optional ensemble: greedily pick low-corr subset and compute portfolio metrics
+        try:
+            ens_n = int(getattr(cfg, "ensemble_size", 0) or 0)
+            ens_mode = bool(getattr(cfg, "ensemble_mode", False))
+            if ens_mode or ens_n > 0:
+                import numpy as _np
+                # Build matrix of aligned returns (truncate to min length)
+                if per_alpha_returns:
+                    min_len = min(len(r) for _, r in per_alpha_returns)
+                    names = [name for name, _ in per_alpha_returns]
+                    R = _np.array([_np.array(r[:min_len], dtype=float) for _, r in per_alpha_returns])  # shape (K, T)
+                    # Rank alphas by Sharpe for seed ordering
+                    name_to_sharpe = {row["AlphaID"]: float(row.get("Sharpe", 0.0)) for _, row in df.iterrows()}
+                    order = sorted(range(len(names)), key=lambda i: name_to_sharpe.get(names[i], 0.0), reverse=True)
+                    # Greedy selection under max corr constraint
+                    max_corr = float(getattr(cfg, "ensemble_max_corr", 0.3))
+                    selected: List[int] = []
+                    target_k = ens_n if ens_n > 0 else len(names)
+                    for i in order:
+                        if len(selected) >= target_k:
+                            break
+                        ok = True
+                        for j in selected:
+                            c = float(_np.corrcoef(R[i], R[j])[0, 1]) if min_len > 1 else 0.0
+                            if _np.isnan(c) or abs(c) > max_corr:
+                                ok = False
+                                break
+                        if ok:
+                            selected.append(i)
+                    # Fallback: ensure at least top-2 if constraint too strict
+                    if not selected and len(order) >= 1:
+                        selected = order[: min(2, len(order))]
+                    if selected:
+                        port_ret = _np.mean(R[selected, :], axis=0)
+                        # Compute portfolio metrics (mirror core_logic summary)
+                        eq = _np.cumprod(1 + port_ret)
+                        peak = _np.maximum.accumulate(eq)
+                        dd = (eq - peak) / (peak + 1e-9)
+                        mean_ret = float(_np.mean(port_ret)) if port_ret.size else 0.0
+                        std_ret = float(_np.std(port_ret, ddof=0)) if port_ret.size else 0.0
+                        ann = float(cfg.annualization_factor)
+                        sharpe = (mean_ret / (std_ret + 1e-9)) * (_np.sqrt(ann) if ann and ann > 0 else 1.0)
+                        total_return = eq[-1] - 1.0 if eq.size else 0.0
+                        years = (port_ret.size / ann) if ann and ann > 0 else 1.0
+                        ann_ret = ((1.0 + total_return) ** (1.0 / years) - 1.0) if years > 0 else 0.0
+                        ann_vol = std_ret * (_np.sqrt(ann) if ann and ann > 0 else 1.0)
+                        max_dd = float(-_np.min(dd)) if dd.size else 0.0
+                        ens_rows = [{
+                            "Sharpe": sharpe,
+                            "AnnReturn": ann_ret,
+                            "AnnVol": ann_vol,
+                            "MaxDD": max_dd,
+                            "Members": [names[i] for i in selected],
+                            "K": len(selected),
+                        }]
+                        ens_csv = outdir / "backtest_summary_ensemble.csv"
+                        _pd.DataFrame(ens_rows).to_csv(ens_csv, index=False)
+                        # Save ensemble timeseries
+                        ens_ts = _pd.DataFrame({
+                            "date": list(common_index[:min_len]),
+                            "ret_net": port_ret,
+                            "equity": eq,
+                            "drawdown": dd,
+                        })
+                        ens_ts.to_csv(outdir / "ensemble_timeseries.csv", index=False)
+                        lg.info("Ensemble (K=%d) Sharpe %+0.3f AnnRet %6.2f%% MaxDD %6.2f%%", len(selected), sharpe, ann_ret * 100, max_dd * 100)
+        except Exception:
+            # Ensemble is best-effort; do not fail the run if issues arise
+            pass
         try:
             printable = df.drop(columns=["Program", "TimeseriesFile"], errors="ignore")
             lg.info("\n%s", printable.to_string(index=False))

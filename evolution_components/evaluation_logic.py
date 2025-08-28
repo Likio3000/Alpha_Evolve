@@ -75,6 +75,9 @@ _EVAL_CONFIG = {
     "use_train_val_splits": False,
     "train_points": 0,
     "val_points": 0,
+    # CPCV-style cross-validation over time (K contiguous folds with embargo)
+    "cv_k_folds": 0,
+    "cv_embargo": 0,
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
 }
 
@@ -145,6 +148,8 @@ def configure_evaluation(
     fixed_ic_tstat_weight: Optional[float] = None,
     hof_corr_mode: str | None = None,
     temporal_decay_half_life: float | None = None,
+    cv_k_folds: int | None = None,
+    cv_embargo: int | None = None,
     ):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
@@ -185,6 +190,10 @@ def configure_evaluation(
         _EVAL_CONFIG["hof_corr_mode"] = str(hof_corr_mode)
     if temporal_decay_half_life is not None:
         _EVAL_CONFIG["temporal_decay_half_life"] = float(temporal_decay_half_life)
+    if cv_k_folds is not None:
+        _EVAL_CONFIG["cv_k_folds"] = int(cv_k_folds)
+    if cv_embargo is not None:
+        _EVAL_CONFIG["cv_embargo"] = int(cv_embargo)
     # Clamp jitter into [0, 1] and store
     try:
         pj = float(parsimony_jitter_pct)
@@ -459,6 +468,7 @@ def evaluate_program(
     all_raw_predictions_timeseries: List[np.ndarray] = []
     all_processed_predictions_timeseries: List[np.ndarray] = []
     daily_ic_values: List[float] = []
+    daily_pnl_values: List[float] = []
     pnl_sum = 0.0
     pnl_sq_sum = 0.0
 
@@ -617,6 +627,7 @@ def evaluate_program(
 
             pnl_sum += daily_pnl
             pnl_sq_sum += daily_pnl ** 2
+            daily_pnl_values.append(daily_pnl)
 
         except Exception: # Broad exception during program's .eval() or IC calculation
             _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
@@ -655,7 +666,7 @@ def evaluate_program(
         return 0.5 ** (ages / float(half_life))
 
     hl = float(_EVAL_CONFIG.get("temporal_decay_half_life", 0.0) or 0.0)
-    if not use_splits and hl > 0.0:
+    if not use_splits and hl > 0.0 and (int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0) <= 1):
         T = len(daily_ic_values)
         w = _decay_weights(T, hl)
         ws = np.sum(w) if T > 0 else 1.0
@@ -669,7 +680,70 @@ def evaluate_program(
     ic_std = float(np.std(daily_ic_values, ddof=0)) if daily_ic_values else 0.0
     turnover_proxy = 0.0
 
-    if use_splits and t_points > 0 and v_points > 0 and (t_points + v_points) <= total_steps:
+    cv_k = int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0)
+    cv_emb = int(_EVAL_CONFIG.get("cv_embargo", 0) or 0)
+
+    if cv_k > 1 and total_steps > cv_k:
+        # Combinatorial (contiguous) purged CV: split into K folds, compute validation metrics
+        fold_len = max(1, total_steps // cv_k)
+        ic_vals = []
+        ic_stds = []
+        turns = []
+        shs = []
+        # Collect processed predictions on validation segments for HOF/penalties
+        val_pred_segs: list[np.ndarray] = []
+        for f in range(cv_k):
+            start = f * fold_len
+            end = total_steps if f == cv_k - 1 else (f + 1) * fold_len
+            # Validation slice
+            va = slice(start, end)
+            # Embargo region around validation slice (excluded from training, irrelevant here since we only need val metrics)
+            # Compute IC mean (optionally with decay within fold)
+            arr_va = np.array(daily_ic_values[va], dtype=float)
+            if arr_va.size == 0:
+                continue
+            if hl > 0.0:
+                w_va = _decay_weights(arr_va.size, hl)
+                ic_va = float(np.sum(w_va * arr_va) / (np.sum(w_va) if np.sum(w_va) > 0 else 1.0))
+            else:
+                ic_va = float(np.mean(arr_va))
+            ic_vals.append(ic_va)
+            ic_stds.append(float(np.std(arr_va, ddof=0)))
+            # Turnover on validation positions
+            pos_va = _neutralize(full_processed_predictions_matrix[va])
+            if pos_va.shape[0] > 1:
+                per_step_va = np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1)/2.0
+                if hl > 0.0:
+                    wt_va = _decay_weights(per_step_va.size + 1, hl)[1:]
+                    turn_va = float(np.sum(wt_va * per_step_va) / (np.sum(wt_va) if np.sum(wt_va) > 0 else 1.0))
+                else:
+                    turn_va = float(np.mean(per_step_va))
+            else:
+                turn_va = 0.0
+            turns.append(turn_va)
+            # Sharpe proxy on validation pnl
+            pnl_va = np.array(daily_pnl_values[va], dtype=float)
+            if pnl_va.size > 1:
+                m = float(np.mean(pnl_va))
+                s = float(np.std(pnl_va, ddof=0))
+                sharpe_va = float(m / s) if s > 1e-12 else 0.0
+            else:
+                sharpe_va = 0.0
+            shs.append(sharpe_va)
+            # Accumulate processed preds for HOF correlation penalty
+            try:
+                seg = full_processed_predictions_matrix[va]
+                if seg.size > 0:
+                    val_pred_segs.append(seg)
+            except Exception:
+                pass
+        # Aggregate across folds (simple mean)
+        mean_daily_ic = float(np.mean(ic_vals)) if ic_vals else mean_daily_ic
+        ic_std = float(np.mean(ic_stds)) if ic_stds else ic_std
+        turnover_proxy = float(np.mean(turns)) if turns else turnover_proxy
+        sharpe_proxy = float(np.mean(shs)) if shs else sharpe_proxy
+        processed_for_hof = np.vstack(val_pred_segs) if val_pred_segs else full_processed_predictions_matrix
+    elif use_splits and t_points > 0 and v_points > 0 and (t_points + v_points) <= total_steps:
         tr = slice(0, t_points)
         va = slice(t_points, t_points + v_points)
         if hl > 0.0:
