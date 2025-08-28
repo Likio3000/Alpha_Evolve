@@ -20,11 +20,16 @@ wheels/
 # ruff cache
 /.ruff_cache
 
+# Alignment cache
+/.cache/
+
+# Logs
+*.log
+
 # S&P 500 data (keep README tracked)
 data_sp500/*
 !data_sp500/README.md
-
-# Logs
+# Legacy UI (deprecated)
 UI_alphas_lab/logs
 UI_alphas_lab/*.log
 UI_alphas_lab/npm-debug.log*
@@ -53,7 +58,7 @@ UI_alphas_lab/*.sw?
 UI_alphas_lab/pythonCode.ts
 alpha-evolve-pipeline-UI/package-lock.json
 
-# Alpha Evolve Pipeline UI (Node/React/etc.)
+# Alpha Evolve Pipeline UI (legacy)
 alpha-evolve-pipeline-UI/node_modules/
 alpha-evolve-pipeline-UI/.next/
 alpha-evolve-pipeline-UI/.nuxt/

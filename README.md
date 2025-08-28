@@ -8,7 +8,7 @@ Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
 - Python 3.12 or higher
 - See `requirements.txt` for Python package dependencies
-- Node.js for the optional [pipeline UI](alpha-evolve-pipeline-UI/README.md) which helps configure pipeline parameters
+- Node.js for the optional [pipeline UI](dashboard-ui/README.md) which helps configure pipeline parameters
 
 ## Setup
 
@@ -47,7 +47,7 @@ data/
 └── BTC.csv
 ```
 
-You can override the location with the `--data-dir` option when running the
+You can override the location with the `--data_dir` option when running the
 pipeline.
 
 ### Sector mapping (crypto vs SP500)
@@ -87,6 +87,13 @@ summary and should complete without failures:
 
 ```bash
 pytest -q
+```
+
+For a quick end-to-end sanity check, run:
+
+```bash
+sh scripts/smoke_run.sh
+```
 
 ## Configuration layering (TOML/YAML, env, CLI)
 
@@ -183,9 +190,6 @@ To enable fast linting/formatting locally:
 ```bash
 pip install pre-commit
 pre-commit install
-```
-
-This installs hooks for Ruff (lint + format) and Black.
 ```
 
 ## Usage
