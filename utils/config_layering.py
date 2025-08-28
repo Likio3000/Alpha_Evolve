@@ -1,3 +1,5 @@
+"""Layer configuration values from files, environment variables, and CLI arguments, letting later sources override earlier ones."""
+
 from __future__ import annotations
 from dataclasses import fields as dc_fields
 from typing import Any, Dict, Tuple, Type

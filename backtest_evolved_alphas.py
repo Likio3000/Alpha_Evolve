@@ -17,7 +17,11 @@ from utils.data_loading_common import DataLoadError
 from utils.logging_setup import setup_logging
 from utils.errors import BacktestError
 from utils.cli import add_dataclass_args
-from utils.config_layering import load_config_file, layer_dataclass_config, _flatten_sectioned_config  # type: ignore
+from utils.config_layering import (
+    load_config_file,
+    layer_dataclass_config,
+    _flatten_sectioned_config,
+)  # type: ignore
 from alpha_framework import (
     AlphaProgram,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
@@ -28,6 +32,7 @@ from backtesting_components import (
     load_and_align_data_for_backtest,
     backtest_cross_sectional_alpha,
 )
+
 
 def _derive_state_vars(prog: AlphaProgram) -> Dict[str, str]:
     """Infer required state variables from the program structure."""
@@ -50,11 +55,33 @@ def _derive_state_vars(prog: AlphaProgram) -> Dict[str, str]:
     state_vars.setdefault("rolling_mean_custom", "vector")
     return state_vars
 
+
 # --------------------------------------------------------------------------- #
 #  helpers                                                                    #
 # --------------------------------------------------------------------------- #
-def load_programs_from_pickle(n_to_load: int, pickle_filepath: str) \
-        -> List[Tuple[AlphaProgram, float]]:
+def load_programs_from_pickle(
+    n_to_load: int, pickle_filepath: str
+) -> List[Tuple[AlphaProgram, float]]:
+    """Load the top evolved programs from a pickle file.
+
+    Parameters
+    ----------
+    n_to_load:
+        Number of program/score pairs to return.
+    pickle_filepath:
+        Path to the pickle file produced by the evolution stage.
+
+    Returns
+    -------
+    list of tuple[AlphaProgram, float]
+        Up to ``n_to_load`` ``(program, metric)`` pairs from the pickle.
+
+    Raises
+    ------
+    BacktestError
+        If the pickle file is missing or cannot be deserialised.
+    """
+
     if not Path(pickle_filepath).exists():
         raise BacktestError(f"Pickle file not found: {pickle_filepath}")
     try:
@@ -72,28 +99,49 @@ def parse_args() -> tuple[BacktestConfig, argparse.Namespace]:
     p = argparse.ArgumentParser(description="Back-test evolved cross-sectional alphas")
 
     # ­­­ file / misc (stay as raw CLI params) ­­­ #
-    p.add_argument("--input", default="evolved_top_alphas.pkl",
-                   help="Pickle produced by the evolution stage")
-    p.add_argument("--outdir", default="evolved_bt_cs_results",
-                   help="Directory to write CSV summaries")
+    p.add_argument(
+        "--input",
+        default="evolved_top_alphas.pkl",
+        help="Pickle produced by the evolution stage",
+    )
+    p.add_argument(
+        "--outdir",
+        default="evolved_bt_cs_results",
+        help="Directory to write CSV summaries",
+    )
     p.add_argument("--debug_prints", action="store_true")
     p.add_argument("--annualization_factor_override", type=float, default=None)
-    p.add_argument("--log-level", default="INFO",
-                   help="Logging level (DEBUG, INFO, WARNING, ERROR)")
-    p.add_argument("--log-file", default=None,
-                   help="Optional log file path")
-    p.add_argument("--config", default=None,
-                   help="Optional TOML/YAML config file (file < env < CLI)")
+    p.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (DEBUG, INFO, WARNING, ERROR)",
+    )
+    p.add_argument("--log-file", default=None, help="Optional log file path")
+    p.add_argument(
+        "--config",
+        default=None,
+        help="Optional TOML/YAML config file (file < env < CLI)",
+    )
     # Cache controls (mirror pipeline)
-    p.add_argument("--disable-align-cache", action="store_true",
-                   help="Disable alignment cache (AE_DISABLE_ALIGN_CACHE=1)")
-    p.add_argument("--align-cache-dir", default=None,
-                   help="Custom directory for alignment cache (AE_ALIGN_CACHE_DIR)")
+    p.add_argument(
+        "--disable-align-cache",
+        action="store_true",
+        help="Disable alignment cache (AE_DISABLE_ALIGN_CACHE=1)",
+    )
+    p.add_argument(
+        "--align-cache-dir",
+        default=None,
+        help="Custom directory for alignment cache (AE_ALIGN_CACHE_DIR)",
+    )
 
     # BacktestConfig flags auto-added from dataclass (normalized only; no aliases)
     choices_map = {
         "scale": ["zscore", "rank", "sign", "madz", "winsor"],
-        "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
+        "max_lookback_data_option": [
+            "common_1200",
+            "specific_long_10k",
+            "full_overlap",
+        ],
     }
     add_dataclass_args(p, BacktestConfig, choices_map=choices_map)
 
@@ -183,10 +231,13 @@ def run(
     except DataLoadError as e:
         lg.error("Backtest data loading failed: %s", e)
         raise
-    lg.info("%d symbols | %d bars (%s → %s)",
-            len(stock_symbols), len(common_index),
-            getattr(common_index, 'min', lambda: '?')(),
-            getattr(common_index, 'max', lambda: '?')())
+    lg.info(
+        "%d symbols | %d bars (%s → %s)",
+        len(stock_symbols),
+        len(common_index),
+        getattr(common_index, "min", lambda: "?")(),
+        getattr(common_index, "max", lambda: "?")(),
+    )
 
     # Load programs from provided pickle
     programs = load_programs_from_pickle(cfg.top_to_backtest, str(programs_pickle))
@@ -214,9 +265,11 @@ def run(
             scalar_feature_names=SCALAR_FEATURE_NAMES,
             cross_sectional_feature_vector_names=CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
             debug_prints=debug_prints,
-            annualization_factor=(annualization_factor_override
-                                  if annualization_factor_override is not None
-                                  else cfg.annualization_factor),
+            annualization_factor=(
+                annualization_factor_override
+                if annualization_factor_override is not None
+                else cfg.annualization_factor
+            ),
             stop_loss_pct=cfg.stop_loss_pct,
             sector_neutralize_positions=cfg.sector_neutralize_positions,
             volatility_target=cfg.volatility_target,
@@ -233,38 +286,49 @@ def run(
             if ts_len > 0:
                 dates = list(common_index[:ts_len])
                 import pandas as _pd
-                df_ts = _pd.DataFrame({
-                    "date": dates,
-                    "ret_net": metrics.get("RetNet"),
-                    "equity": metrics.get("EquityCurve"),
-                    "exposure_mult": metrics.get("ExposureMult"),
-                    "drawdown": metrics.get("Drawdown"),
-                    "stop_hits": metrics.get("StopHitsPerBar"),
-                })
+
+                df_ts = _pd.DataFrame(
+                    {
+                        "date": dates,
+                        "ret_net": metrics.get("RetNet"),
+                        "equity": metrics.get("EquityCurve"),
+                        "exposure_mult": metrics.get("ExposureMult"),
+                        "drawdown": metrics.get("Drawdown"),
+                        "stop_hits": metrics.get("StopHitsPerBar"),
+                    }
+                )
                 ts_path = outdir / f"alpha_{idx:02d}_timeseries.csv"
                 df_ts.to_csv(ts_path, index=False)
                 metrics["TimeseriesFile"] = str(ts_path)
                 metrics["TS"] = ts_path.name  # short, tidy link label for tables
                 # Drop bulky arrays from summary entry
-                for k in ("RetNet", "EquityCurve", "ExposureMult", "Drawdown", "StopHitsPerBar"):
+                for k in (
+                    "RetNet",
+                    "EquityCurve",
+                    "ExposureMult",
+                    "Drawdown",
+                    "StopHitsPerBar",
+                ):
                     metrics.pop(k, None)
         except Exception:
             pass
 
         metrics["Ops"] = prog.size
-        metrics.update({
-            "AlphaID":        f"Alpha_{idx:02d}",
-            "OriginalMetric": evo_ic,
-            "Program":        prog.to_string(max_len=1_000_000_000),
-        })
+        metrics.update(
+            {
+                "AlphaID": f"Alpha_{idx:02d}",
+                "OriginalMetric": evo_ic,
+                "Program": prog.to_string(max_len=1_000_000_000),
+            }
+        )
         results.append(metrics)
 
         lg.info(
             " └─ Sharpe %+0.3f  AnnRet %6.2f%%  MaxDD %6.2f%%  Turnover %.4f",
-            metrics.get('Sharpe', 0.0),
-            metrics.get('AnnReturn', 0.0) * 100,
-            metrics.get('MaxDD', 0.0) * 100,
-            metrics.get('Turnover', 0.0),
+            metrics.get("Sharpe", 0.0),
+            metrics.get("AnnReturn", 0.0) * 100,
+            metrics.get("MaxDD", 0.0) * 100,
+            metrics.get("Turnover", 0.0),
         )
 
     # Save summaries
@@ -294,6 +358,7 @@ def main() -> None:
     # Apply cache controls early so loaders honor them
     try:
         import os
+
         if getattr(cli, "disable_align_cache", False):
             os.environ["AE_DISABLE_ALIGN_CACHE"] = "1"
         if getattr(cli, "align_cache_dir", None):
@@ -330,10 +395,13 @@ def main() -> None:
         cfg.min_common_points,
         cfg.eval_lag,
     )
-    logger.info("%d symbols | %d bars (%s → %s)",
-                len(stock_symbols), len(common_index),
-                getattr(common_index, 'min', lambda: '?')(),
-                getattr(common_index, 'max', lambda: '?')())
+    logger.info(
+        "%d symbols | %d bars (%s → %s)",
+        len(stock_symbols),
+        len(common_index),
+        getattr(common_index, "min", lambda: "?")(),
+        getattr(common_index, "max", lambda: "?")(),
+    )
 
     # Load programs
     try:
@@ -365,9 +433,11 @@ def main() -> None:
             scalar_feature_names=SCALAR_FEATURE_NAMES,
             cross_sectional_feature_vector_names=CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
             debug_prints=cli.debug_prints,
-            annualization_factor=(cli.annualization_factor_override
-                                  if cli.annualization_factor_override is not None
-                                  else cfg.annualization_factor),
+            annualization_factor=(
+                cli.annualization_factor_override
+                if cli.annualization_factor_override is not None
+                else cfg.annualization_factor
+            ),
             stop_loss_pct=cfg.stop_loss_pct,
             sector_neutralize_positions=cfg.sector_neutralize_positions,
             volatility_target=cfg.volatility_target,
@@ -384,36 +454,47 @@ def main() -> None:
             if ts_len > 0:
                 dates = list(common_index[:ts_len])
                 import pandas as _pd
-                df_ts = _pd.DataFrame({
-                    "date": dates,
-                    "ret_net": metrics.get("RetNet"),
-                    "equity": metrics.get("EquityCurve"),
-                    "exposure_mult": metrics.get("ExposureMult"),
-                    "drawdown": metrics.get("Drawdown"),
-                    "stop_hits": metrics.get("StopHitsPerBar"),
-                })
+
+                df_ts = _pd.DataFrame(
+                    {
+                        "date": dates,
+                        "ret_net": metrics.get("RetNet"),
+                        "equity": metrics.get("EquityCurve"),
+                        "exposure_mult": metrics.get("ExposureMult"),
+                        "drawdown": metrics.get("Drawdown"),
+                        "stop_hits": metrics.get("StopHitsPerBar"),
+                    }
+                )
                 ts_path = outdir / f"alpha_{idx:02d}_timeseries.csv"
                 df_ts.to_csv(ts_path, index=False)
                 metrics["TimeseriesFile"] = str(ts_path)
-                for k in ("RetNet", "EquityCurve", "ExposureMult", "Drawdown", "StopHitsPerBar"):
+                for k in (
+                    "RetNet",
+                    "EquityCurve",
+                    "ExposureMult",
+                    "Drawdown",
+                    "StopHitsPerBar",
+                ):
                     metrics.pop(k, None)
         except Exception:
             pass
 
         metrics["Ops"] = prog.size
-        metrics.update({
-            "AlphaID":        f"Alpha_{idx:02d}",
-            "OriginalMetric": evo_ic,
-            "Program":        prog.to_string(max_len=1_000_000_000),
-        })
+        metrics.update(
+            {
+                "AlphaID": f"Alpha_{idx:02d}",
+                "OriginalMetric": evo_ic,
+                "Program": prog.to_string(max_len=1_000_000_000),
+            }
+        )
         results.append(metrics)
 
         logger.info(
             " └─ Sharpe %+0.3f  AnnRet %6.2f%%  MaxDD %6.2f%%  Turnover %.4f",
-            metrics.get('Sharpe', 0.0),
-            metrics.get('AnnReturn', 0.0) * 100,
-            metrics.get('MaxDD', 0.0) * 100,
-            metrics.get('Turnover', 0.0),
+            metrics.get("Sharpe", 0.0),
+            metrics.get("AnnReturn", 0.0) * 100,
+            metrics.get("MaxDD", 0.0) * 100,
+            metrics.get("Turnover", 0.0),
         )
 
     # Save summaries

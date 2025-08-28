@@ -8,6 +8,14 @@ def compute_basic_features(df: pd.DataFrame) -> pd.DataFrame:
     open, high, low, close. Does not compute ``ret_fwd`` here as
     alignment code recomputes it consistently after trimming.
     """
+    required_cols = {"open", "high", "low", "close"}
+    missing = required_cols.difference(df.columns)
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        raise ValueError(
+            f"Missing required column(s) for compute_basic_features: {missing_list}"
+        )
+
     df = df.copy()
     for w in (5, 10, 20, 30):
         df[f"ma{w}"] = df["close"].rolling(w, min_periods=1).mean()

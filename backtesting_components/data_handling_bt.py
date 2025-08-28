@@ -23,6 +23,44 @@ def load_and_align_data_for_backtest(
     min_common_points_param: int,
     eval_lag: int = 1,
 ) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
+    """Load per-symbol data, align indices and return a bundle for backtesting.
+
+    Parameters
+    ----------
+    data_dir_param : str
+        Path to a directory containing one file per symbol. Each file is
+        loaded and augmented with rolling features before alignment.
+    strategy_param : str
+        Name of the backtest strategy. The strategy determines how the
+        alignment is performed and may introduce additional filtering, e.g.
+        the ``specific_long_10k`` strategy requires enough long files.
+    min_common_points_param : int
+        Minimum number of overlapping data points required across symbols
+        after alignment.
+    eval_lag : int, optional
+        Forward-return evaluation lag, by default ``1``.
+
+    Returns
+    -------
+    Tuple[OrderedDict[str, pandas.DataFrame], pandas.DatetimeIndex, List[str]]
+        A mapping of stock symbols to their aligned dataframes, the common
+        DatetimeIndex shared by all symbols, and the ordered list of symbols
+        participating in the backtest.
+
+    Notes
+    -----
+    An alignment cache is consulted before any expensive computation. If a
+    cached bundle for the given parameters is found, it is returned directly.
+    Otherwise, the data are loaded and aligned and the resulting bundle is
+    saved to the cache for subsequent calls.
+
+    Raises
+    ------
+    DataLoadError
+        Raised when the ``specific_long_10k`` strategy does not have at least
+        two symbols meeting ``min_common_points_param`` or when fewer than two
+        symbols remain after alignment.
+    """
     # Cache key
     key = compute_align_cache_key(
         data_dir=data_dir_param,

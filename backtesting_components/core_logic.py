@@ -118,6 +118,86 @@ def backtest_cross_sectional_alpha(
     dd_limit: float = 0.0,
     dd_reduction: float = 0.5,
 ) -> Dict[str, Any]:
+    """Backtest a cross‑sectional trading rule.
+
+    Parameters
+    ----------
+    prog : AlphaProgram
+        Program that produces a raw signal for each asset on every bar.
+    aligned_dfs : OrderedDict[str, pd.DataFrame]
+        Per‑symbol data frames aligned on ``common_time_index``.  Each data
+        frame must provide at least ``ret_fwd`` (next bar return), ``close``,
+        ``high`` and ``low`` columns.  Additional feature columns referenced by
+        ``scalar_feature_names`` and ``cross_sectional_feature_vector_names``
+        are expected to be present as well.
+    common_time_index : pd.DatetimeIndex
+        Ordered timestamps over which the backtest iterates.
+    stock_symbols : list[str]
+        Ordered universe of symbols matching the keys of ``aligned_dfs``.
+    n_stocks : int
+        Size of the universe; used for array allocations.
+    fee_bps : float
+        One‑way transaction cost in basis points.
+    lag : int
+        Execution delay in bars.  Positions are shifted by this amount.
+    hold : int
+        Holding period.  When greater than one, positions are averaged over
+        the previous ``hold`` bars.
+    scale_method : str
+        Cross‑sectional scaling applied to raw signals (e.g. ``zscore``,
+        ``rank``, ``sign``, ``winsor``).
+    long_short_n : int
+        When positive, constructs an equal‑weighted long/short basket of the
+        top/bottom ``long_short_n`` names each bar.
+    initial_state_vars_config : Dict[str, str]
+        Mapping of state variable names to their type (``vector``, ``matrix``,
+        or scalar) used to initialise ``program_state`` returned by
+        ``prog.new_state``.
+    scalar_feature_names : list[str]
+        Names of scalar features provided to the program.
+    cross_sectional_feature_vector_names : list[str]
+        Names of vector features provided to the program.
+    winsor_p : float, optional
+        Tail probability used when ``scale_method`` is ``"winsor"``.
+    debug_prints : bool, optional
+        If ``True`` prints intermediate diagnostics.
+    annualization_factor : float or None, optional
+        Bars per year used for annualising returns.  When ``None`` the value
+        is inferred from ``common_time_index`` spacing.
+    stop_loss_pct : float, optional
+        Intrabar percentage stop loss applied when ``lag == 1``.
+
+    Optional Risk Controls
+    ----------------------
+    sector_neutralize_positions : bool
+        Demeans positions within sector groups obtained from
+        ``get_sector_groups``.
+    volatility_target : float
+        Target portfolio volatility.  Positions are scaled to reach this
+        target using a ``volatility_lookback`` window and are further bounded
+        by ``max_leverage``/``min_leverage``.
+    dd_limit : float
+        Maximum allowed drawdown.  If breached, exposure is multiplied by
+        ``dd_reduction``.
+
+    Assumptions
+    -----------
+    The input data frames are assumed to be free of missing timestamps and to
+    contain numeric data.  Sector identifiers derived from
+    ``get_sector_groups`` are expected to be non‑zero for at least one asset.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Dictionary of performance metrics including ``Sharpe``,
+        ``AnnReturn``, ``AnnVol``, ``MaxDD``, ``Turnover`` and diagnostic
+        series such as ``EquityCurve`` and ``ExposureMult``.
+
+    Side Effects
+    ------------
+    The function mutates ``program_state`` in place and may emit debug
+    information to stdout when ``debug_prints`` is enabled.
+    """
     
     program_state: Dict[str, Any] = prog.new_state()
     for s_name, s_type in initial_state_vars_config.items():

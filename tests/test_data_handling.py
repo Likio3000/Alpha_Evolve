@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from evolution_components.data_handling import (
@@ -9,6 +10,7 @@ from evolution_components.data_handling import (
 from config import DEFAULT_CRYPTO_SECTOR_MAPPING
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
 from utils.data_loading_common import DataLoadError
+from utils.features import compute_basic_features
 
 DATA_DIR = "tests/data/good"
 MISSING_DIR = "tests/data/missing_cols"
@@ -84,3 +86,25 @@ def test_get_sector_groups_example_symbols():
         DEFAULT_CRYPTO_SECTOR_MAPPING["BONK"],
     ]
     assert list(groups) == expected
+
+
+@pytest.mark.parametrize(
+    "missing_cols",
+    [[], ["open"], ["high"], ["low"], ["close"]],
+)
+def test_compute_basic_features(missing_cols):
+    base_df = pd.DataFrame(
+        {
+            "open": [1.0, 2.0],
+            "high": [1.1, 2.1],
+            "low": [0.9, 1.9],
+            "close": [1.05, 2.05],
+        }
+    )
+    df = base_df.drop(columns=missing_cols)
+    if missing_cols:
+        with pytest.raises(ValueError):
+            compute_basic_features(df)
+    else:
+        result = compute_basic_features(df)
+        assert "ret_1d" in result.columns

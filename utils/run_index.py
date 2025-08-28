@@ -1,9 +1,10 @@
-from __future__ import annotations
 """
 Lightweight helpers to index pipeline runs and read artefacts for UI use.
 
 Functions avoid heavy deps; CSVs are parsed via the standard library.
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, List, Optional, Any
