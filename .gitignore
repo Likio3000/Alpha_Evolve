@@ -25,6 +25,8 @@ wheels/
 
 # Logs
 *.log
+logs/
+*.pid
 
 # S&P 500 data (keep README tracked)
 data_sp500/*

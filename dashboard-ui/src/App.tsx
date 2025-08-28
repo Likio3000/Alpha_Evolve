@@ -18,7 +18,11 @@ type EventMsg =
   | { type: 'diag'; data: any }
   | { type: 'log'; raw: string }
 
-const API = (typeof window !== 'undefined' ? window.location.origin.replace(/:\d+$/, ':8000') : 'http://127.0.0.1:8000')
+// Backend API base URL. Prefer Vite env var if provided; otherwise default to port 8001.
+// When running the dev server, set VITE_API_URL in .env.local to override.
+const API = (typeof window !== 'undefined'
+  ? (import.meta as any)?.env?.VITE_API_URL || window.location.origin.replace(/:\\d+$/, ':8001')
+  : 'http://127.0.0.1:8001')
 
 const App: React.FC = () => {
   const [status, setStatus] = useState('idle')
