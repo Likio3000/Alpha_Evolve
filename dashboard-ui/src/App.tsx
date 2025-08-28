@@ -7,6 +7,8 @@ import JaccardHeatmap from './components/JaccardHeatmap'
 import Inspector from './components/Inspector'
 import FitnessHistogram from './components/FitnessHistogram'
 import TopKScatter from './components/TopKScatter'
+import BacktestTable from './components/BacktestTable'
+import TimeseriesChart from './components/TimeseriesChart'
 
 type EventMsg =
   | { type: 'status'; msg: string; code?: number; args?: string[] }
@@ -29,7 +31,11 @@ const App: React.FC = () => {
   const [gens, setGens] = useState<any[]>([])
   const [progress, setProgress] = useState<{ gen: number; completed: number; total: number; best?: number; median?: number; elapsed_sec?: number; eta_sec?: number } | null>(null)
   const [selectedProg, setSelectedProg] = useState<any | null>(null)
+  const [btItems, setBtItems] = useState<any[] | null>(null)
+  const [selectedAlpha, setSelectedAlpha] = useState<string | null>(null)
+  const [tsData, setTsData] = useState<any | null>(null)
   const esRef = useRef<EventSource | null>(null)
+  const bootstrapped = useRef(false)
 
   const start = useCallback(async () => {
     setStatus('starting')
@@ -63,7 +69,13 @@ const App: React.FC = () => {
         else if (msg.type === 'score') {
           setScores(prev => { const next = prev.concat(msg.sharpe_best); setBest(b => (b==null? msg.sharpe_best : Math.max(b, msg.sharpe_best))); return next })
         }
-        else if (msg.type === 'final') setLastRun({ run_dir: msg.run_dir, sharpe_best: msg.sharpe_best })
+        else if (msg.type === 'final') {
+          setLastRun({ run_dir: msg.run_dir, sharpe_best: msg.sharpe_best })
+          // auto-pull backtest summary for the finished run
+          if (msg.run_dir) {
+            fetch(`${API}/api/backtest-summary?run_dir=${encodeURIComponent(msg.run_dir)}`).then(r=>r.json()).then(setBtItems).catch(()=>{})
+          }
+        }
         else if (msg.type === 'diag') setGens(prev => prev.concat(msg.data))
         else if ((msg as any).type === 'progress') setProgress((msg as any).data)
         else if (msg.type === 'log') setLogs(prev => (prev.length > 1000 ? prev.slice(-1000) : prev).concat(msg.raw))
@@ -78,6 +90,42 @@ const App: React.FC = () => {
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     setStatus('stopped')
   }, [jobId])
+
+  // On mount, pull last-run quick info and backtest summary if present
+  useEffect(() => {
+    if (bootstrapped.current) return
+    bootstrapped.current = true
+    ;(async () => {
+      try {
+        const lr = await (await fetch(`${API}/api/last-run`)).json()
+        setLastRun(lr)
+        if (lr?.run_dir) {
+          try {
+            const items = await (await fetch(`${API}/api/backtest-summary?run_dir=${encodeURIComponent(lr.run_dir)}`)).json()
+            setBtItems(items)
+          } catch {}
+        }
+      } catch {}
+    })()
+  }, [])
+
+  const refreshBacktest = useCallback(async () => {
+    if (!lastRun.run_dir) return
+    try {
+      const items = await (await fetch(`${API}/api/backtest-summary?run_dir=${encodeURIComponent(lastRun.run_dir)}`)).json()
+      setBtItems(items)
+    } catch {}
+  }, [lastRun.run_dir])
+
+  const selectAlpha = useCallback(async (alphaId: string, tsFile?: string) => {
+    setSelectedAlpha(alphaId)
+    setTsData(null)
+    try {
+      const qs = tsFile ? `file=${encodeURIComponent(tsFile)}` : `alpha_id=${encodeURIComponent(alphaId)}`
+      const data = await (await fetch(`${API}/api/alpha-timeseries?run_dir=${encodeURIComponent(lastRun.run_dir || '')}&${qs}`)).json()
+      setTsData(data)
+    } catch {}
+  }, [lastRun.run_dir])
 
   const sparkline = useMemo(() => {
     if (scores.length === 0) return null
@@ -190,6 +238,24 @@ const App: React.FC = () => {
         <div style={{background:'#0b1220', padding:12, borderRadius:8}}>
           <div style={{fontWeight:600, marginBottom:8}}>Inspector</div>
           <Inspector item={selectedProg} />
+        </div>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'1.4fr 1fr', gap:12, marginTop:12}}>
+        <div style={{background:'#0b1220', padding:12, borderRadius:8}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div style={{fontWeight:600, marginBottom:8}}>Backtest Summary</div>
+            <button onClick={refreshBacktest} style={{background:'#1e293b', color:'#e2e8f0', border:'1px solid #334155', padding:'6px 10px', borderRadius:6}}>Refresh</button>
+          </div>
+          <BacktestTable items={btItems || []} onSelect={(row:any)=> selectAlpha(row.AlphaID, row.TimeseriesFile)} />
+        </div>
+        <div style={{background:'#0b1220', padding:12, borderRadius:8}}>
+          <div style={{fontWeight:600, marginBottom:8}}>Alpha Timeseries {selectedAlpha? `(${selectedAlpha})` : ''}</div>
+          {tsData ? (
+            <TimeseriesChart series={tsData} width={520} height={280} />
+          ) : (
+            <div style={{color:'#94a3b8', fontSize:12}}>Select a backtest row to load timeseries</div>
+          )}
         </div>
       </div>
 

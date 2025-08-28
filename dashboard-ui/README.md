@@ -27,9 +27,13 @@ Open http://localhost:5173. The app connects to http://127.0.0.1:8000 by default
 - Per‑generation snapshot table (best fitness, median, quantiles, eval seconds)
 - Last run folder + best backtest Sharpe
 - Live log tail
+- Backtest summary panel (Sharpe, AnnRet, MaxDD, Turnover, Ops)
+- Per‑alpha timeseries chart (equity and drawdown)
 
 ## Notes
 
 - The backend parses `DIAG {json}` lines emitted per generation by evolve_alphas.py and forwards them as SSE events.
 - For production, consider adding auth to POST /api/run and restricting CORS origins.
-
+- New endpoints used by the UI:
+  - `GET /api/backtest-summary?run_dir=<path>` → latest backtest summary JSON
+  - `GET /api/alpha-timeseries?run_dir=<path>&alpha_id=Alpha_01` → per‑alpha timeseries

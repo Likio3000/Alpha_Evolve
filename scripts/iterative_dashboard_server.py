@@ -302,20 +302,58 @@ async def backtest_summary(run_dir: str | None = None):
     """Return the backtest summary JSON for a run (latest if not specified)."""
     rd = Path(run_dir) if run_dir else _resolve_latest_run_dir()
     if rd is None:
-        raise HTTPException(status_code=404, detail="No run dir found")
+        # Be lenient for live runs: return empty list instead of 404
+        return []
     bt_dir = rd / "backtest_portfolio_csvs"
     if not bt_dir.exists():
-        raise HTTPException(status_code=404, detail="Backtest dir not found")
-    # Find the most recent summary JSON
-    cands = sorted(bt_dir.glob("backtest_summary_top*.json"))
-    if not cands:
-        raise HTTPException(status_code=404, detail="Backtest summary JSON not found")
+        return []
+    # Find the most recent summary JSON (fallback to CSV if JSON missing)
+    cands_json = sorted(bt_dir.glob("backtest_summary_top*.json"))
+    if cands_json:
+        try:
+            import json as _json
+            with open(cands_json[-1]) as fh:
+                return _json.load(fh)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load backtest summary JSON: {e}")
+    # Fallback: CSV
+    cands_csv = sorted(bt_dir.glob("backtest_summary_top*.csv"))
+    if not cands_csv:
+        # Not produced yet – return empty
+        return []
     try:
-        import json as _json
-        with open(cands[-1]) as fh:
-            return _json.load(fh)
+        import csv
+        rows = []
+        with open(cands_csv[-1], newline="") as fh:
+            rdr = csv.DictReader(fh)
+            for row in rdr:
+                # Coerce numeric fields to numbers for UI formatting
+                def _f(key: str) -> float | None:
+                    v = row.get(key)
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return float(v)
+                    except Exception:
+                        return None
+                def _i(key: str) -> int | None:
+                    v = row.get(key)
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return int(float(v))
+                    except Exception:
+                        return None
+                out = dict(row)
+                out["Sharpe"] = _f("Sharpe")
+                out["AnnReturn"] = _f("AnnReturn")
+                out["MaxDD"] = _f("MaxDD")
+                out["Turnover"] = _f("Turnover")
+                out["Ops"] = _i("Ops")
+                rows.append(out)
+        return rows
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load backtest summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load backtest summary CSV: {e}")
 
 
 def _safe_bt_dir_from_run(run_dir: Path | None) -> Path:

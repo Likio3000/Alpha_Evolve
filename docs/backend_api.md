@@ -42,3 +42,11 @@ Notes
 - The filesystem layout and filenames are designed to be stable across runs.
 - If you need an HTTP API, a minimal FastAPI app can import `utils/run_index` and forward these artefacts.
 
+HTTP API (iterative dashboard server)
+- `POST /api/run` → start an `auto_improve` job, returns `job_id`
+- `GET /api/events/{job_id}` → SSE stream (status, progress, diag, score)
+- `POST /api/stop/{job_id}` → stop a running job
+- `GET /api/last-run` → latest run_dir + best Sharpe
+- `GET /api/diagnostics?run_dir=...` → returns `diagnostics.json`
+- `GET /api/backtest-summary?run_dir=...` → returns backtest summary JSON (list of rows)
+- `GET /api/alpha-timeseries?run_dir=...&alpha_id=Alpha_01` → returns per‑alpha timeseries JSON for plotting
