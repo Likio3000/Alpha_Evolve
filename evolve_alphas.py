@@ -414,7 +414,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     # Per-gen population distribution and a snapshot of top-K
                     K = 5
                     events = el_module.get_eval_events() if hasattr(el_module, "get_eval_events") else []
-                    valid_scores = [r[1].fitness for r in eval_results if np.isfinite(r[1].fitness)]
+                    # Sort a copy for diagnostics to reflect current selection metric
+                    tmp_sorted = sorted(eval_results, key=lambda x: _sel_score(x[1]), reverse=True)
+                    valid_scores = [r[1].fitness for r in tmp_sorted if np.isfinite(r[1].fitness)]
                     q = None
                     if valid_scores:
                         arr = np.array(valid_scores)
@@ -427,7 +429,7 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             "count": int(arr.size),
                         }
                     top_summary = []
-                    for idx_in_pop, res in eval_results[:K]:
+                    for idx_in_pop, res in tmp_sorted[:K]:
                         prog = pop[idx_in_pop]
                         top_summary.append({
                             "fingerprint": prog.fingerprint,
@@ -459,9 +461,54 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         },
                         gen_eval_seconds=float(gen_eval_time),
                     )
+                    # Novelty vs HOF for best-of-gen (mean Spearman component)
+                    try:
+                        if tmp_sorted:
+                            best_res = tmp_sorted[0][1]
+                            pp = getattr(best_res, 'processed_predictions', None)
+                            mean_corr = None
+                            if pp is not None and pp.size > 0:
+                                mean_corr = hof_module.get_mean_corr_component_with_hof(pp.ravel())
+                            diag.enrich_last(novelty={"hof_mean_corr_best": float(mean_corr) if mean_corr is not None else 0.0})
+                    except Exception:
+                        pass
                     # Include a compact HOF snapshot for provenance
                     try:
                         diag.enrich_last(hof=hof_module.snapshot(limit=10))
+                        # Also include opcode sets for structural heatmaps (as lists for JSON)
+                        try:
+                            hof_sets = hof_module.get_hof_opcode_sets(limit=10)
+                            hof_sets_list = [list(s) for s in hof_sets]
+                            diag.enrich_last(hof_opcodes=hof_sets_list)
+                        except Exception:
+                            pass
+                        # Include correlation matrix among HOF rank prediction vectors (latest up to limit)
+                        try:
+                            fps, corr_mat = hof_module.get_rank_corr_matrix(limit=10, absolute=True)
+                            diag.enrich_last(hof_rank_corr={"fps": fps, "matrix": corr_mat})
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    # Add population histogram for live charts
+                    try:
+                        if valid_scores and q is not None:
+                            arr = np.array(valid_scores)
+                            lo = float(np.min(arr))
+                            hi = float(np.max(arr))
+                            if hi <= lo:
+                                hi = lo + 1e-6
+                            bins = np.linspace(lo, hi, 21)
+                            counts, edges = np.histogram(arr, bins=bins)
+                            diag.enrich_last(pop_hist={"edges": edges.tolist(), "counts": counts.astype(int).tolist()})
+                    except Exception:
+                        pass
+                    # Emit a structured per-generation diagnostic line for live dashboards
+                    try:
+                        import json as _json
+                        last_entry = diag.get_all()[-1] if hasattr(diag, "get_all") and diag.get_all() else None
+                        if last_entry is not None:
+                            logging.getLogger(__name__).info("DIAG %s", _json.dumps(last_entry))
                     except Exception:
                         pass
                 except Exception:

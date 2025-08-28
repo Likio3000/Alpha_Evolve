@@ -59,6 +59,20 @@ class JobState:
     def get_proc(self, job_id: str) -> subprocess.Popen | None:
         return self.procs.get(job_id)
 
+    def stop(self, job_id: str) -> bool:
+        p = self.procs.get(job_id)
+        if p is None:
+            return False
+        try:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except Exception:
+                p.kill()
+            return True
+        except Exception:
+            return False
+
 
 STATE = JobState()
 
@@ -137,6 +151,7 @@ async def start_run(payload: Dict[str, Any]):
         # Regexes to extract useful markers
         re_candidate = re.compile(r"^→ Candidate\s+(\d+)/(\d+):\s+(.*)$")
         re_sharpe = re.compile(r"Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)")
+        re_diag = re.compile(r"DIAG\s+(\{.*\})$")
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -152,15 +167,23 @@ async def start_run(payload: Dict[str, Any]):
                         "raw": line,
                     }))
                 else:
-                    ms = re_sharpe.search(line)
-                    if ms:
-                        q.put_nowait(json.dumps({
-                            "type": "score",
-                            "sharpe_best": float(ms.group(1)),
-                            "raw": line,
-                        }))
+                    md = re_diag.search(line)
+                    if md:
+                        try:
+                            diag_obj = json.loads(md.group(1))
+                            q.put_nowait(json.dumps({"type": "diag", "data": diag_obj}))
+                        except Exception:
+                            q.put_nowait(json.dumps({"type": "log", "raw": line}))
                     else:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
+                        ms = re_sharpe.search(line)
+                        if ms:
+                            q.put_nowait(json.dumps({
+                                "type": "score",
+                                "sharpe_best": float(ms.group(1)),
+                                "raw": line,
+                            }))
+                        else:
+                            q.put_nowait(json.dumps({"type": "log", "raw": line}))
         finally:
             code = proc.wait()
             q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
@@ -227,7 +250,65 @@ async def last_run():
     return {"run_dir": str(run_dir), "sharpe_best": bs}
 
 
+@app.post("/api/stop/{job_id}")
+async def stop(job_id: str):
+    ok = STATE.stop(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Unknown job id or already stopped")
+    return {"stopped": True}
+
+
+def _resolve_latest_run_dir() -> Path | None:
+    latest = PIPELINE_DIR / "LATEST"
+    try:
+        if latest.exists():
+            p = latest.read_text().strip()
+            if p:
+                run_path = Path(p)
+                return run_path if run_path.exists() else None
+    except Exception:
+        return None
+    return None
+
+
+@app.get("/api/diagnostics")
+async def diagnostics(run_dir: str | None = None):
+    """Return diagnostics.json content for a run (latest if not specified)."""
+    rd = Path(run_dir) if run_dir else _resolve_latest_run_dir()
+    if rd is None:
+        raise HTTPException(status_code=404, detail="No run dir found")
+    diag_path = rd / "diagnostics.json"
+    if not diag_path.exists():
+        raise HTTPException(status_code=404, detail="diagnostics.json not found")
+    try:
+        import json as _json
+        with open(diag_path) as fh:
+            return _json.load(fh)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load diagnostics: {e}")
+
+
+@app.get("/api/backtest-summary")
+async def backtest_summary(run_dir: str | None = None):
+    """Return the backtest summary JSON for a run (latest if not specified)."""
+    rd = Path(run_dir) if run_dir else _resolve_latest_run_dir()
+    if rd is None:
+        raise HTTPException(status_code=404, detail="No run dir found")
+    bt_dir = rd / "backtest_portfolio_csvs"
+    if not bt_dir.exists():
+        raise HTTPException(status_code=404, detail="Backtest dir not found")
+    # Find the most recent summary JSON
+    cands = sorted(bt_dir.glob("backtest_summary_top*.json"))
+    if not cands:
+        raise HTTPException(status_code=404, detail="Backtest summary JSON not found")
+    try:
+        import json as _json
+        with open(cands[-1]) as fh:
+            return _json.load(fh)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load backtest summary: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
-

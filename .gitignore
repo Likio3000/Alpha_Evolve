@@ -52,3 +52,60 @@ UI_alphas_lab/*.sw?
 ## Copied files
 UI_alphas_lab/pythonCode.ts
 alpha-evolve-pipeline-UI/package-lock.json
+
+# Alpha Evolve Pipeline UI (Node/React/etc.)
+alpha-evolve-pipeline-UI/node_modules/
+alpha-evolve-pipeline-UI/.next/
+alpha-evolve-pipeline-UI/.nuxt/
+alpha-evolve-pipeline-UI/.cache/
+alpha-evolve-pipeline-UI/.turbo/
+alpha-evolve-pipeline-UI/.vite/
+alpha-evolve-pipeline-UI/dist/
+alpha-evolve-pipeline-UI/build/
+alpha-evolve-pipeline-UI/coverage/
+alpha-evolve-pipeline-UI/.vercel/
+alpha-evolve-pipeline-UI/.netlify/
+alpha-evolve-pipeline-UI/.storybook-out/
+alpha-evolve-pipeline-UI/.expo/
+
+# UI environment files and local configs
+alpha-evolve-pipeline-UI/.env
+alpha-evolve-pipeline-UI/.env.*
+alpha-evolve-pipeline-UI/*.local
+
+# UI logs and OS/editor cruft
+alpha-evolve-pipeline-UI/*.log
+alpha-evolve-pipeline-UI/npm-debug.log*
+alpha-evolve-pipeline-UI/yarn-debug.log*
+alpha-evolve-pipeline-UI/yarn-error.log*
+alpha-evolve-pipeline-UI/pnpm-debug.log*
+alpha-evolve-pipeline-UI/.vscode/
+alpha-evolve-pipeline-UI/.idea/
+alpha-evolve-pipeline-UI/.DS_Store
+alpha-evolve-pipeline-UI/*.sw?
+
+# Dashboard UI
+dashboard-ui/node_modules/
+dashboard-ui/.next/
+dashboard-ui/.nuxt/
+dashboard-ui/.cache/
+dashboard-ui/.turbo/
+dashboard-ui/.vite/
+dashboard-ui/dist/
+dashboard-ui/build/
+dashboard-ui/coverage/
+dashboard-ui/.vercel/
+dashboard-ui/.netlify/
+dashboard-ui/.expo/
+dashboard-ui/*.log
+dashboard-ui/npm-debug.log*
+dashboard-ui/yarn-debug.log*
+dashboard-ui/yarn-error.log*
+dashboard-ui/pnpm-debug.log*
+dashboard-ui/.vscode/
+dashboard-ui/.idea/
+dashboard-ui/.DS_Store
+dashboard-ui/*.sw?
+dashboard-ui/.env
+dashboard-ui/.env.*
+dashboard-ui/*.local

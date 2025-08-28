@@ -139,6 +139,7 @@ def _write_summary_json(run_dir: Path, pickle_path: Path, summary_csv: Path) -> 
     """
     summary_json = summary_csv.with_suffix(".json")
     data = {
+        "schema_version": 1,
         "run_dir": str(run_dir),
         "programs_pickle": str(pickle_path),
         "backtest_summary_csv": str(summary_csv),
@@ -152,6 +153,17 @@ def _write_summary_json(run_dir: Path, pickle_path: Path, summary_csv: Path) -> 
         import pandas as _pd
         df = _pd.read_csv(summary_csv)
         data["backtested_alphas"] = int(len(df))
+        # Best Sharpe and a few handy fields for UI consumption
+        if "Sharpe" in df.columns and len(df) > 0:
+            best = df.sort_values("Sharpe", ascending=False).iloc[0]
+            data["best_metrics"] = {
+                "Sharpe": float(best.get("Sharpe", 0.0)),
+                "AnnReturn": float(best.get("AnnReturn", 0.0)),
+                "MaxDD": float(best.get("MaxDD", 0.0)),
+                "Ops": int(best.get("Ops", 0)),
+                "AlphaID": str(best.get("AlphaID", "")),
+                "TimeseriesFile": str(best.get("TimeseriesFile", "")),
+            }
     except Exception:
         pass
     out = run_dir / "SUMMARY.json"

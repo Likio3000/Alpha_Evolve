@@ -202,6 +202,32 @@ def get_correlation_penalty_with_weight(current_prog_flat_processed_ts: np.ndarr
         return 0.0
     return float(weight) * mean_corr
 
+def get_rank_corr_matrix(limit: int = 10, *, absolute: bool = True):
+    """Return (fingerprints, correlation-matrix) for the latest up to ``limit`` HOF rank vectors.
+
+    The correlation is Pearson on zero-mean rank vectors (equivalent to Spearman on raw signals).
+    If ``absolute`` is True, returns absolute values to reflect similarity magnitude.
+    """
+    n = len(_hof_rank_pred_matrix)
+    if n == 0:
+        return [], []
+    m = min(limit, n)
+    # take the most recent m entries
+    ranks = _hof_rank_pred_matrix[-m:]
+    fps = _hof_corr_fingerprints[-m:]
+    # compute corr matrix
+    out = [[0.0 for _ in range(m)] for _ in range(m)]
+    for i in range(m):
+        for j in range(m):
+            if len(ranks[i]) != len(ranks[j]) or len(ranks[i]) < 2:
+                c = 0.0
+            else:
+                c = _safe_corr(ranks[i], ranks[j])
+            if absolute:
+                c = abs(c)
+            out[i][j] = float(c)
+    return fps, out
+
 def get_correlation_penalty_with_weight_per_bar(processed_preds_matrix: np.ndarray, *, weight: float, cutoff: float | None = None) -> float:
     """Per-bar variant mirroring get_correlation_penalty_per_bar with custom weight."""
     if processed_preds_matrix.ndim != 2 or processed_preds_matrix.shape[0] == 0:
