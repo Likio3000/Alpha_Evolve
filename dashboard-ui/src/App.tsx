@@ -27,6 +27,7 @@ const App: React.FC = () => {
   const [logs, setLogs] = useState<string[]>([])
   const [lastRun, setLastRun] = useState<{ run_dir: string | null; sharpe_best: number | null }>({ run_dir: null, sharpe_best: null })
   const [gens, setGens] = useState<any[]>([])
+  const [progress, setProgress] = useState<{ gen: number; completed: number; total: number; best?: number; median?: number; elapsed_sec?: number; eta_sec?: number } | null>(null)
   const [selectedProg, setSelectedProg] = useState<any | null>(null)
   const esRef = useRef<EventSource | null>(null)
 
@@ -64,6 +65,7 @@ const App: React.FC = () => {
         }
         else if (msg.type === 'final') setLastRun({ run_dir: msg.run_dir, sharpe_best: msg.sharpe_best })
         else if (msg.type === 'diag') setGens(prev => prev.concat(msg.data))
+        else if ((msg as any).type === 'progress') setProgress((msg as any).data)
         else if (msg.type === 'log') setLogs(prev => (prev.length > 1000 ? prev.slice(-1000) : prev).concat(msg.raw))
       } catch {}
     }
@@ -107,6 +109,16 @@ const App: React.FC = () => {
             <button onClick={stop} style={{background:'#475569', border:'none', color:'#fff', padding:'8px 12px', borderRadius:6}}>Stop</button>
             <div style={{alignSelf:'center', color:'#94a3b8'}}>Status: {status}</div>
           </div>
+          {progress && (
+            <div style={{marginTop:10}}>
+              <div style={{height:10, background:'#1f2937', borderRadius:6, overflow:'hidden'}}>
+                <div style={{height:10, width:`${(progress.completed/progress.total*100).toFixed(1)}%`, background:'#22c55e'}}></div>
+              </div>
+              <div style={{marginTop:6, color:'#94a3b8', fontSize:12}}>
+                Gen {progress.gen} · {progress.completed}/{progress.total} · Best {progress.best?.toFixed?.(3) ?? '-'} · Median {progress.median?.toFixed?.(3) ?? '-'} · Elapsed {progress.elapsed_sec?.toFixed?.(1) ?? '-'}s · ETA {progress.eta_sec? new Date(progress.eta_sec*1000).toISOString().substr(11,8) : '-'}
+              </div>
+            </div>
+          )}
         </div>
         <div style={{background:'#0b1220', padding:12, borderRadius:8}}>
           <div style={{fontWeight:600, marginBottom:8}}>Sharpe(best) Sparkline</div>

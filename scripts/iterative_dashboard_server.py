@@ -152,6 +152,7 @@ async def start_run(payload: Dict[str, Any]):
         re_candidate = re.compile(r"^→ Candidate\s+(\d+)/(\d+):\s+(.*)$")
         re_sharpe = re.compile(r"Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)")
         re_diag = re.compile(r"DIAG\s+(\{.*\})$")
+        re_progress = re.compile(r"PROGRESS\s+(\{.*\})$")
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -175,15 +176,23 @@ async def start_run(payload: Dict[str, Any]):
                         except Exception:
                             q.put_nowait(json.dumps({"type": "log", "raw": line}))
                     else:
-                        ms = re_sharpe.search(line)
-                        if ms:
-                            q.put_nowait(json.dumps({
-                                "type": "score",
-                                "sharpe_best": float(ms.group(1)),
-                                "raw": line,
-                            }))
+                        mp = re_progress.search(line)
+                        if mp:
+                            try:
+                                prog_obj = json.loads(mp.group(1))
+                                q.put_nowait(json.dumps({"type": "progress", "data": prog_obj}))
+                            except Exception:
+                                q.put_nowait(json.dumps({"type": "log", "raw": line}))
                         else:
-                            q.put_nowait(json.dumps({"type": "log", "raw": line}))
+                            ms = re_sharpe.search(line)
+                            if ms:
+                                q.put_nowait(json.dumps({
+                                    "type": "score",
+                                    "sharpe_best": float(ms.group(1)),
+                                    "raw": line,
+                                }))
+                            else:
+                                q.put_nowait(json.dumps({"type": "log", "raw": line}))
         finally:
             code = proc.wait()
             q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
@@ -307,6 +316,85 @@ async def backtest_summary(run_dir: str | None = None):
             return _json.load(fh)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load backtest summary: {e}")
+
+
+def _safe_bt_dir_from_run(run_dir: Path | None) -> Path:
+    rd = run_dir or _resolve_latest_run_dir()
+    if rd is None:
+        raise HTTPException(status_code=404, detail="No run dir found")
+    bt_dir = rd / "backtest_portfolio_csvs"
+    if not bt_dir.exists():
+        raise HTTPException(status_code=404, detail="Backtest dir not found")
+    return bt_dir
+
+
+@app.get("/api/alpha-timeseries")
+async def alpha_timeseries(run_dir: str | None = None, alpha_id: str | None = None, file: str | None = None):
+    """Return per-alpha timeseries JSON for plotting.
+
+    Accepts either an `alpha_id` like "Alpha_01" or a `file` (basename) such as
+    "alpha_01_timeseries.csv". The lookup is constrained to the run's
+    backtest_portfolio_csvs directory for safety.
+    """
+    try:
+        rd = Path(run_dir) if run_dir else _resolve_latest_run_dir()
+        bt_dir = _safe_bt_dir_from_run(rd)
+        target: Path | None = None
+        if file:
+            # Constrain to basename under bt_dir
+            target = bt_dir / Path(file).name
+        elif alpha_id:
+            name = alpha_id.strip().lower().replace("alpha_", "alpha_")
+            # Ensure two-digit formatting if user passes Alpha_1
+            try:
+                suffix = alpha_id.split("_")[-1]
+                n = int(suffix)
+                name = f"alpha_{n:02d}_timeseries.csv"
+            except Exception:
+                name = f"{alpha_id}_timeseries.csv"
+            target = bt_dir / name
+        else:
+            raise HTTPException(status_code=400, detail="alpha_id or file is required")
+        if not target.exists():
+            raise HTTPException(status_code=404, detail=f"Timeseries not found: {target.name}")
+        # Parse CSV into light JSON
+        import csv
+        dates: list[str] = []
+        equity: list[float] = []
+        drawdown: list[float] = []
+        exposure: list[float] = []
+        stop_hits: list[float] = []
+        ret_net: list[float] = []
+        with open(target, newline="") as fh:
+            rdr = csv.DictReader(fh)
+            for row in rdr:
+                dates.append(str(row.get("date", "")))
+                def _f(key: str) -> float:
+                    try:
+                        return float(row.get(key, "nan"))
+                    except Exception:
+                        return float("nan")
+                ret_net.append(_f("ret_net"))
+                equity.append(_f("equity"))
+                exposure.append(_f("exposure_mult"))
+                drawdown.append(_f("drawdown"))
+                try:
+                    stop_hits.append(float(row.get("stop_hits", 0) or 0))
+                except Exception:
+                    stop_hits.append(0.0)
+        return {
+            "file": target.name,
+            "date": dates,
+            "ret_net": ret_net,
+            "equity": equity,
+            "exposure_mult": exposure,
+            "drawdown": drawdown,
+            "stop_hits": stop_hits,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load timeseries: {e}")
 
 
 if __name__ == "__main__":

@@ -348,9 +348,11 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 ) as pool:
                     results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
                     bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
+                    completed = 0
                     for i, result in bar:
                         eval_results.append((i, result))
                         pop_fitness_scores[i] = _sel_score(result)
+                        completed += 1
                         logger.debug(
                             "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
                             gen + 1,
@@ -363,10 +365,34 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
                             best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
                             bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+                        # Emit live progress JSON for dashboards
+                        try:
+                            import json as _json
+                            valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
+                            best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float('-inf')
+                            median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float('nan')
+                            elapsed = float(time.perf_counter() - t_start_gen)
+                            frac = completed / max(1, cfg.pop_size)
+                            eta = (elapsed / frac - elapsed) if frac > 1e-6 else None
+                            logger.info(
+                                "PROGRESS %s",
+                                _json.dumps({
+                                    "type": "gen_progress",
+                                    "gen": int(gen + 1),
+                                    "completed": int(completed),
+                                    "total": int(cfg.pop_size),
+                                    "best": best_score_so_far,
+                                    "median": median_so_far,
+                                    "elapsed_sec": elapsed,
+                                    "eta_sec": float(eta) if eta is not None else None,
+                                }),
+                            )
+                        except Exception:
+                            pass
             else:
                 # Sequential evaluation
                 iterator = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
-                for i in iterator:
+                for idx_in_seq, i in enumerate(iterator, start=1):
                     _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
                     pop_fitness_scores[i] = _sel_score(result)
@@ -382,6 +408,30 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
                         best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
                         iterator.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+                    # Emit live progress JSON for dashboards
+                    try:
+                        import json as _json
+                        valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
+                        best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float('-inf')
+                        median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float('nan')
+                        elapsed = float(time.perf_counter() - t_start_gen)
+                        frac = idx_in_seq / max(1, cfg.pop_size)
+                        eta = (elapsed / frac - elapsed) if frac > 1e-6 else None
+                        logger.info(
+                            "PROGRESS %s",
+                            _json.dumps({
+                                "type": "gen_progress",
+                                "gen": int(gen + 1),
+                                "completed": int(idx_in_seq),
+                                "total": int(cfg.pop_size),
+                                "best": best_score_so_far,
+                                "median": median_so_far,
+                                "elapsed_sec": elapsed,
+                                "eta_sec": float(eta) if eta is not None else None,
+                            }),
+                        )
+                    except Exception:
+                        pass
             
             gen_eval_time = time.perf_counter() - t_start_gen
             if gen_eval_time > 0:
