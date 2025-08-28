@@ -5,6 +5,8 @@ import NoveltyTrend from './components/NoveltyTrend'
 import HofTable from './components/HofTable'
 import JaccardHeatmap from './components/JaccardHeatmap'
 import Inspector from './components/Inspector'
+import FitnessHistogram from './components/FitnessHistogram'
+import TopKScatter from './components/TopKScatter'
 
 type EventMsg =
   | { type: 'status'; msg: string; code?: number; args?: string[] }
@@ -89,6 +91,8 @@ const App: React.FC = () => {
   const lastBest = gens[genCount-1]?.best?.fitness
   const lastMedian = gens[genCount-1]?.pop_quantiles?.median
   const lastHof = gens[genCount-1]?.hof || []
+  const lastHist = gens[genCount-1]?.pop_hist
+  const lastTopK = gens[genCount-1]?.topK || []
 
   return (
     <div style={{fontFamily:'system-ui, sans-serif', color:'#e2e8f0', background:'#020617', minHeight:'100vh', padding:'16px'}}>
@@ -181,6 +185,15 @@ const App: React.FC = () => {
         <div style={{fontWeight:600, marginBottom:8}}>Live Log</div>
         <div style={{maxHeight:260, overflow:'auto', background:'#020617', padding:8, borderRadius:6, fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12, color:'#22c55e'}}>
           {logs.slice(-400).map((l, i) => <div key={i}>{l}</div>)}
+        </div>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginTop:12}}>
+        <div style={{background:'#0b1220', padding:12, borderRadius:8}}>
+          <FitnessHistogram hist={lastHist} width={480} height={200} />
+        </div>
+        <div style={{background:'#0b1220', padding:12, borderRadius:8}}>
+          <TopKScatter topK={lastTopK} width={480} height={220} />
         </div>
       </div>
     </div>
