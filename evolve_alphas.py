@@ -588,7 +588,7 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                                 "obj": {"ic": oi[0], "sh": oi[1], "neg_turn": oi[2], "neg_complex": oi[3]},
                                 "ops": int(pop[i].size),
                             } for (i, oi) in pareto[: min(10, len(pareto))]]
-                            diag.enrich_last(pareto_front=pf)
+                            diag.enrich_last(pareto_front=pf, pareto_size=len(pf))
                     except Exception:
                         pass
                     # Novelty vs HOF for best-of-gen (mean Spearman component)

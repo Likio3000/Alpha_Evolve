@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
@@ -38,6 +39,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve built UI (if available) under /ui
+UI_DIR = ROOT / "dashboard-ui" / "dist"
+if UI_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 
 
 class JobState:
@@ -109,7 +115,7 @@ async def start_run(payload: Dict[str, Any]):
     job_id = str(uuid.uuid4())
     q = STATE.new_queue(job_id)
 
-    # Build command
+    # Build command (legacy: auto_improve-based runner)
     args = [
         "uv", "run", str(ROOT / "scripts" / "auto_improve.py")
     ]
@@ -154,6 +160,18 @@ async def start_run(payload: Dict[str, Any]):
                 args += [flag, str(val)]
 
     async def _pump():
+        # Local helper to read latest run dir without relying on globals
+        def _latest() -> Path | None:
+            latest_file = PIPELINE_DIR / "LATEST"
+            try:
+                if latest_file.exists():
+                    p = latest_file.read_text().strip()
+                    if p:
+                        rp = Path(p)
+                        return rp if rp.exists() else None
+            except Exception:
+                return None
+            return None
         proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
@@ -166,6 +184,10 @@ async def start_run(payload: Dict[str, Any]):
             assert proc.stdout is not None
             for line in proc.stdout:
                 line = line.rstrip("\n")
+                try:
+                    print(line, flush=True)
+                except Exception:
+                    pass
                 # Parse a few structured events
                 m = re_candidate.search(line)
                 if m:
@@ -205,17 +227,20 @@ async def start_run(payload: Dict[str, Any]):
         finally:
             code = proc.wait()
             q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
-            # Try to emit latest run dir and best sharpe
-            latest = _read_latest_run_dir()
-            if latest is not None:
-                bs = _read_best_sharpe_from_run(latest)
-                q.put_nowait(json.dumps({
-                    "type": "final",
-                    "run_dir": str(latest),
-                    "sharpe_best": None if bs is None else float(bs),
-                }))
+            # Try to emit latest run dir and best Sharpe
+            try:
+                latest = _latest()
+                if latest is not None:
+                    bs = _read_best_sharpe_from_run(latest)
+                    q.put_nowait(json.dumps({
+                        "type": "final",
+                        "run_dir": str(latest),
+                        "sharpe_best": None if bs is None else float(bs),
+                    }))
+            except Exception:
+                pass
 
-    def _read_latest_run_dir() -> Path | None:
+    def _latest_from_marker() -> Path | None:
         latest_file = PIPELINE_DIR / "LATEST"
         try:
             if latest_file.exists():
@@ -228,6 +253,54 @@ async def start_run(payload: Dict[str, Any]):
         return None
 
     # Spawn pumping task in background
+    asyncio.create_task(_pump())
+    return {"job_id": job_id}
+
+
+@app.post("/api/simple/run")
+async def simple_run(payload: Dict[str, Any]):
+    """Minimal runner for scripts: run_pipeline with dataset preset.
+
+    Payload: {"dataset": "crypto"|"sp500", "generations": int, "data_dir"?: str}
+    """
+    job_id = str(uuid.uuid4())
+    q = STATE.new_queue(job_id)
+
+    gens = int(payload.get("generations", 8))
+    ds = str(payload.get("dataset", "crypto")).strip().lower()
+    if ds in ("crypto", "crypto_4h", "crypto4h"):
+        cfg_path = str(ROOT / "configs" / "crypto_4h_fast.toml")
+    elif ds in ("sp500", "s&p500", "snp500"):
+        cfg_path = str(ROOT / "configs" / "sp500.toml")
+    else:
+        raise HTTPException(status_code=400, detail="dataset must be 'crypto' or 'sp500'")
+
+    args: list[str] = ["uv", "run", "run_pipeline.py", str(gens), "--config", cfg_path]
+    if payload.get("data_dir"):
+        args += ["--data_dir", str(payload["data_dir"])]
+
+    async def _pump():
+        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        STATE.set_proc(job_id, proc)
+        q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
+        re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                try:
+                    print(line, flush=True)
+                except Exception:
+                    pass
+                ms = re_sharpe.search(line)
+                if ms:
+                    q.put_nowait(json.dumps({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line}))
+                else:
+                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
+        finally:
+            code = proc.wait()
+            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
+
     asyncio.create_task(_pump())
     return {"job_id": job_id}
 
@@ -253,6 +326,224 @@ async def sse_events(request: Request, job_id: str):
                 yield {"event": "ping", "data": json.dumps({"t": time.time()})}
                 continue
     return EventSourceResponse(event_generator())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Pipeline-first API (preferred)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
+    """Map JSON payload to a run_pipeline invocation.
+
+    Recognized top-level keys:
+      - generations (int)
+      - dataset: "crypto" | "sp500" (sets default config if no explicit config)
+      - config (path)
+      - data_dir (path)
+      - overrides: dict of CLI flags to values
+
+    Any additional scalar keys are treated as CLI flags.
+    """
+    gens = int(payload.get("generations", 5))
+    args: list[str] = ["uv", "run", "run_pipeline.py", str(gens)]
+    dataset = str(payload.get("dataset", "")).strip().lower()
+    cfg_path = payload.get("config")
+    if not cfg_path and dataset:
+        if dataset in ("crypto", "crypto_4h", "crypto4h"):
+            cfg_path = str(ROOT / "configs" / "crypto_4h_fast.toml")
+        elif dataset in ("sp500", "s&p500", "snp500"):
+            cfg_path = str(ROOT / "configs" / "sp500.toml")
+    if cfg_path:
+        args += ["--config", str(cfg_path)]
+    if payload.get("data_dir"):
+        args += ["--data_dir", str(payload["data_dir"])]
+    # Merge overrides
+    overrides = dict(payload.get("overrides", {}))
+    # Also treat remaining simple keys as overrides (except reserved)
+    reserved = {"generations", "dataset", "config", "data_dir", "overrides"}
+    for k, v in payload.items():
+        if k in reserved:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            overrides[k] = v
+    # Append overrides as CLI flags (use underscores: run_pipeline expects underscores)
+    for k, v in overrides.items():
+        flag = f"--{k}"
+        if isinstance(v, bool):
+            if v:
+                args.append(flag)
+            # if False, omit — only pass explicit negatives for known default-True flags
+        else:
+            args += [flag, str(v)]
+    return args
+
+
+@app.post("/api/pipeline/run")
+async def start_pipeline_run(payload: Dict[str, Any]):
+    """Start a single pipeline run (evolution + backtest) with provided config.
+
+    Payload example:
+      {"generations": 8, "dataset": "crypto", "data_dir": "./data",
+       "overrides": {"moea_enabled": true, "ensemble_mode": true}}
+    """
+    job_id = str(uuid.uuid4())
+    q = STATE.new_queue(job_id)
+
+    args = _build_pipeline_args(payload)
+
+    async def _pump():
+        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        STATE.set_proc(job_id, proc)
+        q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
+        # Reuse the same regexes used above for DIAG/PROGRESS and best Sharpe lines
+        re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
+        re_diag = re.compile(r"DIAG\\s+(\{.*\})$")
+        re_progress = re.compile(r"PROGRESS\\s+(\{.*\})$")
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                try:
+                    print(line, flush=True)
+                except Exception:
+                    pass
+                md = re_diag.search(line)
+                if md:
+                    try:
+                        diag_obj = json.loads(md.group(1))
+                        q.put_nowait(json.dumps({"type": "diag", "data": diag_obj}))
+                    except Exception:
+                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
+                    continue
+                mp = re_progress.search(line)
+                if mp:
+                    try:
+                        prog_obj = json.loads(mp.group(1))
+                        q.put_nowait(json.dumps({"type": "progress", "data": prog_obj}))
+                    except Exception:
+                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
+                    continue
+                ms = re_sharpe.search(line)
+                if ms:
+                    q.put_nowait(json.dumps({
+                        "type": "score",
+                        "sharpe_best": float(ms.group(1)),
+                        "raw": line,
+                    }))
+                else:
+                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
+        finally:
+            code = proc.wait()
+            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
+            latest = _resolve_latest_run_dir()
+            if latest is not None:
+                bs = _read_best_sharpe_from_run(latest)
+                q.put_nowait(json.dumps({
+                    "type": "final",
+                    "run_dir": str(latest),
+                    "sharpe_best": None if bs is None else float(bs),
+                }))
+
+    asyncio.create_task(_pump())
+    return {"job_id": job_id}
+
+
+# Config helpers
+def _dataclass_defaults(dc_type) -> Dict[str, Any]:
+    # Build a dict of field defaults from a dataclass type
+    from dataclasses import fields as dc_fields, is_dataclass
+    if not is_dataclass(dc_type):
+        return {}
+    try:
+        inst = dc_type()  # type: ignore
+        return {f.name: getattr(inst, f.name) for f in dc_fields(dc_type)}
+    except Exception:
+        d: Dict[str, Any] = {}
+        for f in dc_fields(dc_type):
+            if f.default is not None:
+                d[f.name] = f.default
+        return d
+
+
+@app.get("/api/config/defaults")
+async def config_defaults():
+    choices = {
+        "scale": ["zscore", "rank", "sign", "madz", "winsor"],
+        "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
+        "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
+        "hof_corr_mode": ["flat", "per_bar"],
+        "ensemble_weighting": ["equal", "risk_parity"],
+    }
+    try:
+        from config import EvolutionConfig, BacktestConfig
+        evo = _dataclass_defaults(EvolutionConfig)
+        bt = _dataclass_defaults(BacktestConfig)
+        if not isinstance(evo, dict) or not isinstance(bt, dict):
+            raise RuntimeError("defaults not dict")
+        return {"evolution": evo, "backtest": bt, "choices": choices}
+    except Exception:
+        # Fallback: return empty dicts with choices; UI will merge in preset values
+        return {"evolution": {}, "backtest": {}, "choices": choices}
+
+
+@app.get("/api/config/presets")
+async def config_presets():
+    presets = {
+        "crypto": str(ROOT / "configs" / "crypto_4h_fast.toml"),
+        "sp500": str(ROOT / "configs" / "sp500.toml"),
+    }
+    return {"presets": presets}
+
+
+@app.get("/api/config/preset-values")
+async def config_preset_values(dataset: str | None = None, path: str | None = None):
+    """Return the evolution/backtest dicts from a preset TOML.
+
+    - Pass `dataset=crypto|sp500` to use built-in presets
+    - Or pass an explicit `path` to a TOML file
+    """
+    try:
+        if path:
+            toml_path = Path(path)
+        else:
+            ds = (dataset or "").strip().lower()
+            if ds in ("crypto", "crypto_4h", "crypto4h"):
+                toml_path = ROOT / "configs" / "crypto_4h_fast.toml"
+            elif ds in ("sp500", "s&p500", "snp500"):
+                toml_path = ROOT / "configs" / "sp500.toml"
+            else:
+                raise HTTPException(status_code=400, detail="Unknown dataset; provide ?dataset=crypto|sp500 or ?path=")
+        if not toml_path.exists():
+            raise HTTPException(status_code=404, detail=f"Preset not found: {toml_path}")
+        # Prefer stdlib tomllib, fallback to tomli if needed
+        try:
+            import tomllib as _toml
+        except Exception:
+            import tomli as _toml  # type: ignore
+        with open(toml_path, "rb") as fh:
+            data = _toml.load(fh)
+        # Merge TOML values over dataclass defaults so UI gets fully populated
+        try:
+            from config import EvolutionConfig, BacktestConfig
+            evo_def = _dataclass_defaults(EvolutionConfig)
+            bt_def = _dataclass_defaults(BacktestConfig)
+        except Exception:
+            evo_def = {}
+            bt_def = {}
+        evo = {**evo_def, **data.get("evolution", {})}
+        bt = {**bt_def, **data.get("backtest", {})}
+        choices = {
+            "scale": ["zscore", "rank", "sign", "madz", "winsor"],
+            "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
+            "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
+            "hof_corr_mode": ["flat", "per_bar"],
+            "ensemble_weighting": ["equal", "risk_parity"],
+        }
+        return {"evolution": evo, "backtest": bt, "choices": choices, "path": str(toml_path)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load preset: {e}")
 
 
 @app.get("/api/last-run")
@@ -287,6 +578,10 @@ def _resolve_latest_run_dir() -> Path | None:
     except Exception:
         return None
     return None
+
+# Backward-compat helper: some older paths referenced this name.
+def _read_latest_run_dir() -> Path | None:  # noqa: N802 (compat)
+    return _resolve_latest_run_dir()
 
 
 @app.get("/api/diagnostics")
@@ -363,6 +658,38 @@ async def backtest_summary(run_dir: str | None = None):
         return rows
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load backtest summary CSV: {e}")
+
+
+@app.get("/api/runs")
+async def list_runs(limit: int = 20):
+    """List recent pipeline runs with quick stats.
+
+    Returns items sorted by mtime desc: {name, path, mtime, sharpe_best?}
+    """
+    try:
+        items: list[dict[str, Any]] = []
+        if PIPELINE_DIR.exists():
+            for p in PIPELINE_DIR.iterdir():
+                if not p.is_dir():
+                    continue
+                # Skip helper files
+                if p.name.upper() in {"LATEST"}:
+                    continue
+                try:
+                    stat = p.stat()
+                    best = _read_best_sharpe_from_run(p)
+                    items.append({
+                        "name": p.name,
+                        "path": str(p),
+                        "mtime": stat.st_mtime,
+                        "sharpe_best": best,
+                    })
+                except Exception:
+                    continue
+        items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+        return items[: max(1, min(200, limit))]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
 
 
 def _safe_bt_dir_from_run(run_dir: Path | None) -> Path:
@@ -446,4 +773,5 @@ async def alpha_timeseries(run_dir: str | None = None, alpha_id: str | None = No
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Quieter server terminal: hide HTTP access logs so pipeline output stands out
+    uvicorn.run(app, host="127.0.0.1", port=8000, access_log=False)

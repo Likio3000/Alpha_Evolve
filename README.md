@@ -8,7 +8,7 @@ Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
 - Python 3.12 or higher
 - See `requirements.txt` for Python package dependencies
-- Node.js for the optional [pipeline UI](dashboard-ui/README.md) which helps configure pipeline parameters
+- Optional: Node.js for the advanced pipeline UI (not required). A minimal static dashboard ships in `dashboard-ui/dist` and is served by the Python backend.
 
 ## Setup
 
@@ -243,6 +243,21 @@ compares candidates on fixed weights (exploitation) to avoid the “best gen is
 first gen” effect you may see with strong, always‑on penalties.
 
 For a tiny end‑to‑end check, use `scripts/smoke_run.sh`.
+
+### Minimal Dashboard UI
+
+Start the iterative API server and open the built‑in UI:
+
+```bash
+uv run scripts/iterative_dashboard_server.py
+# then open http://127.0.0.1:8000/ui
+```
+
+The UI can:
+- Start pipeline runs (dataset + generations + optional overrides)
+- Stream live logs and progress (SSE)
+- List recent runs and render simple evolution charts from `diagnostics.json`
+- Show the backtest summary and per‑alpha timeseries charts
 
 ### Adapting new data
 
