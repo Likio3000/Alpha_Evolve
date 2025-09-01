@@ -11,11 +11,12 @@ import sys
 from pathlib import Path
 
 # ---------- optional deps ---------- #
+PYPERCLIP_WARNING: str | None = None
 try:
     import pyperclip  # type: ignore
 except ImportError:
     pyperclip = None
-    print(
+    PYPERCLIP_WARNING = (
         "Note: Clipboard functionality ('pyperclip') is not available. Install it with 'uv add pyperclip'."
     )
 
@@ -207,6 +208,9 @@ def main() -> None:
         "-v", "--verbose", action="store_true", help="print every included file"
     )
     ns = ap.parse_args()
+
+    if PYPERCLIP_WARNING and not ns.write:
+        print(PYPERCLIP_WARNING)
 
     if not ns.tests:
         EXCLUDED_DIRS.add("tests")
