@@ -21,6 +21,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from collections import deque
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException
@@ -50,10 +51,13 @@ class JobState:
     def __init__(self) -> None:
         self.queues: Dict[str, asyncio.Queue] = {}
         self.procs: Dict[str, subprocess.Popen] = {}
+        self.logs: Dict[str, deque[str]] = {}
 
     def new_queue(self, job_id: str) -> asyncio.Queue:
         q = asyncio.Queue()
         self.queues[job_id] = q
+        # Keep up to ~10k lines per job in memory
+        self.logs[job_id] = deque(maxlen=10000)
         return q
 
     def get_queue(self, job_id: str) -> asyncio.Queue | None:
@@ -64,6 +68,17 @@ class JobState:
 
     def get_proc(self, job_id: str) -> subprocess.Popen | None:
         return self.procs.get(job_id)
+
+    def add_log(self, job_id: str, line: str) -> None:
+        if job_id not in self.logs:
+            self.logs[job_id] = deque(maxlen=10000)
+        self.logs[job_id].append(line)
+
+    def get_log_text(self, job_id: str) -> str:
+        buf = self.logs.get(job_id)
+        if not buf:
+            return ""
+        return "\n".join(buf)
 
     def stop(self, job_id: str) -> bool:
         p = self.procs.get(job_id)
@@ -88,6 +103,23 @@ def _read_best_sharpe_from_run(run_dir: Path) -> float | None:
     candidates = sorted(bt_dir.glob("backtest_summary_top*.csv"))
     if not candidates:
         return None
+
+# Helper: import project-local config.py without colliding with external packages
+def _load_project_config():
+    """Load the project's config.py module by file path.
+
+    Using a direct import by name ("import config") can accidentally import an
+    unrelated third‑party package named "config". This loader guarantees we get
+    the module that lives at ROOT/config.py.
+    """
+    import importlib.util
+    cfg_path = ROOT / "config.py"
+    spec = importlib.util.spec_from_file_location("ae_project_config", cfg_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load config module from {cfg_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[arg-type]
+    return mod
     csv_path = candidates[-1]
     try:
         import csv
@@ -365,6 +397,12 @@ def _build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
         args += ["--data_dir", str(payload["data_dir"])]
     # Merge overrides
     overrides = dict(payload.get("overrides", {}))
+    # Guard: drop values that cannot be expressed on CLI or conflict with positional args
+    # - generations is positional and must NOT be passed as a flag
+    # - sector_mapping is a dict and not supported by the CLI helper
+    for bad in ("generations", "sector_mapping"):
+        if bad in overrides:
+            overrides.pop(bad, None)
     # Also treat remaining simple keys as overrides (except reserved)
     reserved = {"generations", "dataset", "config", "data_dir", "overrides"}
     for k, v in payload.items():
@@ -374,6 +412,9 @@ def _build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
             overrides[k] = v
     # Append overrides as CLI flags (use underscores: run_pipeline expects underscores)
     for k, v in overrides.items():
+        # Only primitive scalar types are supported
+        if not isinstance(v, (str, int, float, bool)):
+            continue
         flag = f"--{k}"
         if isinstance(v, bool):
             if v:
@@ -416,6 +457,8 @@ async def start_pipeline_run(payload: Dict[str, Any]):
                     print(line, flush=True)
                 except Exception:
                     pass
+                # Buffer all lines for later retrieval via /api/job-log
+                STATE.add_log(job_id, line)
                 md = re_diag.search(line)
                 if md:
                     try:
@@ -457,6 +500,15 @@ async def start_pipeline_run(payload: Dict[str, Any]):
     return {"job_id": job_id}
 
 
+@app.get("/api/job-log/{job_id}")
+async def job_log(job_id: str):
+    """Return the captured terminal output for a job as text."""
+    try:
+        return {"log": STATE.get_log_text(job_id)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read job log: {e}")
+
+
 # Config helpers
 def _dataclass_defaults(dc_type) -> Dict[str, Any]:
     # Build a dict of field defaults from a dataclass type
@@ -482,9 +534,12 @@ async def config_defaults():
         "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
         "hof_corr_mode": ["flat", "per_bar"],
         "ensemble_weighting": ["equal", "risk_parity"],
+        "split_weighting": ["equal", "by_points"],
     }
     try:
-        from config import EvolutionConfig, BacktestConfig
+        cfg = _load_project_config()
+        EvolutionConfig = getattr(cfg, "EvolutionConfig")
+        BacktestConfig = getattr(cfg, "BacktestConfig")
         evo = _dataclass_defaults(EvolutionConfig)
         bt = _dataclass_defaults(BacktestConfig)
         if not isinstance(evo, dict) or not isinstance(bt, dict):
@@ -533,7 +588,9 @@ async def config_preset_values(dataset: str | None = None, path: str | None = No
             data = _toml.load(fh)
         # Merge TOML values over dataclass defaults so UI gets fully populated
         try:
-            from config import EvolutionConfig, BacktestConfig
+            cfg = _load_project_config()
+            EvolutionConfig = getattr(cfg, "EvolutionConfig")
+            BacktestConfig = getattr(cfg, "BacktestConfig")
             evo_def = _dataclass_defaults(EvolutionConfig)
             bt_def = _dataclass_defaults(BacktestConfig)
         except Exception:
@@ -547,12 +604,80 @@ async def config_preset_values(dataset: str | None = None, path: str | None = No
             "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
             "hof_corr_mode": ["flat", "per_bar"],
             "ensemble_weighting": ["equal", "risk_parity"],
+            "split_weighting": ["equal", "by_points"],
         }
         return {"evolution": evo, "backtest": bt, "choices": choices, "path": str(toml_path)}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load preset: {e}")
+
+
+@app.get("/api/config/list")
+async def config_list(limit: int = 200):
+    """List local TOML files under configs/.
+
+    Returns: {items: [{name, path, mtime}]}
+    """
+    try:
+        items: list[dict[str, Any]] = []
+        cfg_dir = ROOT / "configs"
+        if cfg_dir.exists():
+            for p in cfg_dir.glob("*.toml"):
+                try:
+                    st = p.stat()
+                    items.append({
+                        "name": p.name,
+                        "path": str(p),
+                        "mtime": st.st_mtime,
+                    })
+                except Exception:
+                    continue
+        items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+        return {"items": items[: max(1, min(500, limit))]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list configs: {e}")
+
+
+@app.post("/api/config/save")
+async def config_save(payload: Dict[str, Any]):
+    """Save evolution/backtest settings to configs/<name>.toml
+
+    Expects JSON: {"name": "my_exp.toml", "evolution": {...}, "backtest": {...}}
+    """
+    try:
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        if not name.endswith(".toml"):
+            name += ".toml"
+        evo = payload.get("evolution", {}) or {}
+        bt = payload.get("backtest", {}) or {}
+
+        def _sc(v: Any) -> str:
+            if isinstance(v, bool):
+                return "true" if v else "false"
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return str(v)
+            s = str(v)
+            s = s.replace("\\", "\\\\").replace("\"", "\\\"")
+            return f'"{s}"'
+
+        def _sec(name: str, d: Dict[str, Any]) -> str:
+            keys = sorted(d.keys())
+            body = "\n".join(f"{k} = {_sc(d[k])}" for k in keys)
+            return f"[{name}]\n{body}\n"
+
+        txt = _sec("evolution", evo) + "\n" + _sec("backtest", bt)
+        out_dir = ROOT / "configs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / name
+        out_path.write_text(txt)
+        return {"saved": str(out_path)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save config: {e}")
 
 
 @app.get("/api/last-run")
@@ -677,6 +802,19 @@ async def list_runs(limit: int = 20):
     """
     try:
         items: list[dict[str, Any]] = []
+        # Load user labels if present
+        labels_path = PIPELINE_DIR / ".run_labels.json"
+        labels: Dict[str, str] = {}
+        try:
+            if labels_path.exists():
+                import json as _json
+                with open(labels_path) as fh:
+                    obj = _json.load(fh)
+                if isinstance(obj, dict):
+                    # keys are run directory basenames
+                    labels = {str(k): str(v) for k, v in obj.items()}
+        except Exception:
+            labels = {}
         if PIPELINE_DIR.exists():
             for p in PIPELINE_DIR.iterdir():
                 if not p.is_dir():
@@ -692,6 +830,7 @@ async def list_runs(limit: int = 20):
                         "path": str(p),
                         "mtime": stat.st_mtime,
                         "sharpe_best": best,
+                        "label": labels.get(p.name),
                     })
                 except Exception:
                     continue
@@ -709,6 +848,68 @@ def _safe_bt_dir_from_run(run_dir: Path | None) -> Path:
     if not bt_dir.exists():
         raise HTTPException(status_code=404, detail="Backtest dir not found")
     return bt_dir
+
+
+def _load_run_labels() -> Dict[str, str]:
+    path = PIPELINE_DIR / ".run_labels.json"
+    try:
+        if not path.exists():
+            return {}
+        import json as _json
+        with open(path) as fh:
+            obj = _json.load(fh)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_run_labels(labels: Dict[str, str]) -> None:
+    path = PIPELINE_DIR / ".run_labels.json"
+    try:
+        import json as _json
+        PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as fh:
+            _json.dump(labels, fh, indent=2, sort_keys=True)
+    except Exception:
+        pass
+
+
+@app.get("/api/run-labels")
+async def get_run_labels():
+    return _load_run_labels()
+
+
+@app.post("/api/run-label")
+async def set_run_label(payload: Dict[str, Any]):
+    """Set a sticky human label for a run directory.
+
+    Payload: {"path": "/abs/or/rel/path/to/run", "label": "My Experiment"}
+    The label is stored under pipeline_runs_cs/.run_labels.json keyed by basename.
+    """
+    try:
+        p = payload.get("path")
+        label = str(payload.get("label", "")).strip()
+        if not p or not label:
+            raise HTTPException(status_code=400, detail="path and label required")
+        run_path = Path(str(p))
+        # Constrain to pipeline dir
+        try:
+            run_path = run_path if run_path.is_absolute() else (ROOT / Path(p))
+            run_path = run_path.resolve()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid path")
+        if PIPELINE_DIR not in run_path.parents:
+            raise HTTPException(status_code=400, detail="path must be under pipeline_runs_cs")
+        if not run_path.exists() or not run_path.is_dir():
+            raise HTTPException(status_code=404, detail="run directory not found")
+        labels = _load_run_labels()
+        labels[run_path.name] = label
+        _save_run_labels(labels)
+        return {"ok": True, "name": run_path.name, "label": label}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set label: {e}")
 
 
 @app.get("/api/alpha-timeseries")
