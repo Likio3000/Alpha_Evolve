@@ -1,7 +1,6 @@
 from __future__ import annotations
 import argparse
 from dataclasses import fields as dc_fields
-import argparse
 
 
 def add_dataclass_args(
