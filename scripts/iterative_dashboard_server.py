@@ -172,7 +172,10 @@ async def start_run(payload: Dict[str, Any]):
             except Exception:
                 return None
             return None
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        env = dict(os.environ)
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
         # Regexes to extract useful markers
@@ -280,7 +283,10 @@ async def simple_run(payload: Dict[str, Any]):
         args += ["--data_dir", str(payload["data_dir"])]
 
     async def _pump():
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        env = dict(os.environ)
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
         re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
@@ -392,7 +398,10 @@ async def start_pipeline_run(payload: Dict[str, Any]):
     args = _build_pipeline_args(payload)
 
     async def _pump():
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        env = dict(os.environ)
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
         # Reuse the same regexes used above for DIAG/PROGRESS and best Sharpe lines
