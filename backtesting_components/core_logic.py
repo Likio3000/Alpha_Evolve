@@ -1,9 +1,13 @@
 from __future__ import annotations
+
+import logging
 import numpy as np
 import pandas as pd  # For DataFrame rolling in hold period
 from typing import TYPE_CHECKING, Dict, List, Any, OrderedDict as OrderedDictType
 
 from evolution_components.data_handling import get_sector_groups, get_features_at_time
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from alpha_framework import AlphaProgram # Use the actual class from the framework
@@ -241,9 +245,16 @@ def backtest_cross_sectional_alpha(
     signal_matrix = np.array(raw_signals_over_time)
 
     if debug_prints:
-        print(f"Debug (core_logic): Raw signal_matrix σ_cross_sectional (first 5): {signal_matrix.std(axis=1)[:5]}")
-        print(">>> signal_matrix[:5,:5] std:", np.std(signal_matrix[:5,:], axis=1, ddof=0))
-        print(">>> first few rows of signal_matrix:", signal_matrix[:3,:4])
+        logger.debug(
+            f"Debug (core_logic): Raw signal_matrix σ_cross_sectional (first 5): {signal_matrix.std(axis=1)[:5]}"
+        )
+    if debug_prints:
+        logger.debug(
+            ">>> signal_matrix[:5,:5] std: %s",
+            np.std(signal_matrix[:5, :], axis=1, ddof=0),
+        )
+    if debug_prints:
+        logger.debug(">>> first few rows of signal_matrix: %s", signal_matrix[:3, :4])
 
     target_positions_matrix = np.zeros_like(signal_matrix)
     for t in range(signal_matrix.shape[0]):
@@ -275,7 +286,9 @@ def backtest_cross_sectional_alpha(
         target_positions_matrix[t, :] = neutralized_signal_t
 
     if debug_prints:
-        print(f"Debug (core_logic): Target_positions_matrix σ_cross_sectional (first 5): {target_positions_matrix.std(axis=1)[:5]}")
+        logger.debug(
+            f"Debug (core_logic): Target_positions_matrix σ_cross_sectional (first 5): {target_positions_matrix.std(axis=1)[:5]}"
+        )
 
     if hold > 1:
         df_target_pos = pd.DataFrame(target_positions_matrix)
@@ -408,10 +421,13 @@ def backtest_cross_sectional_alpha(
             "Error": "No trades executed",
         }
     
-    if debug_prints and len(daily_portfolio_returns_net) > 0:
+    if len(daily_portfolio_returns_net) > 0:
         mean_ret_calc = np.mean(daily_portfolio_returns_net)
         std_ret_calc = np.std(daily_portfolio_returns_net, ddof=0)
-        print(f"DEBUG (core_logic): PnL mean {mean_ret_calc:.6e} std {std_ret_calc:.6e}")
+        if debug_prints:
+            logger.debug(
+                f"DEBUG (core_logic): PnL mean {mean_ret_calc:.6e} std {std_ret_calc:.6e}"
+            )
 
     if len(daily_portfolio_returns_net) < 2:
         return {"Sharpe": 0.0, "AnnReturn": 0.0, "AnnVol": 0.0, "MaxDD": 0.0, "Turnover": 0.0, "Bars": len(daily_portfolio_returns_net)}
