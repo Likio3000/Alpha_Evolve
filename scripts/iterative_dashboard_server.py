@@ -397,12 +397,15 @@ def _build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
         args += ["--data_dir", str(payload["data_dir"])]
     # Merge overrides
     overrides = dict(payload.get("overrides", {}))
-    # Guard: drop values that cannot be expressed on CLI or conflict with positional args
-    # - generations is positional and must NOT be passed as a flag
+    # If overrides include generations, use it as positional and remove from flags
+    try:
+        if "generations" in overrides:
+            gens = int(overrides.pop("generations"))
+    except Exception:
+        pass
+    # Guard: drop values that cannot be expressed on CLI or conflict with flags
     # - sector_mapping is a dict and not supported by the CLI helper
-    for bad in ("generations", "sector_mapping"):
-        if bad in overrides:
-            overrides.pop(bad, None)
+    overrides.pop("sector_mapping", None)
     # Also treat remaining simple keys as overrides (except reserved)
     reserved = {"generations", "dataset", "config", "data_dir", "overrides"}
     for k, v in payload.items():
