@@ -2,18 +2,55 @@
 from __future__ import annotations
 
 """
-run_dashboard.py – Thin launcher for the Iterative Dashboard API.
+run_dashboard.py – Launcher for the Dashboard API (unified logging).
 
-Preferred entrypoint:
+Usage:
   uv run scripts/run_dashboard.py
+
+Environment variables:
+  LOG_LEVEL=DEBUG|INFO|WARNING|ERROR (default: INFO)
+  LOG_FILE=path/to/file.log (optional)
+  ACCESS_LOG=0|1 (uvicorn access log; default: 0)
+  HOST=127.0.0.1 (default)
+  PORT=8000 (default)
 """
+
+import logging
+import os
 
 import uvicorn
 from scripts.dashboard_server.app import app
+from utils.logging_setup import setup_logging
+
+
+def _level_from_env(var: str, default: int = logging.INFO) -> int:
+    val = os.environ.get(var)
+    if not val:
+        return default
+    mapping = {
+        "CRITICAL": logging.CRITICAL,
+        "ERROR": logging.ERROR,
+        "WARNING": logging.WARNING,
+        "INFO": logging.INFO,
+        "DEBUG": logging.DEBUG,
+        "NOTSET": logging.NOTSET,
+    }
+    return mapping.get(val.upper(), default)
 
 
 def main() -> None:
-    uvicorn.run(app, host="127.0.0.1", port=8000, access_log=False)
+    level = _level_from_env("LOG_LEVEL", logging.INFO)
+    log_file = os.environ.get("LOG_FILE")
+    setup_logging(level=level, log_file=log_file)
+
+    host = os.environ.get("HOST", "127.0.0.1")
+    try:
+        port = int(os.environ.get("PORT", "8000"))
+    except Exception:
+        port = 8000
+    access_log = os.environ.get("ACCESS_LOG", "0") in ("1", "true", "True")
+
+    uvicorn.run(app, host=host, port=port, access_log=access_log, log_level="info")
 
 
 if __name__ == "__main__":

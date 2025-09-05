@@ -8,6 +8,7 @@ import subprocess
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
+from pathlib import Path
 
 from scripts.dashboard_server.jobs import STATE
 from scripts.dashboard_server.helpers import (
@@ -27,6 +28,16 @@ router = APIRouter()
 
 @router.post("/api/pipeline/run")
 async def start_pipeline_run(payload: PipelineRunRequest):
+    # Early validation for clearer API errors
+    pd = payload.model_dump()
+    ds = (pd.get("dataset") or "").strip().lower()
+    cfg_path = pd.get("config")
+    if cfg_path:
+        p = Path(str(cfg_path))
+        if not p.exists():
+            raise HTTPException(status_code=404, detail=f"Config not found: {p}")
+    elif ds and ds not in ("crypto", "crypto_4h", "crypto4h", "sp500", "s&p500", "snp500"):
+        raise HTTPException(status_code=400, detail="Unknown dataset; provide dataset=crypto|sp500 or a config path")
     job_id = STATE.__class__.__name__ + ":"  # keep a prefix, but uniqueness is from uuid in caller
     # Create queue and actual id here to align with legacy behavior
     import uuid as _uuid
@@ -54,10 +65,13 @@ async def start_pipeline_run(payload: PipelineRunRequest):
         re_sharpe = RE_SHARPE
         re_diag = RE_DIAG
         re_progress = RE_PROGRESS
+        last_line: str | None = None
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
                 line = line.rstrip("\n")
+                if line:
+                    last_line = line
                 try:
                     print(line, flush=True)
                 except Exception:
@@ -101,6 +115,8 @@ async def start_pipeline_run(payload: PipelineRunRequest):
                         }
                     )
                 )
+            if code != 0:
+                q.put_nowait(json.dumps({"type": "error", "code": int(code), "last": last_line}))
 
     asyncio.create_task(_pump())
     return {"job_id": job_id}

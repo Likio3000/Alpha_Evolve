@@ -100,10 +100,13 @@ async def start_run(payload: AutoImproveRequest):
         re_sharpe = RE_SHARPE
         re_diag = RE_DIAG
         re_progress = RE_PROGRESS
+        last_line: str | None = None
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
                 line = line.rstrip("\n")
+                if line:
+                    last_line = line
                 try:
                     print(line, flush=True)
                 except Exception:
@@ -149,6 +152,8 @@ async def start_run(payload: AutoImproveRequest):
                     q.put_nowait(json.dumps({"type": "latest", "run_dir": latest_file.read_text().strip()}))
             except Exception:
                 pass
+            if code != 0:
+                q.put_nowait(json.dumps({"type": "error", "code": int(code), "last": last_line}))
 
     asyncio.create_task(_pump())
     return {"job_id": job_id}
