@@ -8,6 +8,7 @@ import numpy as np
 import logging
 
 from alpha_framework import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+from alpha_framework.utils import EvolutionParams
 import alpha_framework.program_logic_generation as plg
 import alpha_framework.program_logic_variation as plv
 from evolution_components import (
@@ -120,10 +121,28 @@ INITIAL_STATE_VARS: Dict[str, TypeId] = {
 
 # ─── bias random generation and mutation towards vector-returning ops ───
 VECTOR_OPS_BIAS = 0.3
-plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
+plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS   # legacy module-level fallback
 plv.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
 
+def _build_evo_params(cfg: EvoConfig) -> EvolutionParams:
+    return EvolutionParams(
+        vector_ops_bias=float(getattr(cfg, "vector_ops_bias", VECTOR_OPS_BIAS)),
+        relation_ops_weight=float(getattr(cfg, "relation_ops_weight", 3.0)),
+        cs_ops_weight=float(getattr(cfg, "cs_ops_weight", 1.5)),
+        default_op_weight=float(getattr(cfg, "default_op_weight", 1.0)),
+        max_setup_ops=int(cfg.max_setup_ops),
+        max_predict_ops=int(cfg.max_predict_ops),
+        max_update_ops=int(cfg.max_update_ops),
+        ops_split_base=(
+            float(getattr(cfg, "ops_split_base_setup", 0.15)),
+            float(getattr(cfg, "ops_split_base_predict", 0.70)),
+            float(getattr(cfg, "ops_split_base_update", 0.15)),
+        ),
+        ops_split_jitter=float(getattr(cfg, "ops_split_jitter", 0.0)),
+    )
+
 def _random_prog(cfg: EvoConfig) -> AlphaProgram:
+    params = _build_evo_params(cfg)
     return AlphaProgram.random_program(
         FEATURE_VARS,
         INITIAL_STATE_VARS,
@@ -133,10 +152,12 @@ def _random_prog(cfg: EvoConfig) -> AlphaProgram:
         max_update_ops=cfg.max_update_ops,
         ops_split_jitter=getattr(cfg, "ops_split_jitter", 0.0),
         rng=_RNG,
+        params=params,
     )
 
 
 def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram:
+    params = _build_evo_params(cfg)
     return p.mutate(
         FEATURE_VARS,
         INITIAL_STATE_VARS,
@@ -145,6 +166,7 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram:
         max_predict_ops=cfg.max_predict_ops,
         max_update_ops=cfg.max_update_ops,
         rng=_RNG,
+        params=params,
     )
 
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
@@ -924,12 +946,14 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
 
                 child: AlphaProgram
                 if _RNG.random() < p_cross_eff:
+                    params = _build_evo_params(cfg)
                     child = parent_a.crossover(
                         parent_b,
                         max_setup_ops=cfg.max_setup_ops,
                         max_predict_ops=cfg.max_predict_ops,
                         max_update_ops=cfg.max_update_ops,
-                        rng=_RNG
+                        rng=_RNG,
+                        params=params,
                     )
                 else:
                     child = parent_a.copy() if _RNG.random() < 0.5 else parent_b.copy()

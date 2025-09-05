@@ -82,12 +82,19 @@ If you prefer, you can run the helper script instead:
 sh scripts/setup_env.sh
 ```
 
-Once the environment is ready, run `pytest`.  The `-q` flag gives a concise
-summary and should complete without failures:
+Once the environment is ready, prefer running tests with `uv` for fast startup:
+
+```bash
+uv run -m pytest -q
+```
+
+Alternatively, plain `pytest` also works:
 
 ```bash
 pytest -q
 ```
+
+Tip: see `docs/running_tests_instructions.md` and the helper `scripts/test`.
 
 For a quick end-to-end sanity check, run:
 

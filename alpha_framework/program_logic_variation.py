@@ -48,12 +48,16 @@ def mutate_program_logic(
     max_setup_ops: int = MAX_SETUP_OPS,
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
+    params: Optional[object] = None,
 ) -> AlphaProgram:
     """
     Core logic for AlphaProgram.mutate method.
     """
     rng = rng or np.random.default_rng()
     new_prog = self_prog.copy()
+    from .utils import EvolutionParams  # local import to avoid cycles in type hints
+    evo: Optional[EvolutionParams] = params if isinstance(params, EvolutionParams) else None
+    local_vector_bias = VECTOR_OPS_BIAS if evo is None else evo.vector_ops_bias
 
     block_name_choices = ["predict"] * 6 + ["setup"] * 2 + ["update"] * 2
     chosen_block_name = rng.choice(block_name_choices)
@@ -77,163 +81,15 @@ def mutate_program_logic(
     mutation_type = rng.choice(possible_mutations)
 
     if mutation_type == "add":
-        insertion_idx = rng.integers(0, len(chosen_block_ops_list) + 1)
-        vars_at_insertion = new_prog.get_vars_at_point(chosen_block_name, insertion_idx, feature_vars, state_vars)
-
-        temp_current_vars = vars_at_insertion.copy()
-        candidate_ops_for_add = []
-        for op_n, op_s in OP_REGISTRY.items():
-            if chosen_block_name == "predict" and insertion_idx < len(chosen_block_ops_list) and \
-               op_s.out_type == "vector" and new_prog.predict_ops and \
-               (insertion_idx == len(chosen_block_ops_list) -1 and chosen_block_ops_list[insertion_idx].out == FINAL_PREDICTION_VECTOR_NAME ) :
-                pass
-            elif op_n == "assign_vector" and chosen_block_name == "predict" and insertion_idx < len(chosen_block_ops_list):
-                 continue
-
-            # ─── bias towards ops that output vectors ───
-            if rng.random() < VECTOR_OPS_BIAS and op_s.out_type != "vector":
-                continue
-
-            formable = True
-            temp_inputs_sources = []
-            for req_t in op_s.in_types:
-                cands = select_var_candidates(
-                    temp_current_vars,
-                    req_t,
-                    allow_elementwise_scalar_promotion=(op_s.is_elementwise and req_t == "scalar"),
-                )
-                if not cands:
-                    formable = False
-                    break
-                temp_inputs_sources.append(cands)
-            if formable:
-                candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
-
-        if candidate_ops_for_add:
-            weights = np.array([
-                op_weight(op_n, is_predict=(chosen_block_name == "predict")) for op_n, _, _ in candidate_ops_for_add
-            ], dtype=float)
-            if np.all(weights <= 0) or np.isnan(weights).any():
-                choice_index = rng.integers(len(candidate_ops_for_add))
-            else:
-                weights = weights / weights.sum()
-                choice_index = int(rng.choice(len(candidate_ops_for_add), p=weights))
-            sel_op_n, sel_op_s, sel_sources = candidate_ops_for_add[choice_index]
-            chosen_ins = tuple(rng.choice(s_list) for s_list in sel_sources)
-
-            actual_out_t = effective_out_type(sel_op_s, temp_current_vars, chosen_ins)
-
-            out_n = (
-                FINAL_PREDICTION_VECTOR_NAME
-                if (chosen_block_name == "predict" and insertion_idx == len(chosen_block_ops_list) and actual_out_t == "vector")
-                else temp_name(actual_out_t, rng=rng)
-            )
-
-            new_op_to_insert = Op(out_n, sel_op_n, chosen_ins)
-            chosen_block_ops_list.insert(insertion_idx, new_op_to_insert)
-
+        add_op_mutation(new_prog, chosen_block_name, feature_vars, state_vars, rng, local_vector_bias, evo)
     elif mutation_type == "remove":
-        if chosen_block_ops_list:
-            idx_to_remove = rng.integers(0, len(chosen_block_ops_list))
-            is_final_pred_op_targeted = chosen_block_name == "predict" and \
-                                       chosen_block_ops_list[idx_to_remove].out == FINAL_PREDICTION_VECTOR_NAME and \
-                                       idx_to_remove == len(chosen_block_ops_list) - 1
+        remove_op_mutation(new_prog, chosen_block_name, rng)
+    elif mutation_type == "change_op":
+        change_op_mutation(new_prog, chosen_block_name, rng, evo)
+    elif mutation_type == "change_inputs":
+        change_inputs_mutation(new_prog, chosen_block_name, rng, feature_vars, state_vars)
 
-            can_remove = True
-            if is_final_pred_op_targeted and len(chosen_block_ops_list) == 1:
-                can_remove = False
-
-            if can_remove and not is_final_pred_op_targeted :
-                chosen_block_ops_list.pop(idx_to_remove)
-            elif can_remove and is_final_pred_op_targeted and len(chosen_block_ops_list)>1:
-                 chosen_block_ops_list.pop(idx_to_remove)
-
-
-    elif mutation_type == "change_op" and chosen_block_ops_list:
-        op_idx_to_change = rng.integers(0, len(chosen_block_ops_list))
-        original_op = chosen_block_ops_list[op_idx_to_change]
-
-        is_final_predict_op = chosen_block_name == "predict" and \
-                              original_op.out == FINAL_PREDICTION_VECTOR_NAME and \
-                              op_idx_to_change == len(chosen_block_ops_list) -1
-
-        compatible_ops = []
-        for op_n, op_s in OP_REGISTRY.items():
-             if len(op_s.in_types) == len(original_op.inputs) and op_n != original_op.opcode:
-                if is_final_predict_op:
-                    if op_s.out_type == "vector" or (op_s.is_elementwise and op_s.out_type == "scalar"):
-                         compatible_ops.append(op_n)
-                else:
-                    compatible_ops.append(op_n)
-
-        if compatible_ops:
-            weights = np.array([
-                op_weight(op_n, is_predict=(chosen_block_name == "predict")) for op_n in compatible_ops
-            ], dtype=float)
-            if np.all(weights <= 0) or np.isnan(weights).any():
-                new_opcode = rng.choice(compatible_ops)
-            else:
-                weights = weights / weights.sum()
-                new_opcode = str(rng.choice(compatible_ops, p=weights))
-            chosen_block_ops_list[op_idx_to_change] = Op(original_op.out, new_opcode, original_op.inputs)
-
-    elif mutation_type == "change_inputs" and chosen_block_ops_list:
-        op_idx_to_change = rng.integers(0, len(chosen_block_ops_list))
-        op_to_mutate = chosen_block_ops_list[op_idx_to_change]
-        if not op_to_mutate.inputs:
-            return new_prog
-
-        vars_at_op = new_prog.get_vars_at_point(chosen_block_name, op_idx_to_change, feature_vars, state_vars)
-        input_idx_to_change = rng.integers(0, len(op_to_mutate.inputs))
-
-        original_input_name = op_to_mutate.inputs[input_idx_to_change]
-        spec_of_op_to_mutate = OP_REGISTRY[op_to_mutate.opcode]
-        required_type = spec_of_op_to_mutate.in_types[input_idx_to_change]
-
-        eligible_candidates = select_var_candidates(
-            vars_at_op,
-            required_type,
-            allow_elementwise_scalar_promotion=(spec_of_op_to_mutate.is_elementwise and required_type == "scalar"),
-            exclude=[original_input_name],
-        )
-
-        if eligible_candidates:
-            new_input_name = rng.choice(eligible_candidates)
-            new_inputs_tuple = list(op_to_mutate.inputs)
-            new_inputs_tuple[input_idx_to_change] = new_input_name
-            chosen_block_ops_list[op_idx_to_change] = Op(op_to_mutate.out, op_to_mutate.opcode, tuple(new_inputs_tuple))
-
-    # Ensure predict block ends with a vector named FINAL_PREDICTION_VECTOR_NAME
-    if new_prog.predict_ops:
-        last_op = new_prog.predict_ops[-1]
-        last_op_spec = OP_REGISTRY[last_op.opcode]
-
-        vars_before_last = new_prog.get_vars_at_point("predict", len(new_prog.predict_ops)-1, feature_vars, state_vars)
-        actual_last_op_out_type = effective_out_type(
-            last_op_spec, vars_before_last, last_op.inputs
-        )
-
-        if last_op.out != FINAL_PREDICTION_VECTOR_NAME or actual_last_op_out_type != "vector":
-            if actual_last_op_out_type == "vector":
-                 new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, last_op.opcode, last_op.inputs)
-            else:
-                vars_for_final_fix = {**vars_before_last, last_op.out: actual_last_op_out_type}
-                available_vectors = [vn for vn, vt in vars_for_final_fix.items() if vt == "vector"]
-
-                source_for_final_fix = pick_vector_fallback(vars_for_final_fix, feature_vars, rng=rng)
-                new_prog.predict_ops.append(
-                    Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_final_fix,))
-                )
-
-    elif not new_prog.predict_ops : # Predict block became empty
-        default_feat_vec = pick_vector_fallback({}, feature_vars, rng=rng)
-        new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec,)))
-
-    # — enforce that predict_ops[-1] is not a pure scalar aggregator —
-    last = new_prog.predict_ops[-1]
-    spec = OP_REGISTRY[last.opcode]
-    if spec.is_cross_sectional_aggregator:
-        new_prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, "cs_rank", ("vol10_t",))
+    _finalize_predict_tail(new_prog, feature_vars, state_vars, rng)
 
     # 1) remove dead / unreachable ops
     new_prog.prune()
@@ -256,6 +112,7 @@ def crossover_program_logic(
     max_setup_ops: int = MAX_SETUP_OPS,
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
+    params: Optional[object] = None,
 ) -> AlphaProgram:
     """
     Core logic for AlphaProgram.crossover method.
@@ -322,3 +179,194 @@ def crossover_program_logic(
     child._vars_info_cache = None                     # 3) clear cache
 
     return child
+
+
+def _finalize_predict_tail(
+    prog: "AlphaProgram",
+    feature_vars: Dict[str, TypeId],
+    state_vars: Dict[str, TypeId],
+    rng: Optional[np.random.Generator] = None,
+) -> None:
+    """Ensure predict block ends with a proper vector and repair if needed."""
+    rng = rng or np.random.default_rng()
+    if prog.predict_ops:
+        last_op = prog.predict_ops[-1]
+        last_op_spec = OP_REGISTRY[last_op.opcode]
+
+        vars_before_last = prog.get_vars_at_point("predict", len(prog.predict_ops)-1, feature_vars, state_vars)
+        actual_last_op_out_type = effective_out_type(
+            last_op_spec, vars_before_last, last_op.inputs
+        )
+
+        if last_op.out != FINAL_PREDICTION_VECTOR_NAME or actual_last_op_out_type != "vector":
+            if actual_last_op_out_type == "vector":
+                prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, last_op.opcode, last_op.inputs)
+            else:
+                vars_for_final_fix = {**vars_before_last, last_op.out: actual_last_op_out_type}
+                source_for_final_fix = pick_vector_fallback(vars_for_final_fix, feature_vars, rng=rng)
+                prog.predict_ops.append(
+                    Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_final_fix,))
+                )
+    else:
+        default_feat_vec = pick_vector_fallback({}, feature_vars, rng=rng)
+        prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec,)))
+
+    # — enforce that predict_ops[-1] is not a pure scalar aggregator —
+    last = prog.predict_ops[-1]
+    spec = OP_REGISTRY[last.opcode]
+    if spec.is_cross_sectional_aggregator:
+        prog.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, "cs_rank", ("vol10_t",))
+
+
+def add_op_mutation(
+    prog: "AlphaProgram",
+    block_name: str,
+    feature_vars: Dict[str, TypeId],
+    state_vars: Dict[str, TypeId],
+    rng: np.random.Generator,
+    vector_bias: float,
+    params: Optional[object] = None,
+) -> None:
+    """Insert a new op into the chosen block respecting typing and limits."""
+    ops_list = prog.setup if block_name == "setup" else prog.predict_ops if block_name == "predict" else prog.update_ops
+    insertion_idx = int(rng.integers(0, len(ops_list) + 1))
+    vars_at_insertion = prog.get_vars_at_point(block_name, insertion_idx, feature_vars, state_vars)
+
+    temp_current_vars = vars_at_insertion.copy()
+    candidate_ops_for_add = []
+    for op_n, op_s in OP_REGISTRY.items():
+        if (
+            block_name == "predict"
+            and insertion_idx < len(ops_list)
+            and op_s.out_type == "vector"
+            and prog.predict_ops
+            and (
+                insertion_idx == len(ops_list) - 1
+                and ops_list[insertion_idx].out == FINAL_PREDICTION_VECTOR_NAME
+            )
+        ):
+            pass
+        elif (
+            op_n == "assign_vector" and block_name == "predict" and insertion_idx < len(ops_list)
+        ):
+            continue
+
+        if rng.random() < vector_bias and op_s.out_type != "vector":
+            continue
+
+        formable = True
+        temp_inputs_sources = []
+        for req_t in op_s.in_types:
+            cands = select_var_candidates(
+                temp_current_vars,
+                req_t,
+                allow_elementwise_scalar_promotion=(op_s.is_elementwise and req_t == "scalar"),
+            )
+            if not cands:
+                formable = False
+                break
+            temp_inputs_sources.append(cands)
+        if formable:
+            candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
+
+    if not candidate_ops_for_add:
+        return
+
+    weights = np.array([
+        op_weight(op_n, is_predict=(block_name == "predict")) for op_n, _, _ in candidate_ops_for_add
+    ], dtype=float)
+    if np.all(weights <= 0) or np.isnan(weights).any():
+        choice_index = int(rng.integers(len(candidate_ops_for_add)))
+    else:
+        weights = weights / weights.sum()
+        choice_index = int(rng.choice(len(candidate_ops_for_add), p=weights))
+    sel_op_n, sel_op_s, sel_sources = candidate_ops_for_add[choice_index]
+    chosen_ins = tuple(rng.choice(s_list) for s_list in sel_sources)
+    actual_out_t = effective_out_type(sel_op_s, temp_current_vars, chosen_ins)
+    out_n = (
+        FINAL_PREDICTION_VECTOR_NAME
+        if (block_name == "predict" and insertion_idx == len(ops_list) and actual_out_t == "vector")
+        else temp_name(actual_out_t, rng=rng)
+    )
+    ops_list.insert(insertion_idx, Op(out_n, sel_op_n, chosen_ins))
+
+
+def remove_op_mutation(
+    prog: "AlphaProgram",
+    block_name: str,
+    rng: np.random.Generator,
+) -> None:
+    ops_list = prog.setup if block_name == "setup" else prog.predict_ops if block_name == "predict" else prog.update_ops
+    if not ops_list:
+        return
+    idx_to_remove = int(rng.integers(0, len(ops_list)))
+    is_final_pred_op_targeted = (
+        block_name == "predict" and ops_list[idx_to_remove].out == FINAL_PREDICTION_VECTOR_NAME and idx_to_remove == len(ops_list) - 1
+    )
+    if is_final_pred_op_targeted and len(ops_list) == 1:
+        return
+    ops_list.pop(idx_to_remove)
+
+
+def change_op_mutation(
+    prog: "AlphaProgram",
+    block_name: str,
+    rng: np.random.Generator,
+    params: Optional[object] = None,
+) -> None:
+    ops_list = prog.setup if block_name == "setup" else prog.predict_ops if block_name == "predict" else prog.update_ops
+    if not ops_list:
+        return
+    op_idx_to_change = int(rng.integers(0, len(ops_list)))
+    original_op = ops_list[op_idx_to_change]
+    is_final_predict_op = block_name == "predict" and original_op.out == FINAL_PREDICTION_VECTOR_NAME and op_idx_to_change == len(ops_list) - 1
+    compatible = []
+    for op_n, op_s in OP_REGISTRY.items():
+        if len(op_s.in_types) == len(original_op.inputs) and op_n != original_op.opcode:
+            if is_final_predict_op:
+                if op_s.out_type == "vector" or (op_s.is_elementwise and op_s.out_type == "scalar"):
+                    compatible.append(op_n)
+            else:
+                compatible.append(op_n)
+    if not compatible:
+        return
+    weights = np.array([op_weight(op_n, is_predict=(block_name == "predict")) for op_n in compatible], dtype=float)
+    if np.all(weights <= 0) or np.isnan(weights).any():
+        new_opcode = str(rng.choice(compatible))
+    else:
+        weights = weights / weights.sum()
+        new_opcode = str(rng.choice(compatible, p=weights))
+    ops_list[op_idx_to_change] = Op(original_op.out, new_opcode, original_op.inputs)
+
+
+def change_inputs_mutation(
+    prog: "AlphaProgram",
+    block_name: str,
+    rng: np.random.Generator,
+    feature_vars: Dict[str, TypeId],
+    state_vars: Dict[str, TypeId],
+) -> None:
+    ops_list = prog.setup if block_name == "setup" else prog.predict_ops if block_name == "predict" else prog.update_ops
+    if not ops_list:
+        return
+    op_idx_to_change = int(rng.integers(0, len(ops_list)))
+    op_to_mutate = ops_list[op_idx_to_change]
+    if not op_to_mutate.inputs:
+        return
+    vars_at_op = prog.get_vars_at_point(block_name, op_idx_to_change, feature_vars, state_vars)
+    input_idx_to_change = int(rng.integers(0, len(op_to_mutate.inputs)))
+    original_input_name = op_to_mutate.inputs[input_idx_to_change]
+    spec = OP_REGISTRY[op_to_mutate.opcode]
+    required_type = spec.in_types[input_idx_to_change]
+    eligible = select_var_candidates(
+        vars_at_op,
+        required_type,
+        allow_elementwise_scalar_promotion=(spec.is_elementwise and required_type == "scalar"),
+        exclude=[original_input_name],
+    )
+    if not eligible:
+        return
+    new_input_name = str(rng.choice(eligible))
+    new_inputs = list(op_to_mutate.inputs)
+    new_inputs[input_idx_to_change] = new_input_name
+    ops_list[op_idx_to_change] = Op(op_to_mutate.out, op_to_mutate.opcode, tuple(new_inputs))

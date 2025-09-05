@@ -176,6 +176,9 @@ async def start_run(payload: Dict[str, Any]):
         "cv_k_folds","cv_embargo",
         # Backtest ensemble
         "ensemble_mode","ensemble_size","ensemble_max_corr",
+        # EvolutionParams / generation knobs
+        "vector_ops_bias","relation_ops_weight","cs_ops_weight","default_op_weight",
+        "ops_split_jitter","ops_split_base_setup","ops_split_base_predict","ops_split_base_update",
     ]
     has_pt = any(k in payload for k in passthrough_keys)
     if has_pt:
@@ -988,3 +991,33 @@ if __name__ == "__main__":
     import uvicorn
     # Quieter server terminal: hide HTTP access logs so pipeline output stands out
     uvicorn.run(app, host="127.0.0.1", port=8000, access_log=False)
+@app.get("/ui-meta/evolution-params")
+def get_evolution_params_ui_meta() -> Dict[str, Any]:
+    """Expose UI metadata for EvolutionParams-related controls.
+
+    The frontend can consume this to render labels, defaults and tooltips.
+    """
+    # Keep defaults aligned with config.EvolutionConfig and utils.EvolutionParams
+    return {
+        "schema_version": 1,
+        "groups": [
+            {
+                "title": "Operator Biasing",
+                "items": [
+                    {"key": "vector_ops_bias", "label": "Vector Ops Bias", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Probability to force vector-output ops when sampling."},
+                    {"key": "relation_ops_weight", "label": "Relation Ops Weight", "type": "float", "default": 3.0, "min": 0.0, "max": 10.0, "step": 0.5, "help": "Weight multiplier for relation_* ops during selection."},
+                    {"key": "cs_ops_weight", "label": "Cross-sectional Ops Weight", "type": "float", "default": 1.5, "min": 0.0, "max": 10.0, "step": 0.5, "help": "Weight multiplier for cs_* ops during selection."},
+                    {"key": "default_op_weight", "label": "Default Op Weight", "type": "float", "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "help": "Baseline weight for all ops."},
+                ],
+            },
+            {
+                "title": "Block Split",
+                "items": [
+                    {"key": "ops_split_base_setup", "label": "Setup Fraction", "type": "float", "default": 0.15, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Base fraction of ops allocated to setup."},
+                    {"key": "ops_split_base_predict", "label": "Predict Fraction", "type": "float", "default": 0.70, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Base fraction of ops allocated to predict."},
+                    {"key": "ops_split_base_update", "label": "Update Fraction", "type": "float", "default": 0.15, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Base fraction of ops allocated to update."},
+                    {"key": "ops_split_jitter", "label": "Split Jitter", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Randomness added to the block split when seeding fresh programs."},
+                ],
+            },
+        ],
+    }

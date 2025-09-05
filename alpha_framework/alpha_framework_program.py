@@ -15,7 +15,7 @@ from .alpha_framework_types import (
     OP_REGISTRY,  # Required for OpSpec access
 )
 from .alpha_framework_op import Op
-from .utils import effective_out_type
+from .utils import effective_out_type, EvolutionParams
 from . import program_logic_generation
 from .program_logic_generation import generate_random_program_logic
 from .program_logic_variation import mutate_program_logic, crossover_program_logic
@@ -136,6 +136,7 @@ class AlphaProgram:
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
         ops_split_jitter: float = 0.0,
+        params: Optional[EvolutionParams] = None,
     ) -> "AlphaProgram":
         """Create a random, type-correct program.
 
@@ -166,6 +167,7 @@ class AlphaProgram:
             max_predict_ops,
             max_update_ops,
             ops_split_jitter,
+            params,
         )
 
     def copy(self) -> "AlphaProgram":
@@ -192,6 +194,7 @@ class AlphaProgram:
         max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+        params: Optional[EvolutionParams] = None,
     ) -> "AlphaProgram":
         """Return a mutated copy of this program."""
 
@@ -208,6 +211,7 @@ class AlphaProgram:
             max_setup_ops,
             max_predict_ops,
             max_update_ops,
+            params,
         )
 
     def crossover(
@@ -217,6 +221,7 @@ class AlphaProgram:
         max_setup_ops: int = program_logic_generation.MAX_SETUP_OPS,
         max_predict_ops: int = program_logic_generation.MAX_PREDICT_OPS,
         max_update_ops: int = program_logic_generation.MAX_UPDATE_OPS,
+        params: Optional[EvolutionParams] = None,
     ) -> "AlphaProgram":
         """Create offspring from this program and ``other``."""
 
@@ -227,6 +232,7 @@ class AlphaProgram:
             max_setup_ops,
             max_predict_ops,
             max_update_ops,
+            params,
         )
 
     @staticmethod

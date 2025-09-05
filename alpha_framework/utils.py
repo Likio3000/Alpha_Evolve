@@ -1,24 +1,43 @@
 from __future__ import annotations
 from typing import Dict, Tuple, Iterable, List, Optional
+from dataclasses import dataclass
 
 import numpy as np
 
 from .alpha_framework_types import TypeId, OpSpec
 from .alpha_framework_types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
 
-# Optional weighting to favour relation-aware and cross-sectional ops
-RELATION_OPS_WEIGHT = 3.0
-CS_OPS_WEIGHT = 1.5
-DEFAULT_OP_WEIGHT = 1.0
+@dataclass(slots=True)
+class EvolutionParams:
+    """Tunable knobs for generation/mutation heuristics.
+
+    Defaults mirror current module-level constants to preserve behavior.
+    """
+    vector_ops_bias: float = 0.0
+    relation_ops_weight: float = 3.0
+    cs_ops_weight: float = 1.5
+    default_op_weight: float = 1.0
+    # Per-block limits (optional: callers may still pass explicit limits)
+    max_setup_ops: int = 21
+    max_predict_ops: int = 21
+    max_update_ops: int = 45
+    # Random-program op split controls
+    ops_split_base: Tuple[float, float, float] = (0.15, 0.70, 0.15)
+    ops_split_jitter: float = 0.0
 
 
-def op_weight(op_name: str, *, is_predict: bool) -> float:
+def op_weight(op_name: str, *, is_predict: bool, params: Optional[EvolutionParams] = None) -> float:
     """Heuristic weight for picking ops during generation/mutation."""
-    w = DEFAULT_OP_WEIGHT
+    # Defaults mirror previous constants
+    rel = 3.0 if params is None else params.relation_ops_weight
+    cs = 1.5 if params is None else params.cs_ops_weight
+    base = 1.0 if params is None else params.default_op_weight
+
+    w = base
     if op_name.startswith("relation_"):
-        w *= RELATION_OPS_WEIGHT
+        w *= rel
     if op_name.startswith("cs_"):
-        w *= CS_OPS_WEIGHT
+        w *= cs
     if is_predict and (op_name.startswith("relation_") or op_name.startswith("cs_")):
         w *= 1.2
     return w

@@ -126,6 +126,16 @@ class EvolutionConfig(DataConfig):
     # Jitter the (setup, predict, update) op split when seeding fresh programs.
     # 0.0 keeps fixed ~[15%, 70%, 15%]; higher values add randomness.
     ops_split_jitter: float = 0.0
+    # Base split across blocks (setup, predict, update)
+    ops_split_base_setup: float = 0.15
+    ops_split_base_predict: float = 0.70
+    ops_split_base_update: float = 0.15
+
+    # Operator selection weighting & vector bias (advanced)
+    vector_ops_bias: float = 0.0
+    relation_ops_weight: float = 3.0
+    cs_ops_weight: float = 1.5
+    default_op_weight: float = 1.0
 
     # ramp scheduling for annealed penalties (corr, ic_std, turnover, sharpe_proxy)
     ramp_fraction: float = 1.0/3.0  # portion of total gens to reach full weight

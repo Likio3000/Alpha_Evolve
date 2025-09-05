@@ -4,7 +4,7 @@ import numpy as np
 
 from .alpha_framework_op import Op
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
-from .utils import effective_out_type, op_weight
+from .utils import effective_out_type, op_weight, EvolutionParams
 
 # Probability that a newly added op must output a vector.  Can be
 # overridden by callers (e.g. `evolve_alphas`) before program creation.
@@ -31,18 +31,22 @@ def generate_random_program_logic(
     max_predict_ops: int = MAX_PREDICT_OPS,
     max_update_ops: int = MAX_UPDATE_OPS,
     ops_split_jitter: float = 0.0,
+    params: Optional[EvolutionParams] = None,
 ) -> AlphaProgram:
     """
     Build a random but type-correct AlphaProgram.
     This is the core logic for AlphaProgram.random_program.
     """
     rng = rng or np.random.default_rng()
+    local_vector_bias = VECTOR_OPS_BIAS if params is None else params.vector_ops_bias
     prog = cls() # type: ignore # cls() will be an AlphaProgram instance
 
     # — split total op budget into three blocks, respecting per-stage limits —
     # Base split ~ [setup 15%, predict 70%, update 15%] with optional jitter for variance
-    base = np.array([0.15, 0.70, 0.15], dtype=float)
-    j = float(max(0.0, min(1.0, ops_split_jitter)))
+    base = np.array(params.ops_split_base if params is not None else [0.15, 0.70, 0.15], dtype=float)
+    # Prefer explicit argument if provided, otherwise pull from params
+    j_in = ops_split_jitter if ops_split_jitter is not None else 0.0
+    j = float(max(0.0, min(1.0, j_in if j_in > 0 else (params.ops_split_jitter if params is not None else 0.0))))
     if j > 1e-12:
         noise = rng.normal(0.0, 0.3 * j, size=3)  # std scaled so j in [0,1] is reasonable
         props = base + noise
@@ -100,7 +104,7 @@ def generate_random_program_logic(
                     continue          # reserve assign_vector for emergency only
 
                 # ─── bias towards ops that output vectors ───
-                if rng.random() < VECTOR_OPS_BIAS and spec.out_type != "vector":
+                if rng.random() < local_vector_bias and spec.out_type != "vector":
                     continue
 
                 inputs_for_spec: List[List[str]] = []
@@ -147,7 +151,7 @@ def generate_random_program_logic(
             else:
                 # Weighted pick favouring relation_* and cs_* ops
                 if candidates:
-                    weights = np.array([op_weight(n, is_predict=is_predict) for n, _, _ in candidates], dtype=float)
+                    weights = np.array([op_weight(n, is_predict=is_predict, params=params) for n, _, _ in candidates], dtype=float)
                     if np.all(weights <= 0) or np.isnan(weights).any():
                         idx = rng.integers(len(candidates))
                     else:

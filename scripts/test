@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Simple wrapper to run tests via uv for faster startup.
+# Usage: sh scripts/test [pytest-args]
+set -euo pipefail
+
+if command -v uv >/dev/null 2>&1; then
+  uv run -m pytest -q "$@"
+else
+  echo "uv not found; falling back to python -m pytest" >&2
+  python -m pytest -q "$@"
+fi
+
