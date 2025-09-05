@@ -21,13 +21,14 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from collections import deque
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
+from scripts.dashboard_server.jobs import JobState
+from scripts.dashboard_server.ui_meta import router as ui_meta_router
 
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE_DIR = ROOT / "pipeline_runs_cs"
@@ -45,54 +46,9 @@ app.add_middleware(
 UI_DIR = ROOT / "dashboard-ui" / "dist"
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
+app.include_router(ui_meta_router)
 
 
-class JobState:
-    def __init__(self) -> None:
-        self.queues: Dict[str, asyncio.Queue] = {}
-        self.procs: Dict[str, subprocess.Popen] = {}
-        self.logs: Dict[str, deque[str]] = {}
-
-    def new_queue(self, job_id: str) -> asyncio.Queue:
-        q = asyncio.Queue()
-        self.queues[job_id] = q
-        # Keep up to ~10k lines per job in memory
-        self.logs[job_id] = deque(maxlen=10000)
-        return q
-
-    def get_queue(self, job_id: str) -> asyncio.Queue | None:
-        return self.queues.get(job_id)
-
-    def set_proc(self, job_id: str, proc: subprocess.Popen) -> None:
-        self.procs[job_id] = proc
-
-    def get_proc(self, job_id: str) -> subprocess.Popen | None:
-        return self.procs.get(job_id)
-
-    def add_log(self, job_id: str, line: str) -> None:
-        if job_id not in self.logs:
-            self.logs[job_id] = deque(maxlen=10000)
-        self.logs[job_id].append(line)
-
-    def get_log_text(self, job_id: str) -> str:
-        buf = self.logs.get(job_id)
-        if not buf:
-            return ""
-        return "\n".join(buf)
-
-    def stop(self, job_id: str) -> bool:
-        p = self.procs.get(job_id)
-        if p is None:
-            return False
-        try:
-            p.terminate()
-            try:
-                p.wait(timeout=5)
-            except Exception:
-                p.kill()
-            return True
-        except Exception:
-            return False
 
 
 STATE = JobState()
@@ -991,129 +947,3 @@ if __name__ == "__main__":
     import uvicorn
     # Quieter server terminal: hide HTTP access logs so pipeline output stands out
     uvicorn.run(app, host="127.0.0.1", port=8000, access_log=False)
-@app.get("/ui-meta/evolution-params")
-def get_evolution_params_ui_meta() -> Dict[str, Any]:
-    """Expose UI metadata for EvolutionParams-related controls.
-
-    The frontend can consume this to render labels, defaults and tooltips.
-    """
-    # Keep defaults aligned with config.EvolutionConfig and utils.EvolutionParams
-    return {
-        "schema_version": 1,
-        "groups": [
-            {
-                "title": "Operator Biasing",
-                "items": [
-                    {"key": "vector_ops_bias", "label": "Vector Ops Bias", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Probability to force vector-output ops when sampling."},
-                    {"key": "relation_ops_weight", "label": "Relation Ops Weight", "type": "float", "default": 3.0, "min": 0.0, "max": 10.0, "step": 0.5, "help": "Weight multiplier for relation_* ops during selection."},
-                    {"key": "cs_ops_weight", "label": "Cross-sectional Ops Weight", "type": "float", "default": 1.5, "min": 0.0, "max": 10.0, "step": 0.5, "help": "Weight multiplier for cs_* ops during selection."},
-                    {"key": "default_op_weight", "label": "Default Op Weight", "type": "float", "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "help": "Baseline weight for all ops."},
-                ],
-            },
-            {
-                "title": "Block Split",
-                "items": [
-                    {"key": "ops_split_base_setup", "label": "Setup Fraction", "type": "float", "default": 0.15, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Base fraction of ops allocated to setup."},
-                    {"key": "ops_split_base_predict", "label": "Predict Fraction", "type": "float", "default": 0.70, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Base fraction of ops allocated to predict."},
-                    {"key": "ops_split_base_update", "label": "Update Fraction", "type": "float", "default": 0.15, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Base fraction of ops allocated to update."},
-                    {"key": "ops_split_jitter", "label": "Split Jitter", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Randomness added to the block split when seeding fresh programs."},
-                ],
-            },
-        ],
-    }
-
-
-@app.get("/ui-meta/pipeline-params")
-def get_pipeline_params_ui_meta() -> Dict[str, Any]:
-    """Expose metadata for common evolution/backtest pipeline parameters.
-
-    The UI can render grouped controls and tooltips using this.
-    Defaults mirror config.EvolutionConfig/BacktestConfig and CLI.
-    """
-    return {
-        "schema_version": 1,
-        "groups": [
-            {
-                "title": "Core Evolution",
-                "items": [
-                    {"key": "generations", "label": "Generations", "type": "int", "default": 5, "min": 1, "max": 1000, "step": 1, "help": "Number of evolutionary generations to run."},
-                    {"key": "pop_size", "label": "Population Size", "type": "int", "default": 100, "min": 10, "max": 2000, "step": 10, "help": "Number of programs per generation."},
-                    {"key": "tournament_k", "label": "Tournament K", "type": "int", "default": 10, "min": 2, "max": 200, "step": 1, "help": "Contestants per tournament when selecting parents."},
-                    {"key": "elite_keep", "label": "Elites Kept", "type": "int", "default": 1, "min": 0, "max": 20, "step": 1, "help": "Top programs copied unchanged to next generation."},
-                    {"key": "hof_size", "label": "HOF Size", "type": "int", "default": 20, "min": 1, "max": 200, "step": 1, "help": "Max Hall of Fame entries to keep."},
-                    {"key": "hof_per_gen", "label": "HOF Per Gen", "type": "int", "default": 3, "min": 0, "max": 50, "step": 1, "help": "Top candidates added to HOF each generation (subject to filters)."},
-                    {"key": "seed", "label": "Random Seed", "type": "int", "default": 42, "min": 0, "max": 2**31-1, "step": 1, "help": "Base seed for reproducibility."},
-                    {"key": "fresh_rate", "label": "Fresh Rate", "type": "float", "default": 0.12, "min": 0.0, "max": 1.0, "step": 0.01, "help": "Fraction of population replaced with brand new programs each generation."},
-                    {"key": "p_mut", "label": "Mutation Prob.", "type": "float", "default": 0.9, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Probability to mutate a child after selection/crossover."},
-                    {"key": "p_cross", "label": "Crossover Prob.", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Probability to crossover parents (0 uses cloning+mutation only)."},
-                ],
-            },
-            {
-                "title": "Selection & Ramping",
-                "items": [
-                    {"key": "selection_metric", "label": "Selection Metric", "type": "select", "default": "ramped", "choices": ["ramped", "fixed", "ic", "auto", "phased"], "help": "Parent selection criterion: ramped fitness, fixed final weights, pure IC, or mixed schedules."},
-                    {"key": "ramp_fraction", "label": "Ramp Fraction", "type": "float", "default": 0.33, "min": 0.0, "max": 1.0, "step": 0.01, "help": "Portion of total generations to gradually reach full penalty/weighting."},
-                    {"key": "ramp_min_gens", "label": "Ramp Min Gens", "type": "int", "default": 5, "min": 0, "max": 100, "step": 1, "help": "Minimum generations for ramp to avoid premature exploitation."},
-                    {"key": "ic_phase_gens", "label": "IC‑only Warmup Gens", "type": "int", "default": 0, "min": 0, "max": 100, "step": 1, "help": "Use pure IC for this many early generations (phased)."},
-                    {"key": "rank_softmax_beta_floor", "label": "Rank Softmax Beta (Floor)", "type": "float", "default": 0.0, "min": 0.0, "max": 10.0, "step": 0.1, "help": "Initial temperature for rank-based tournament sampling."},
-                    {"key": "rank_softmax_beta_target", "label": "Rank Softmax Beta (Target)", "type": "float", "default": 2.0, "min": 0.0, "max": 10.0, "step": 0.1, "help": "Final temperature after ramp completes."},
-                ],
-            },
-            {
-                "title": "Novelty & Correlation",
-                "items": [
-                    {"key": "novelty_boost_w", "label": "Novelty Boost", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "help": "Bonus weight for low correlation vs Hall of Fame predictions."},
-                    {"key": "novelty_struct_w", "label": "Structural Novelty", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "help": "Bonus for structural opcode-set dissimilarity vs HOF entries."},
-                    {"key": "hof_corr_mode", "label": "HOF Corr Mode", "type": "select", "default": "flat", "choices": ["flat", "per_bar"], "help": "How to compute correlation vs HOF: flat (all points) or per-bar averaged."},
-                    {"key": "corr_penalty_w", "label": "Correlation Penalty", "type": "float", "default": 0.35, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Penalty weight for correlation vs HOF (applied in fitness)."},
-                    {"key": "corr_cutoff", "label": "HOF Corr Cutoff", "type": "float", "default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01, "help": "Drop candidates too correlated with HOF beyond this threshold."},
-                ],
-            },
-            {
-                "title": "Fitness Weights",
-                "items": [
-                    {"key": "sharpe_proxy_w", "label": "Sharpe Proxy Weight", "type": "float", "default": 0.0, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Weight for Sharpe-like proxy in fitness (0 uses IC-only)."},
-                    {"key": "ic_std_penalty_w", "label": "IC Std Penalty", "type": "float", "default": 0.10, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Penalty weight for IC volatility."},
-                    {"key": "turnover_penalty_w", "label": "Turnover Penalty", "type": "float", "default": 0.05, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Penalty for high position turnover (reduces trading)."},
-                    {"key": "ic_tstat_w", "label": "IC t‑stat Weight", "type": "float", "default": 0.0, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Include IC t‑stat to reward stability in rank correlations."},
-                    {"key": "temporal_decay_half_life", "label": "Temporal Decay Half‑life", "type": "float", "default": 0.0, "min": 0.0, "max": 10000.0, "step": 1.0, "help": "Exponential half-life in bars to weight recent data more (0 disables)."},
-                ],
-            },
-            {
-                "title": "Multi‑Objective & Fidelity",
-                "items": [
-                    {"key": "moea_enabled", "label": "Pareto Selection (MOEA)", "type": "bool", "default": False, "help": "Enable multi-objective selection (NSGA‑II‑like) for elites."},
-                    {"key": "moea_elite_frac", "label": "Pareto Elite Fraction", "type": "float", "default": 0.2, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Portion of next generation chosen from the first Pareto front."},
-                    {"key": "mf_enabled", "label": "Multi‑Fidelity Eval", "type": "bool", "default": False, "help": "Enable cheap first pass on truncated data then re‑evaluate top‑K fully."},
-                    {"key": "mf_initial_fraction", "label": "MF Initial Fraction", "type": "float", "default": 0.4, "min": 0.05, "max": 1.0, "step": 0.05, "help": "Fraction of bars used in the cheap first-pass evaluation."},
-                    {"key": "mf_promote_fraction", "label": "MF Promote Fraction", "type": "float", "default": 0.3, "min": 0.05, "max": 1.0, "step": 0.05, "help": "Fraction of population promoted to full evaluation."},
-                    {"key": "mf_min_promote", "label": "MF Min Promote", "type": "int", "default": 8, "min": 1, "max": 200, "step": 1, "help": "Minimum number promoted regardless of fraction."},
-                ],
-            },
-            {
-                "title": "Cross‑Validation",
-                "items": [
-                    {"key": "cv_k_folds", "label": "CV K Folds", "type": "int", "default": 0, "min": 0, "max": 20, "step": 1, "help": "Use K>1 to enable CPCV‑style purged cross‑validation."},
-                    {"key": "cv_embargo", "label": "CV Embargo (bars)", "type": "int", "default": 0, "min": 0, "max": 1000, "step": 1, "help": "Bars to embargo around each validation fold to reduce leakage."},
-                ],
-            },
-            {
-                "title": "Backtest Ensemble",
-                "items": [
-                    {"key": "ensemble_mode", "label": "Ensemble Backtest", "type": "bool", "default": False, "help": "Also backtest an ensemble of top alphas."},
-                    {"key": "ensemble_size", "label": "Ensemble Size", "type": "int", "default": 0, "min": 0, "max": 100, "step": 1, "help": "Number of top alphas to include (0 disables)."},
-                    {"key": "ensemble_max_corr", "label": "Ensemble Max Corr", "type": "float", "default": 0.3, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Target maximum pairwise correlation when selecting ensemble members."},
-                ],
-            },
-            {
-                "title": "Data & Run",
-                "items": [
-                    {"key": "data_dir", "label": "Data Directory", "type": "text", "default": "./data", "help": "Path to directory containing input CSV files."},
-                    {"key": "bt_top", "label": "Backtest Top‑N", "type": "int", "default": 10, "min": 1, "max": 100, "step": 1, "help": "Number of evolved alphas to backtest and summarize."},
-                    {"key": "no_clean", "label": "Keep Run Artefacts", "type": "bool", "default": False, "help": "Do not clean previous pipeline runs before starting."},
-                    {"key": "dry_run", "label": "Dry Run", "type": "bool", "default": False, "help": "Print resolved configs and planned outputs, then exit."},
-                    {"key": "out_summary", "label": "Write Summary JSON", "type": "bool", "default": True, "help": "Write SUMMARY.json with key artefacts for UI consumption."},
-                ],
-            },
-        ],
-    }
