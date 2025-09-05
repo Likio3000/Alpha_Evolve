@@ -56,3 +56,6 @@ class JobState:
         except Exception:
             return False
 
+
+# Global job state singleton for ease of wiring across routers
+STATE = JobState()

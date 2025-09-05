@@ -27,8 +27,12 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
-from scripts.dashboard_server.jobs import JobState
+from scripts.dashboard_server.jobs import JobState, STATE as _GLOBAL_STATE
 from scripts.dashboard_server.ui_meta import router as ui_meta_router
+from scripts.dashboard_server.routes.run_auto_improve import router as auto_router
+from scripts.dashboard_server.routes.run_pipeline import router as pipeline_router
+from scripts.dashboard_server.helpers import read_best_sharpe_from_run as _read_best_sharpe_from_run
+from scripts.dashboard_server.helpers import resolve_latest_run_dir as _resolve_latest_run_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE_DIR = ROOT / "pipeline_runs_cs"
@@ -47,11 +51,14 @@ UI_DIR = ROOT / "dashboard-ui" / "dist"
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 app.include_router(ui_meta_router)
+app.include_router(auto_router)
+app.include_router(pipeline_router)
+app.include_router(ui_meta_router)
 
 
 
 
-STATE = JobState()
+STATE = _GLOBAL_STATE
 
 
 def _read_best_sharpe_from_run(run_dir: Path) -> float | None:
@@ -94,235 +101,13 @@ def _load_project_config():
         return None
 
 
-@app.post("/api/run")
-async def start_run(payload: Dict[str, Any]):
-    """Start auto_improve with given parameters; returns a job_id.
-
-    Payload JSON is forwarded as CLI flags, e.g. {"iters": 2, "gens": 10}.
-    """
-    job_id = str(uuid.uuid4())
-    q = STATE.new_queue(job_id)
-
-    # Build command (legacy: auto_improve-based runner)
-    args = [
-        "uv", "run", str(ROOT / "scripts" / "auto_improve.py")
-    ]
-    # core flags first
-    for key in ("iters", "gens", "base_config", "data_dir", "bt_top", "no_clean", "dry_run",
-                "sweep_capacity", "seeds", "out_summary"):
-        if key not in payload:
-            continue
-        val = payload[key]
-        flag = f"--{key.replace('_','-')}" if key in ("out_summary",) else f"--{key}"  # keep simple
-        if isinstance(val, bool):
-            if val:
-                args.append(flag)
-        else:
-            args += [flag, str(val)]
-    # passthrough flags appended after separator
-    passthrough_keys = [
-        # Selection and exploration
-        "selection_metric","ramp_fraction","ramp_min_gens","novelty_boost_w","novelty_struct_w","hof_corr_mode",
-        "ic_tstat_w","temporal_decay_half_life","rank_softmax_beta_floor","rank_softmax_beta_target","corr_penalty_w",
-        # Multi-objective elites
-        "moea_enabled","moea_elite_frac",
-        # Multi-fidelity
-        "mf_enabled","mf_initial_fraction","mf_promote_fraction","mf_min_promote",
-        # Cross-validation
-        "cv_k_folds","cv_embargo",
-        # Backtest ensemble
-        "ensemble_mode","ensemble_size","ensemble_max_corr",
-        # EvolutionParams / generation knobs
-        "vector_ops_bias","relation_ops_weight","cs_ops_weight","default_op_weight",
-        "ops_split_jitter","ops_split_base_setup","ops_split_base_predict","ops_split_base_update",
-    ]
-    has_pt = any(k in payload for k in passthrough_keys)
-    if has_pt:
-        args.append("--")
-        for key in passthrough_keys:
-            if key not in payload:
-                continue
-            val = payload[key]
-            flag = f"--{key}"
-            if isinstance(val, bool):
-                if val:
-                    args.append(flag)
-            else:
-                args += [flag, str(val)]
-
-    async def _pump():
-        # Local helper to read latest run dir without relying on globals
-        def _latest() -> Path | None:
-            latest_file = PIPELINE_DIR / "LATEST"
-            try:
-                if latest_file.exists():
-                    p = latest_file.read_text().strip()
-                    if p:
-                        rp = Path(p)
-                        return rp if rp.exists() else None
-            except Exception:
-                return None
-            return None
-        env = dict(os.environ)
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
-        STATE.set_proc(job_id, proc)
-        q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
-        # Regexes to extract useful markers
-        re_candidate = re.compile(r"^→ Candidate\s+(\d+)/(\d+):\s+(.*)$")
-        re_sharpe = re.compile(r"Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)")
-        re_diag = re.compile(r"DIAG\s+(\{.*\})$")
-        re_progress = re.compile(r"PROGRESS\s+(\{.*\})$")
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                try:
-                    print(line, flush=True)
-                except Exception:
-                    pass
-                # Parse a few structured events
-                m = re_candidate.search(line)
-                if m:
-                    q.put_nowait(json.dumps({
-                        "type": "candidate",
-                        "idx": int(m.group(1)),
-                        "total": int(m.group(2)),
-                        "params": m.group(3),
-                        "raw": line,
-                    }))
-                else:
-                    md = re_diag.search(line)
-                    if md:
-                        try:
-                            diag_obj = json.loads(md.group(1))
-                            q.put_nowait(json.dumps({"type": "diag", "data": diag_obj}))
-                        except Exception:
-                            q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    else:
-                        mp = re_progress.search(line)
-                        if mp:
-                            try:
-                                prog_obj = json.loads(mp.group(1))
-                                q.put_nowait(json.dumps({"type": "progress", "data": prog_obj}))
-                            except Exception:
-                                q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                        else:
-                            ms = re_sharpe.search(line)
-                            if ms:
-                                q.put_nowait(json.dumps({
-                                    "type": "score",
-                                    "sharpe_best": float(ms.group(1)),
-                                    "raw": line,
-                                }))
-                            else:
-                                q.put_nowait(json.dumps({"type": "log", "raw": line}))
-        finally:
-            code = proc.wait()
-            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
-            # Try to emit latest run dir and best Sharpe
-            try:
-                latest = _latest()
-                if latest is not None:
-                    bs = _read_best_sharpe_from_run(latest)
-                    q.put_nowait(json.dumps({
-                        "type": "final",
-                        "run_dir": str(latest),
-                        "sharpe_best": None if bs is None else float(bs),
-                    }))
-            except Exception:
-                pass
-
-    def _latest_from_marker() -> Path | None:
-        latest_file = PIPELINE_DIR / "LATEST"
-        try:
-            if latest_file.exists():
-                p = latest_file.read_text().strip()
-                if p:
-                    run_path = Path(p)
-                    return run_path if run_path.exists() else None
-        except Exception:
-            pass
-        return None
-
-    # Spawn pumping task in background
-    asyncio.create_task(_pump())
-    return {"job_id": job_id}
+# moved to scripts.dashboard_server.routes.run_auto_improve
 
 
-@app.post("/api/simple/run")
-async def simple_run(payload: Dict[str, Any]):
-    """Minimal runner for scripts: run_pipeline with dataset preset.
-
-    Payload: {"dataset": "crypto"|"sp500", "generations": int, "data_dir"?: str}
-    """
-    job_id = str(uuid.uuid4())
-    q = STATE.new_queue(job_id)
-
-    gens = int(payload.get("generations", 8))
-    ds = str(payload.get("dataset", "crypto")).strip().lower()
-    if ds in ("crypto", "crypto_4h", "crypto4h"):
-        cfg_path = str(ROOT / "configs" / "crypto_4h_fast.toml")
-    elif ds in ("sp500", "s&p500", "snp500"):
-        cfg_path = str(ROOT / "configs" / "sp500.toml")
-    else:
-        raise HTTPException(status_code=400, detail="dataset must be 'crypto' or 'sp500'")
-
-    args: list[str] = ["uv", "run", "run_pipeline.py", str(gens), "--config", cfg_path]
-    if payload.get("data_dir"):
-        args += ["--data_dir", str(payload["data_dir"])]
-
-    async def _pump():
-        env = dict(os.environ)
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
-        STATE.set_proc(job_id, proc)
-        q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
-        re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                try:
-                    print(line, flush=True)
-                except Exception:
-                    pass
-                ms = re_sharpe.search(line)
-                if ms:
-                    q.put_nowait(json.dumps({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line}))
-                else:
-                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
-        finally:
-            code = proc.wait()
-            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
-
-    asyncio.create_task(_pump())
-    return {"job_id": job_id}
+# moved to scripts.dashboard_server.routes.run_auto_improve
 
 
-@app.get("/api/events/{job_id}")
-async def sse_events(request: Request, job_id: str):
-    q = STATE.get_queue(job_id)
-    if q is None:
-        raise HTTPException(status_code=404, detail="Unknown job id")
-
-    async def event_generator():
-        while True:
-            if await request.is_disconnected():
-                break
-            try:
-                item = await asyncio.wait_for(q.get(), timeout=10.0)
-                yield {
-                    "event": "message",
-                    "data": item,
-                }
-            except asyncio.TimeoutError:
-                # Keep-alive
-                yield {"event": "ping", "data": json.dumps({"t": time.time()})}
-                continue
-    return EventSourceResponse(event_generator())
+# moved to scripts.dashboard_server.routes.run_auto_improve
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,79 +172,7 @@ def _build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
     return args
 
 
-@app.post("/api/pipeline/run")
-async def start_pipeline_run(payload: Dict[str, Any]):
-    """Start a single pipeline run (evolution + backtest) with provided config.
-
-    Payload example:
-      {"generations": 8, "dataset": "crypto", "data_dir": "./data",
-       "overrides": {"moea_enabled": true, "ensemble_mode": true}}
-    """
-    job_id = str(uuid.uuid4())
-    q = STATE.new_queue(job_id)
-
-    args = _build_pipeline_args(payload)
-
-    async def _pump():
-        env = dict(os.environ)
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
-        STATE.set_proc(job_id, proc)
-        q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
-        # Reuse the same regexes used above for DIAG/PROGRESS and best Sharpe lines
-        re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
-        re_diag = re.compile(r"DIAG\\s+(\{.*\})$")
-        re_progress = re.compile(r"PROGRESS\\s+(\{.*\})$")
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                try:
-                    print(line, flush=True)
-                except Exception:
-                    pass
-                # Buffer all lines for later retrieval via /api/job-log
-                STATE.add_log(job_id, line)
-                md = re_diag.search(line)
-                if md:
-                    try:
-                        diag_obj = json.loads(md.group(1))
-                        q.put_nowait(json.dumps({"type": "diag", "data": diag_obj}))
-                    except Exception:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    continue
-                mp = re_progress.search(line)
-                if mp:
-                    try:
-                        prog_obj = json.loads(mp.group(1))
-                        q.put_nowait(json.dumps({"type": "progress", "data": prog_obj}))
-                    except Exception:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    continue
-                ms = re_sharpe.search(line)
-                if ms:
-                    q.put_nowait(json.dumps({
-                        "type": "score",
-                        "sharpe_best": float(ms.group(1)),
-                        "raw": line,
-                    }))
-                else:
-                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
-        finally:
-            code = proc.wait()
-            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
-            latest = _resolve_latest_run_dir()
-            if latest is not None:
-                bs = _read_best_sharpe_from_run(latest)
-                q.put_nowait(json.dumps({
-                    "type": "final",
-                    "run_dir": str(latest),
-                    "sharpe_best": None if bs is None else float(bs),
-                }))
-
-    asyncio.create_task(_pump())
-    return {"job_id": job_id}
+# moved to scripts.dashboard_server.routes.run_pipeline
 
 
 @app.get("/api/job-log/{job_id}")

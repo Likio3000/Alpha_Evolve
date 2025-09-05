@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+
+# Resolve project root relative to this file (under scripts/dashboard_server)
+ROOT: Path = Path(__file__).resolve().parents[2]
+PIPELINE_DIR: Path = ROOT / "pipeline_runs_cs"
+
+
+def read_best_sharpe_from_run(run_dir: Path) -> Optional[float]:
+    bt_dir = run_dir / "backtest_portfolio_csvs"
+    candidates = sorted(bt_dir.glob("backtest_summary_top*.csv"))
+    if not candidates:
+        return None
+    csv_path = candidates[-1]
+    try:
+        import csv
+        best = None
+        with open(csv_path, newline="") as fh:
+            rdr = csv.DictReader(fh)
+            for row in rdr:
+                try:
+                    s = float(row.get("Sharpe", "nan"))
+                except Exception:
+                    continue
+                if best is None or s > best:
+                    best = s
+        return best
+    except Exception:
+        return None
+
+
+def resolve_latest_run_dir() -> Optional[Path]:
+    latest = PIPELINE_DIR / "LATEST"
+    try:
+        if latest.exists():
+            p = latest.read_text().strip()
+            if p:
+                run_path = Path(p)
+                return run_path if run_path.exists() else None
+    except Exception:
+        return None
+    return None
+
+
+def build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
+    """Map JSON payload to a run_pipeline invocation args list."""
+    gens = int(payload.get("generations", 5))
+    args: list[str] = ["uv", "run", "run_pipeline.py", str(gens)]
+    dataset = str(payload.get("dataset", "")).strip().lower()
+    cfg_path = payload.get("config")
+    if not cfg_path and dataset:
+        if dataset in ("crypto", "crypto_4h", "crypto4h"):
+            cfg_path = str(ROOT / "configs" / "crypto_4h_fast.toml")
+        elif dataset in ("sp500", "s&p500", "snp500"):
+            cfg_path = str(ROOT / "configs" / "sp500.toml")
+    if cfg_path:
+        args += ["--config", str(cfg_path)]
+    if payload.get("data_dir"):
+        args += ["--data_dir", str(payload["data_dir"])]
+    overrides = dict(payload.get("overrides", {}))
+    try:
+        if "generations" in overrides:
+            gens = int(overrides.pop("generations"))
+    except Exception:
+        pass
+    overrides.pop("sector_mapping", None)
+    reserved = {"generations", "dataset", "config", "data_dir", "overrides"}
+    for k, v in payload.items():
+        if k in reserved:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            overrides[k] = v
+    for k, v in overrides.items():
+        if not isinstance(v, (str, int, float, bool)):
+            continue
+        flag = f"--{k}"
+        if isinstance(v, bool):
+            if v:
+                args.append(flag)
+        else:
+            args += [flag, str(v)]
+    return args
+
