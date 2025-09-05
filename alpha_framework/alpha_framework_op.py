@@ -5,12 +5,13 @@ import numpy as np
 
 # Imports from other framework modules
 from .alpha_framework_types import OP_REGISTRY # OpSpec is implicitly used via OP_REGISTRY
+from .utils import ensure_vector_shape, broadcast_to_vector
 
 # ---------------------------------------------------------------------------
 # 3 – Instruction container
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(slots=True)
 class Op:
     out: str
     opcode: str
@@ -36,30 +37,30 @@ class Op:
                     if arg_val.size == 1:
                         processed_args.append(arg_val.item())
                     elif spec.is_elementwise and arg_val.ndim == 1:
-                         processed_args.append(arg_val)
+                        # Allow passing vector into a scalar slot for elementwise ops
+                        processed_args.append(arg_val)
                     else:
                         processed_args.append(np.mean(arg_val) if arg_val.size > 0 else 0.0)
                 elif np.isscalar(arg_val):
                     processed_args.append(float(arg_val))
                 else:
-                    raise TypeError(f"Op '{self.opcode}' input '{in_name}' expected scalar, got {type(arg_val)} value {arg_val}")
+                    raise TypeError(
+                        f"Op '{self.opcode}' input '{in_name}' expected scalar, got {type(arg_val)} value {arg_val}"
+                    )
 
             elif expected_type == "vector":
                 if np.isscalar(arg_val):
-                    processed_args.append(np.full(n_stocks, float(arg_val)))
+                    processed_args.append(broadcast_to_vector(arg_val, n_stocks))
                 elif isinstance(arg_val, np.ndarray) and arg_val.ndim == 1:
-                    if arg_val.shape[0] != n_stocks and not spec.is_cross_sectional_aggregator:
-                        if arg_val.size == 1:
-                            processed_args.append(np.full(n_stocks, arg_val.item()))
-                        else:
-                            resized_arr = np.zeros(n_stocks, dtype=arg_val.dtype)
-                            copy_len = min(len(arg_val), n_stocks)
-                            resized_arr[:copy_len] = arg_val[:copy_len]
-                            processed_args.append(resized_arr)
-                    else:
-                        processed_args.append(arg_val)
+                    processed_args.append(
+                        ensure_vector_shape(
+                            arg_val, n_stocks, allow_mismatch_for_aggregator=spec.is_cross_sectional_aggregator
+                        )
+                    )
                 else:
-                    raise TypeError(f"Op '{self.opcode}' input '{in_name}' expected vector, got {type(arg_val)} value {arg_val}")
+                    raise TypeError(
+                        f"Op '{self.opcode}' input '{in_name}' expected vector, got {type(arg_val)} value {arg_val}"
+                    )
             elif expected_type == "matrix":
                 if not (isinstance(arg_val, np.ndarray) and arg_val.ndim == 2):
                     raise TypeError(f"Op '{self.opcode}' input '{in_name}' expected matrix, got {type(arg_val)} value {arg_val}")
@@ -69,16 +70,12 @@ class Op:
 
         if spec.is_elementwise and spec.out_type == "scalar" and isinstance(result, np.ndarray) and result.ndim == 1:
             pass
-        elif spec.out_type == "vector" and np.isscalar(result):
-            result = np.full(n_stocks, float(result))
-        elif spec.out_type == "vector" and isinstance(result, np.ndarray) and result.ndim == 1 and result.shape[0] != n_stocks and not spec.is_cross_sectional_aggregator:
-            if result.size == 1:
-                result = np.full(n_stocks, result.item())
-            else:
-                resized_res = np.zeros(n_stocks, dtype=result.dtype)
-                copy_len_res = min(len(result), n_stocks)
-                resized_res[:copy_len_res] = result[:copy_len_res]
-                result = resized_res
+        elif spec.out_type == "vector":
+            result = ensure_vector_shape(
+                result,
+                n_stocks,
+                allow_mismatch_for_aggregator=spec.is_cross_sectional_aggregator,
+            )
 
         buf[self.out] = result
 

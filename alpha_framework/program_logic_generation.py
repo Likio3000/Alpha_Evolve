@@ -4,27 +4,13 @@ import numpy as np
 
 from .alpha_framework_op import Op
 from .alpha_framework_types import TypeId, OP_REGISTRY, FINAL_PREDICTION_VECTOR_NAME
+from .utils import effective_out_type, op_weight
 
 # Probability that a newly added op must output a vector.  Can be
 # overridden by callers (e.g. `evolve_alphas`) before program creation.
 VECTOR_OPS_BIAS = 0.0
 
-# Optional weighting to favour relation-aware and cross-sectional ops
-RELATION_OPS_WEIGHT = 3.0
-CS_OPS_WEIGHT = 1.5
-DEFAULT_OP_WEIGHT = 1.0
-
-def _op_weight(op_name: str, is_predict: bool) -> float:
-    w = DEFAULT_OP_WEIGHT
-    if op_name.startswith("relation_"):
-        w *= RELATION_OPS_WEIGHT
-    # Encourage basic cross-sectional transforms a bit
-    if op_name.startswith("cs_"):
-        w *= CS_OPS_WEIGHT
-    # Slightly prefer relation/cs usage more in predict stage where final vector is built
-    if is_predict and (op_name.startswith("relation_") or op_name.startswith("cs_")):
-        w *= 1.2
-    return w
+# Weighting logic moved to utils.op_weight
 
 # Per-stage limits from the paper
 MAX_SETUP_OPS = 21
@@ -146,10 +132,7 @@ def generate_random_program_logic(
                 rng.shuffle(candidates)
                 for op_name, spec, pools in candidates:
                     ins = tuple(rng.choice(p) for p in pools)
-                    out_t = spec.out_type
-                    if spec.is_elementwise and out_t == "scalar":
-                        if any(current[i] == "vector" for i in ins):
-                            out_t = "vector"
+                    out_t = effective_out_type(spec, current, ins)
                     if out_t == "vector":
                         chosen_name, chosen_spec, chosen_ins = op_name, spec, ins
                         break
@@ -164,7 +147,7 @@ def generate_random_program_logic(
             else:
                 # Weighted pick favouring relation_* and cs_* ops
                 if candidates:
-                    weights = np.array([_op_weight(n, is_predict) for n, _, _ in candidates], dtype=float)
+                    weights = np.array([op_weight(n, is_predict=is_predict) for n, _, _ in candidates], dtype=float)
                     if np.all(weights <= 0) or np.isnan(weights).any():
                         idx = rng.integers(len(candidates))
                     else:
@@ -174,10 +157,7 @@ def generate_random_program_logic(
                     idx = 0
                 chosen_name, chosen_spec, pools = candidates[idx]
                 chosen_ins = tuple(rng.choice(p) for p in pools)
-                out_t = chosen_spec.out_type
-                if chosen_spec.is_elementwise and out_t == "scalar":
-                    if any(current[i] == "vector" for i in chosen_ins):
-                        out_t = "vector"
+                out_t = effective_out_type(chosen_spec, current, chosen_ins)
 
             # 3. emit op
             out_name = (FINAL_PREDICTION_VECTOR_NAME

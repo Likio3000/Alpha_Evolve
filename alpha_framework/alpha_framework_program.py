@@ -15,6 +15,7 @@ from .alpha_framework_types import (
     OP_REGISTRY,  # Required for OpSpec access
 )
 from .alpha_framework_op import Op
+from .utils import effective_out_type
 from . import program_logic_generation
 from .program_logic_generation import generate_random_program_logic
 from .program_logic_variation import mutate_program_logic, crossover_program_logic
@@ -66,18 +67,7 @@ class AlphaProgram:
         current_vars = initial_vars.copy()
         for op_instance in ops_block:
             spec = OP_REGISTRY[op_instance.opcode]
-            actual_out_type = spec.out_type
-            if spec.is_elementwise and spec.out_type == "scalar":
-                is_any_input_vector = False
-                for i, in_name in enumerate(op_instance.inputs):
-                    input_var_type = current_vars.get(in_name)
-                    if input_var_type == "vector":
-                        # Check if the op spec expects a scalar for this vector input
-                        if spec.in_types[i] == "scalar":
-                            is_any_input_vector = True
-                            break
-                if is_any_input_vector:
-                    actual_out_type = "vector"
+            actual_out_type = effective_out_type(spec, current_vars, op_instance.inputs)
             current_vars[op_instance.out] = actual_out_type
         return current_vars
 

@@ -16,25 +16,13 @@ from .alpha_framework_types import (
     SCALAR_FEATURE_NAMES,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
 )
+from .utils import effective_out_type, op_weight
 
 # Probability that a newly added op must output a vector.  Callers may
 # override this (see `evolve_alphas`).
 VECTOR_OPS_BIAS = 0.0
 
-# Optional weighting to favour relation-aware and cross-sectional ops
-RELATION_OPS_WEIGHT = 3.0
-CS_OPS_WEIGHT = 1.5
-DEFAULT_OP_WEIGHT = 1.0
-
-def _op_weight(op_name: str, is_predict: bool) -> float:
-    w = DEFAULT_OP_WEIGHT
-    if op_name.startswith("relation_"):
-        w *= RELATION_OPS_WEIGHT
-    if op_name.startswith("cs_"):
-        w *= CS_OPS_WEIGHT
-    if is_predict and (op_name.startswith("relation_") or op_name.startswith("cs_")):
-        w *= 1.2
-    return w
+# Weighting logic centralized in utils.op_weight
 
 
 if TYPE_CHECKING:
@@ -196,7 +184,7 @@ def mutate_program_logic(
 
         if compatible_ops:
             weights = np.array([
-                _op_weight(op_n, chosen_block_name == "predict") for op_n in compatible_ops
+                op_weight(op_n, is_predict=(chosen_block_name == "predict")) for op_n in compatible_ops
             ], dtype=float)
             if np.all(weights <= 0) or np.isnan(weights).any():
                 new_opcode = rng.choice(compatible_ops)
@@ -256,10 +244,9 @@ def mutate_program_logic(
         last_op_spec = OP_REGISTRY[last_op.opcode]
 
         vars_before_last = new_prog.get_vars_at_point("predict", len(new_prog.predict_ops)-1, feature_vars, state_vars)
-        actual_last_op_out_type = last_op_spec.out_type
-        if last_op_spec.is_elementwise and last_op_spec.out_type == "scalar":
-            if any(vars_before_last.get(inp_n) == "vector" for inp_n in last_op.inputs):
-                 actual_last_op_out_type = "vector"
+        actual_last_op_out_type = effective_out_type(
+            last_op_spec, vars_before_last, last_op.inputs
+        )
 
         if last_op.out != FINAL_PREDICTION_VECTOR_NAME or actual_last_op_out_type != "vector":
             if actual_last_op_out_type == "vector":
@@ -359,10 +346,9 @@ def crossover_program_logic(
         last_op_in_child = child.predict_ops[-1]
         last_op_spec_in_child = OP_REGISTRY[last_op_in_child.opcode]
 
-        actual_last_op_out_type_child = last_op_spec_in_child.out_type
-        if last_op_spec_in_child.is_elementwise and last_op_spec_in_child.out_type == "scalar":
-            if any(vars_before_final_op_in_child.get(inp_n) == "vector" for inp_n in last_op_in_child.inputs):
-                actual_last_op_out_type_child = "vector"
+        actual_last_op_out_type_child = effective_out_type(
+            last_op_spec_in_child, vars_before_final_op_in_child, last_op_in_child.inputs
+        )
 
         if actual_last_op_out_type_child == "vector":
             child.predict_ops[-1] = Op(FINAL_PREDICTION_VECTOR_NAME, last_op_in_child.opcode, last_op_in_child.inputs)
