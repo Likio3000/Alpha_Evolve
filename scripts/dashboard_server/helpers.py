@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+import re
+import asyncio
+
+from fastapi import Request
+from sse_starlette.sse import EventSourceResponse
 
 
 # Resolve project root relative to this file (under scripts/dashboard_server)
@@ -84,4 +89,26 @@ def build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
         else:
             args += [flag, str(v)]
     return args
+
+
+# Shared regexes for log parsing
+RE_CANDIDATE = re.compile(r"^→ Candidate\s+(\d+)/(\d+):\s+(.*)$")
+RE_SHARPE = re.compile(r"Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)")
+RE_DIAG = re.compile(r"DIAG\s+(\{.*\})$")
+RE_PROGRESS = re.compile(r"PROGRESS\s+(\{.*\})$")
+
+
+def make_sse_response(request: Request, queue, keepalive_seconds: float = 10.0) -> EventSourceResponse:
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=keepalive_seconds)
+                yield {"event": "message", "data": item}
+            except asyncio.TimeoutError:
+                yield {"event": "ping", "data": __import__("json").dumps({"t": __import__("time").time()})}
+                continue
+
+    return EventSourceResponse(event_generator())
 

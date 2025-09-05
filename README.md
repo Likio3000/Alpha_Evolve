@@ -256,7 +256,7 @@ For a tiny end‑to‑end check, use `scripts/smoke_run.sh`.
 Start the iterative API server and open the built‑in UI:
 
 ```bash
-uv run scripts/iterative_dashboard_server.py
+uv run scripts/run_dashboard.py
 # then open http://127.0.0.1:8000/ui
 ```
 

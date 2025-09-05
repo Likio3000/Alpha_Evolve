@@ -15,14 +15,18 @@ from scripts.dashboard_server.helpers import (
     build_pipeline_args,
     read_best_sharpe_from_run,
     resolve_latest_run_dir,
+    RE_SHARPE,
+    RE_DIAG,
+    RE_PROGRESS,
 )
+from scripts.dashboard_server.models import PipelineRunRequest
 
 
 router = APIRouter()
 
 
 @router.post("/api/pipeline/run")
-async def start_pipeline_run(payload: Dict[str, Any]):
+async def start_pipeline_run(payload: PipelineRunRequest):
     job_id = STATE.__class__.__name__ + ":"  # keep a prefix, but uniqueness is from uuid in caller
     # Create queue and actual id here to align with legacy behavior
     import uuid as _uuid
@@ -30,7 +34,7 @@ async def start_pipeline_run(payload: Dict[str, Any]):
     job_id = str(_uuid.uuid4())
     q = STATE.new_queue(job_id)
 
-    args = build_pipeline_args(payload)
+    args = build_pipeline_args(payload.model_dump())
 
     async def _pump():
         env = dict(os.environ)
@@ -47,9 +51,9 @@ async def start_pipeline_run(payload: Dict[str, Any]):
         )
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
-        re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
-        re_diag = re.compile(r"DIAG\\s+(\{.*\})$")
-        re_progress = re.compile(r"PROGRESS\\s+(\{.*\})$")
+        re_sharpe = RE_SHARPE
+        re_diag = RE_DIAG
+        re_progress = RE_PROGRESS
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -100,4 +104,3 @@ async def start_pipeline_run(payload: Dict[str, Any]):
 
     asyncio.create_task(_pump())
     return {"job_id": job_id}
-

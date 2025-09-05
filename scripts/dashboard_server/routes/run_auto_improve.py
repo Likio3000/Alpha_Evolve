@@ -10,17 +10,25 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
-from sse_starlette.sse import EventSourceResponse
 
 from scripts.dashboard_server.jobs import STATE
-from scripts.dashboard_server.helpers import ROOT, PIPELINE_DIR
+from scripts.dashboard_server.helpers import (
+    ROOT,
+    PIPELINE_DIR,
+    RE_CANDIDATE,
+    RE_SHARPE,
+    RE_DIAG,
+    RE_PROGRESS,
+    make_sse_response,
+)
+from scripts.dashboard_server.models import AutoImproveRequest
 
 
 router = APIRouter()
 
 
 @router.post("/api/run")
-async def start_run(payload: Dict[str, Any]):
+async def start_run(payload: AutoImproveRequest):
     job_id = str(uuid.uuid4())
     q = STATE.new_queue(job_id)
 
@@ -28,7 +36,7 @@ async def start_run(payload: Dict[str, Any]):
     for key in ("iters", "gens", "base_config", "data_dir", "bt_top", "no_clean", "dry_run", "sweep_capacity", "seeds", "out_summary"):
         if key not in payload:
             continue
-        val = payload[key]
+        val = payload.model_dump().get(key)
         flag = f"--{key.replace('_','-')}" if key in ("out_summary",) else f"--{key}"
         if isinstance(val, bool):
             if val:
@@ -67,12 +75,13 @@ async def start_run(payload: Dict[str, Any]):
         "ops_split_base_predict",
         "ops_split_base_update",
     ]
-    if any(k in payload for k in passthrough_keys):
+    pd = payload.model_dump()
+    if any(k in pd for k in passthrough_keys):
         args.append("--")
         for key in passthrough_keys:
-            if key not in payload:
+            if key not in pd:
                 continue
-            val = payload[key]
+            val = pd[key]
             flag = f"--{key}"
             if isinstance(val, bool):
                 if val:
@@ -87,10 +96,10 @@ async def start_run(payload: Dict[str, Any]):
         proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
-        re_candidate = re.compile(r"^→ Candidate\s+(\d+)/(\d+):\s+(.*)$")
-        re_sharpe = re.compile(r"Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)")
-        re_diag = re.compile(r"DIAG\s+(\{.*\})$")
-        re_progress = re.compile(r"PROGRESS\s+(\{.*\})$")
+        re_candidate = RE_CANDIDATE
+        re_sharpe = RE_SHARPE
+        re_diag = RE_DIAG
+        re_progress = RE_PROGRESS
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -195,18 +204,7 @@ async def sse_events(request: Request, job_id: str):
     q = STATE.get_queue(job_id)
     if q is None:
         raise HTTPException(status_code=404, detail="Unknown job id")
-
-    async def event_generator():
-        while True:
-            if await request.is_disconnected():
-                break
-            try:
-                item = await asyncio.wait_for(q.get(), timeout=10.0)
-                yield {"event": "message", "data": item}
-            except asyncio.TimeoutError:
-                yield {"event": "ping", "data": json.dumps({"t": __import__("time").time()})}
-                continue
-    return EventSourceResponse(event_generator())
+    return make_sse_response(request, q)
 
 
 @router.post("/api/stop/{job_id}")
@@ -215,4 +213,3 @@ async def stop(job_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Unknown job id or already stopped")
     return {"stopped": True}
-
