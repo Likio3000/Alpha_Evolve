@@ -123,7 +123,7 @@ def mutate_program_logic(
 
         if candidate_ops_for_add:
             weights = np.array([
-                _op_weight(op_n, chosen_block_name == "predict") for op_n, _, _ in candidate_ops_for_add
+                op_weight(op_n, is_predict=(chosen_block_name == "predict")) for op_n, _, _ in candidate_ops_for_add
             ], dtype=float)
             if np.all(weights <= 0) or np.isnan(weights).any():
                 choice_index = rng.integers(len(candidate_ops_for_add))
