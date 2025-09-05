@@ -16,7 +16,13 @@ from .alpha_framework_types import (
     SCALAR_FEATURE_NAMES,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
 )
-from .utils import effective_out_type, op_weight
+from .utils import (
+    effective_out_type,
+    op_weight,
+    select_var_candidates,
+    pick_vector_fallback,
+    temp_name,
+)
 
 # Probability that a newly added op must output a vector.  Callers may
 # override this (see `evolve_alphas`).
@@ -91,33 +97,15 @@ def mutate_program_logic(
             formable = True
             temp_inputs_sources = []
             for req_t in op_s.in_types:
-                current_type_candidates_add = []
-                if req_t == "scalar":
-                    const_scalars_add = []
-                    other_scalars_add = []
-                    for vn_add, vt_add in temp_current_vars.items():
-                        if vt_add == "scalar":
-                            if vn_add in SCALAR_FEATURE_NAMES:
-                                const_scalars_add.append(vn_add)
-                            else:
-                                other_scalars_add.append(vn_add)
-                    if other_scalars_add:
-                        current_type_candidates_add.extend(other_scalars_add * 3)
-                        current_type_candidates_add.extend(const_scalars_add)
-                    elif const_scalars_add:
-                        current_type_candidates_add.extend(const_scalars_add)
-
-                    if not current_type_candidates_add and op_s.is_elementwise:
-                        vec_opts_add = [vn_add for vn_add, vt_add in temp_current_vars.items() if vt_add == "vector"]
-                        if vec_opts_add:
-                            current_type_candidates_add.extend(vec_opts_add)
-                else: # vector or matrix
-                    current_type_candidates_add = [vn_add for vn_add, vt_add in temp_current_vars.items() if vt_add == req_t]
-
-                if not current_type_candidates_add:
+                cands = select_var_candidates(
+                    temp_current_vars,
+                    req_t,
+                    allow_elementwise_scalar_promotion=(op_s.is_elementwise and req_t == "scalar"),
+                )
+                if not cands:
                     formable = False
                     break
-                temp_inputs_sources.append(current_type_candidates_add)
+                temp_inputs_sources.append(cands)
             if formable:
                 candidate_ops_for_add.append((op_n, op_s, temp_inputs_sources))
 
@@ -133,17 +121,13 @@ def mutate_program_logic(
             sel_op_n, sel_op_s, sel_sources = candidate_ops_for_add[choice_index]
             chosen_ins = tuple(rng.choice(s_list) for s_list in sel_sources)
 
-            actual_out_t = sel_op_s.out_type
-            if sel_op_s.is_elementwise and sel_op_s.out_type == "scalar":
-                 if any(temp_current_vars.get(inp_n) == "vector" for inp_n in chosen_ins):
-                    actual_out_t = "vector"
+            actual_out_t = effective_out_type(sel_op_s, temp_current_vars, chosen_ins)
 
-            out_n = ""
-            if chosen_block_name == "predict" and insertion_idx == len(chosen_block_ops_list) and actual_out_t == "vector":
-                out_n = FINAL_PREDICTION_VECTOR_NAME
-            else:
-                tmp_idx_mut = rng.integers(10000, 20000)
-                out_n = f"m{tmp_idx_mut}_{actual_out_t[0]}"
+            out_n = (
+                FINAL_PREDICTION_VECTOR_NAME
+                if (chosen_block_name == "predict" and insertion_idx == len(chosen_block_ops_list) and actual_out_t == "vector")
+                else temp_name(actual_out_t, rng=rng)
+            )
 
             new_op_to_insert = Op(out_n, sel_op_n, chosen_ins)
             chosen_block_ops_list.insert(insertion_idx, new_op_to_insert)
@@ -206,31 +190,12 @@ def mutate_program_logic(
         spec_of_op_to_mutate = OP_REGISTRY[op_to_mutate.opcode]
         required_type = spec_of_op_to_mutate.in_types[input_idx_to_change]
 
-        eligible_candidates = []
-        if required_type == "scalar":
-            const_scalars_options = []
-            other_scalars_options = []
-            for vn, vt in vars_at_op.items():
-                if vn == original_input_name:
-                    continue
-                if vt == "scalar":
-                    if vn in SCALAR_FEATURE_NAMES:
-                        const_scalars_options.append(vn)
-                    else:
-                        other_scalars_options.append(vn)
-
-            if other_scalars_options:
-                eligible_candidates.extend(other_scalars_options * 3)
-                eligible_candidates.extend(const_scalars_options)
-            elif const_scalars_options:
-                eligible_candidates.extend(const_scalars_options)
-
-            if not eligible_candidates and spec_of_op_to_mutate.is_elementwise:
-                vec_options_for_scalar_slot = [vn for vn, vt in vars_at_op.items() if vt == "vector" and vn != original_input_name]
-                if vec_options_for_scalar_slot:
-                    eligible_candidates.extend(vec_options_for_scalar_slot)
-        else: # For "vector" or "matrix"
-            eligible_candidates = [vn for vn, vt in vars_at_op.items() if vt == required_type and vn != original_input_name]
+        eligible_candidates = select_var_candidates(
+            vars_at_op,
+            required_type,
+            allow_elementwise_scalar_promotion=(spec_of_op_to_mutate.is_elementwise and required_type == "scalar"),
+            exclude=[original_input_name],
+        )
 
         if eligible_candidates:
             new_input_name = rng.choice(eligible_candidates)
@@ -255,28 +220,14 @@ def mutate_program_logic(
                 vars_for_final_fix = {**vars_before_last, last_op.out: actual_last_op_out_type}
                 available_vectors = [vn for vn, vt in vars_for_final_fix.items() if vt == "vector"]
 
-                if not available_vectors:
-                    available_vectors = [fn for fn,ft in feature_vars.items() if ft == "vector"]
-                    if not available_vectors and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
-                         available_vectors = CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
-
-                if available_vectors:
-                    source_for_final_fix = rng.choice(available_vectors)
-                    new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_final_fix,)))
-                else:
-                    default_feat_vec_fallback = "opens_t" if "opens_t" in feature_vars else \
-                                              (CROSS_SECTIONAL_FEATURE_VECTOR_NAMES[0] if CROSS_SECTIONAL_FEATURE_VECTOR_NAMES else "fallback_undefined_vector")
-                    new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec_fallback,)))
+                source_for_final_fix = pick_vector_fallback(vars_for_final_fix, feature_vars, rng=rng)
+                new_prog.predict_ops.append(
+                    Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (source_for_final_fix,))
+                )
 
     elif not new_prog.predict_ops : # Predict block became empty
-        default_feat_vec = next((vn for vn, vt in feature_vars.items() if vt == "vector"), None)
-        if not default_feat_vec and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
-            default_feat_vec = rng.choice(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
-        elif not default_feat_vec:
-            default_feat_vec = "opens_t" # Absolute fallback
-
-        if default_feat_vec:
-             new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec,)))
+        default_feat_vec = pick_vector_fallback({}, feature_vars, rng=rng)
+        new_prog.predict_ops.append(Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", (default_feat_vec,)))
 
     # — enforce that predict_ops[-1] is not a pure scalar aggregator —
     last = new_prog.predict_ops[-1]
