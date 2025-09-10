@@ -5,12 +5,15 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 
-from scripts.dashboard_server.ui_meta import router as ui_meta_router
-from scripts.dashboard_server.routes.run_auto_improve import router as auto_router
-from scripts.dashboard_server.routes.run_pipeline import router as pipeline_router
-from scripts.dashboard_server.helpers import ROOT
-from scripts.dashboard_server.health import router as health_router
+from .ui_meta import router as ui_meta_router
+from .routes.run_auto_improve import router as auto_router
+from .routes.run_pipeline import router as pipeline_router
+from .routes.config import router as config_router
+from .routes.runs import router as runs_router
+from .helpers import ROOT
+from .health import router as health_router
 
 
 def create_app() -> FastAPI:
@@ -27,12 +30,19 @@ def create_app() -> FastAPI:
     ui_dir: Path = ROOT / "dashboard-ui" / "dist"
     if ui_dir.exists():
         app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+    
+    # Redirect root to /ui for convenience
+    @app.get("/", include_in_schema=False)
+    def _root_redirect():
+        return RedirectResponse(url="/ui")
 
     # Routers
     app.include_router(health_router)
     app.include_router(ui_meta_router)
     app.include_router(auto_router)
     app.include_router(pipeline_router)
+    app.include_router(config_router)
+    app.include_router(runs_router)
     return app
 
 

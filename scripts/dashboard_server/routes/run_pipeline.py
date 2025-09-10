@@ -10,8 +10,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException
 from pathlib import Path
 
-from scripts.dashboard_server.jobs import STATE
-from scripts.dashboard_server.helpers import (
+from ..jobs import STATE
+from ..helpers import (
     ROOT,
     build_pipeline_args,
     read_best_sharpe_from_run,
@@ -20,7 +20,7 @@ from scripts.dashboard_server.helpers import (
     RE_DIAG,
     RE_PROGRESS,
 )
-from scripts.dashboard_server.models import PipelineRunRequest
+from ..models import PipelineRunRequest
 
 
 router = APIRouter()

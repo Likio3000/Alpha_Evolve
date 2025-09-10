@@ -71,6 +71,23 @@ def generate_plots(run_dir: Path) -> Path:
         print("matplotlib not available; skipping plots. Install matplotlib to enable.")
         return plots_dir
 
+    # Apply a dark theme to match the dashboard UI
+    try:
+        plt.rcParams.update({
+            "figure.facecolor": "#0f1317",
+            "axes.facecolor": "#12161a",
+            "savefig.facecolor": "#0f1317",
+            "savefig.edgecolor": "#0f1317",
+            "axes.edgecolor": "#2a3138",
+            "axes.labelcolor": "#e6e8eb",
+            "text.color": "#e6e8eb",
+            "xtick.color": "#a7adb3",
+            "ytick.color": "#a7adb3",
+            "grid.color": "#1f242a",
+        })
+    except Exception:
+        pass
+
     gens = np.array([int(d.get("generation", i + 1)) for i, d in enumerate(diags)], dtype=int)
 
     def _safe_series(vals):

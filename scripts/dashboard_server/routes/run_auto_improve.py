@@ -11,8 +11,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 
-from scripts.dashboard_server.jobs import STATE
-from scripts.dashboard_server.helpers import (
+from ..jobs import STATE
+from ..helpers import (
     ROOT,
     PIPELINE_DIR,
     RE_CANDIDATE,
@@ -21,7 +21,7 @@ from scripts.dashboard_server.helpers import (
     RE_PROGRESS,
     make_sse_response,
 )
-from scripts.dashboard_server.models import AutoImproveRequest
+from ..models import AutoImproveRequest
 
 
 router = APIRouter()

@@ -17,9 +17,19 @@ Environment variables:
 
 import logging
 import os
+from pathlib import Path
+import sys
+
+# Ensure project root is on sys.path so top-level imports work when run as a script
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import uvicorn
-from scripts.dashboard_server.app import app
+try:
+    from scripts.dashboard_server.app import app  # when launched as module: -m scripts.run_dashboard
+except ModuleNotFoundError:  # pragma: no cover - fallback for direct script execution
+    from dashboard_server.app import app
 from utils.logging_setup import setup_logging
 
 
@@ -50,6 +60,8 @@ def main() -> None:
         port = 8000
     access_log = os.environ.get("ACCESS_LOG", "0") in ("1", "true", "True")
 
+    ui_url = f"http://{host}:{port}/ui"
+    logging.getLogger(__name__).info("Open UI: %s", ui_url)
     uvicorn.run(app, host=host, port=port, access_log=access_log, log_level="info")
 
 
