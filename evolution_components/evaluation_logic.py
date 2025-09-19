@@ -1,8 +1,8 @@
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, Dict, List, Optional, Any, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Any, Set, Iterable
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 if TYPE_CHECKING:
@@ -16,6 +16,7 @@ from alpha_framework.alpha_framework_types import (
     FINAL_PREDICTION_VECTOR_NAME,
     SCALAR_FEATURE_NAMES,
 )
+from backtesting_components.performance_metrics import compute_max_drawdown
 
 
 # Module-level cache (least-recently used)
@@ -29,8 +30,15 @@ class EvalResult:
     processed_predictions: Optional[np.ndarray]
     ic_std: float = 0.0
     turnover_proxy: float = 0.0
+    factor_penalty: float = 0.0
     # Optional: fixed-weight fitness for comparability across gens (no ramping)
     fitness_static: Optional[float] = None
+    horizon_metrics: Dict[int, Dict[str, float]] = field(default_factory=dict)
+    factor_exposures: Dict[str, float] = field(default_factory=dict)
+    max_drawdown: float = 0.0
+    factor_exposure_sum: float = 0.0
+    robustness_penalty: float = 0.0
+    stress_metrics: Dict[str, float] = field(default_factory=dict)
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
@@ -43,6 +51,34 @@ def _cache_set(fp: str, value: EvalResult) -> None:
     elif len(_eval_cache) >= _EVAL_CACHE_MAX_SIZE:
         _eval_cache.popitem(last=False)
     _eval_cache[fp] = value
+
+
+def _resolve_factor_vector(
+    name: str,
+    features_at_t: Dict[str, Any],
+    aligned_dfs,
+    stock_symbols: List[str],
+    timestamp,
+) -> Optional[np.ndarray]:
+    vec_any = features_at_t.get(name)
+    if vec_any is not None:
+        arr = np.asarray(vec_any, dtype=float)
+        if arr.ndim == 1 and arr.size == len(stock_symbols):
+            return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    # fallback to dataframe column lookup
+    col = name
+    if name.endswith("_t"):
+        col = name[:-2]
+    try:
+        arr = np.array(
+            [aligned_dfs[sym].loc[timestamp, col] for sym in stock_symbols],
+            dtype=float,
+        )
+        if arr.size == len(stock_symbols):
+            return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    except Exception:
+        return None
+    return None
 
 # Evaluation constants (to be passed or configured)
 # These were global in evolve_alphas.py
@@ -70,6 +106,13 @@ _EVAL_CONFIG = {
     "fixed_turnover_penalty_weight": 0.0,
     "fixed_corr_penalty_weight": 0.0,
     "fixed_ic_tstat_weight": 0.0,
+    "factor_penalty_weight": 0.0,
+    "factor_penalty_factors": tuple(),
+    "stress_penalty_weight": 0.0,
+    "stress_fee_bps": 5.0,
+    "stress_slippage_bps": 2.0,
+    "stress_shock_scale": 1.5,
+    "evaluation_horizons": (1,),
     "hof_corr_mode": "flat",   # 'flat' (default) or 'per_bar'
     "temporal_decay_half_life": 0.0,
     "use_train_val_splits": False,
@@ -132,6 +175,13 @@ def configure_evaluation(
     ic_std_penalty_weight: float = 0.0,
     turnover_penalty_weight: float = 0.0,
     ic_tstat_weight: float = 0.0,
+    factor_penalty_weight: float = 0.0,
+    factor_penalty_factors: str | Iterable[int] | None = None,
+    stress_penalty_weight: float = 0.0,
+    stress_fee_bps: float = 5.0,
+    stress_slippage_bps: float = 2.0,
+    stress_shock_scale: float = 1.5,
+    evaluation_horizons: Iterable[int] | None = None,
     use_train_val_splits: bool = False,
     train_points: int = 0,
     val_points: int = 0,
@@ -167,6 +217,37 @@ def configure_evaluation(
     _EVAL_CONFIG["ic_std_penalty_weight"] = ic_std_penalty_weight
     _EVAL_CONFIG["turnover_penalty_weight"] = turnover_penalty_weight
     _EVAL_CONFIG["ic_tstat_weight"] = ic_tstat_weight
+    _EVAL_CONFIG["factor_penalty_weight"] = float(factor_penalty_weight)
+    factors_raw = ""
+    factors_tuple: tuple[str, ...]
+    if isinstance(factor_penalty_factors, str):
+        factors_raw = factor_penalty_factors.strip()
+        if factors_raw:
+            factors_tuple = tuple(sorted({f.strip() for f in factors_raw.split(',') if f.strip()}))
+        else:
+            factors_tuple = tuple()
+    elif factor_penalty_factors is not None:
+        factors_tuple = tuple(sorted({str(f).strip() for f in factor_penalty_factors if str(f).strip()}))
+    else:
+        factors_tuple = tuple()
+    _EVAL_CONFIG["factor_penalty_factors"] = factors_tuple
+    _EVAL_CONFIG["stress_penalty_weight"] = float(stress_penalty_weight)
+    _EVAL_CONFIG["stress_fee_bps"] = float(stress_fee_bps)
+    _EVAL_CONFIG["stress_slippage_bps"] = float(stress_slippage_bps)
+    _EVAL_CONFIG["stress_shock_scale"] = float(stress_shock_scale)
+
+    horizons_set: Set[int] = set()
+    if evaluation_horizons is not None:
+        for val in evaluation_horizons:
+            try:
+                h = int(val)
+            except Exception:
+                continue
+            if h > 0:
+                horizons_set.add(h)
+    if not horizons_set:
+        horizons_set.add(1)
+    _EVAL_CONFIG["evaluation_horizons"] = tuple(sorted(horizons_set))
     _EVAL_CONFIG["use_train_val_splits"] = use_train_val_splits
     _EVAL_CONFIG["train_points"] = int(train_points)
     _EVAL_CONFIG["val_points"] = int(val_points)
@@ -201,12 +282,15 @@ def configure_evaluation(
         pj = 0.0
     _EVAL_CONFIG["parsimony_jitter_pct"] = max(0.0, min(1.0, pj))
     logging.getLogger(__name__).debug(
-        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f jitter=%.3f",
+        "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s factor_w=%s factors=%s horizons=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f jitter=%.3f",
         scale_method,
         parsimony_penalty,
         sharpe_proxy_weight,
         ic_std_penalty_weight,
         turnover_penalty_weight,
+        _EVAL_CONFIG["factor_penalty_weight"],
+        _EVAL_CONFIG["factor_penalty_factors"],
+        _EVAL_CONFIG["evaluation_horizons"],
         use_train_val_splits,
         train_points,
         val_points,
@@ -423,7 +507,7 @@ def evaluate_program(
         logger.debug("Program %s does not use any feature vector", fp)
         _EVAL_STATS["rejected_no_feature_vec"] += 1
         _push_event({"fp": fp, "event": "no_feature_vector"})
-        result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
+        result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
         _cache_set(fp, result)
         return result
 
@@ -469,8 +553,106 @@ def evaluate_program(
     all_processed_predictions_timeseries: List[np.ndarray] = []
     daily_ic_values: List[float] = []
     daily_pnl_values: List[float] = []
-    pnl_sum = 0.0
-    pnl_sq_sum = 0.0
+
+    horizons_cfg = _EVAL_CONFIG.get("evaluation_horizons", (eval_lag,))
+    horizons: List[int] = []
+    try:
+        for h in horizons_cfg:
+            h_int = int(h)
+            if h_int > 0:
+                horizons.append(h_int)
+    except Exception:
+        horizons = []
+    if not horizons:
+        horizons = [eval_lag if eval_lag > 0 else 1]
+    if eval_lag > 0 and eval_lag not in horizons:
+        horizons.append(eval_lag)
+    horizons = sorted(set(horizons))
+    primary_horizon = eval_lag if eval_lag in horizons else horizons[0]
+    max_horizon = max(horizons)
+
+    close_matrix: Optional[np.ndarray] = None
+    has_close_prices = False
+    if ctx is not None and getattr(ctx, "col_matrix_map", None):
+        for key in ("close", "closes", "close_adj"):
+            mat = ctx.col_matrix_map.get(key)  # type: ignore[union-attr]
+            if mat is not None and mat.shape[0] == len(common_time_index):
+                close_matrix = np.array(mat, dtype=float, copy=True)
+                break
+    if close_matrix is None:
+        close_matrix = np.zeros((len(common_time_index), n_stocks), dtype=float)
+        for j, sym in enumerate(stock_symbols):
+            try:
+                series = aligned_dfs[sym]["close"].reindex(common_time_index)
+                close_matrix[:, j] = np.nan_to_num(series.to_numpy(dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+            except Exception:
+                close_matrix[:, j] = 0.0
+    if close_matrix.size:
+        has_close_prices = bool(np.any(np.abs(close_matrix) > 1e-9))
+
+    ret_fwd_matrix: Optional[np.ndarray] = None
+    if ctx is not None and getattr(ctx, "col_matrix_map", None):
+        mat = ctx.col_matrix_map.get("ret_fwd")  # type: ignore[union-attr]
+        if mat is None:
+            mat = ctx.col_matrix_map.get("ret_fwd_t")  # type: ignore[union-attr]
+        if mat is not None and mat.shape[0] == len(common_time_index):
+            ret_fwd_matrix = np.array(mat, dtype=float, copy=True)
+    if ret_fwd_matrix is None and n_stocks > 0:
+        ret_columns: list[np.ndarray] = []
+        any_ret_data = False
+        for sym in stock_symbols:
+            arr = np.zeros(len(common_time_index), dtype=float)
+            try:
+                series = aligned_dfs[sym]["ret_fwd"].reindex(common_time_index)
+                arr = series.to_numpy(dtype=float)
+                any_ret_data = True
+            except Exception:
+                pass
+            ret_columns.append(np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0))
+        if any_ret_data and ret_columns:
+            ret_fwd_matrix = np.column_stack(ret_columns)
+
+    returns_by_horizon: Dict[int, np.ndarray] = {}
+    T_total = close_matrix.shape[0]
+    for h in horizons:
+        if h >= T_total:
+            continue
+        numer = close_matrix[h:, :]
+        denom = close_matrix[: T_total - h, :]
+        ret = np.zeros_like(denom)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            np.divide(numer, denom, out=ret, where=np.abs(denom) > 1e-12)
+        ret = np.nan_to_num(ret - 1.0, nan=0.0, posinf=0.0, neginf=0.0)
+        returns_by_horizon[h] = ret
+
+    num_evaluation_steps = len(common_time_index) - max_horizon
+    if num_evaluation_steps <= 0:  # Not enough data for even one evaluation
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
+        return _eval_cache[fp]
+
+    for h in list(returns_by_horizon.keys()):
+        mat = returns_by_horizon[h]
+        if mat.shape[0] > num_evaluation_steps:
+            returns_by_horizon[h] = mat[:num_evaluation_steps]
+
+    if ret_fwd_matrix is not None and num_evaluation_steps > 0:
+        ret_fwd_trim = ret_fwd_matrix[:num_evaluation_steps]
+        ret_fwd_trim = np.nan_to_num(ret_fwd_trim, nan=0.0, posinf=0.0, neginf=0.0)
+        target_h = eval_lag if eval_lag in horizons else horizons[0]
+        if not has_close_prices or target_h not in returns_by_horizon or returns_by_horizon[target_h].size == 0:
+            returns_by_horizon[target_h] = ret_fwd_trim
+
+    ic_values_by_h: Dict[int, List[float]] = {h: [] for h in horizons}
+    pnl_values_by_h: Dict[int, List[float]] = {h: [] for h in horizons}
+
+    factor_penalty_weight = float(_EVAL_CONFIG.get("factor_penalty_weight", 0.0) or 0.0)
+    factor_names_cfg = _EVAL_CONFIG.get("factor_penalty_factors", tuple())
+    factor_names: tuple[str, ...]
+    if isinstance(factor_names_cfg, (list, tuple, set)):
+        factor_names = tuple(str(n) for n in factor_names_cfg if str(n))
+    else:
+        factor_names = tuple()
+    factor_corr_tracker: Dict[str, List[float]] = {name: [] for name in factor_names}
 
     # The common_time_index from data_handling is already sliced appropriately for eval_lag
     # Loop until common_time_index.size - eval_lag -1 (for python 0-indexing)
@@ -478,11 +660,6 @@ def evaluate_program(
     # If common_time_index has N points, we can make N - eval_lag predictions.
     # Prediction at t_idx uses features at t_idx, compares with returns at t_idx + eval_lag.
     
-    num_evaluation_steps = len(common_time_index) - eval_lag
-    if num_evaluation_steps <= 0: # Not enough data for even one evaluation
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
-        return _eval_cache[fp]
-
     for t_idx in range(num_evaluation_steps):
         timestamp = common_time_index[t_idx]
 
@@ -528,7 +705,7 @@ def evaluate_program(
                 # print(f"Program {fp} yielded NaN/Inf at t_idx {t_idx}. Aborting eval for this prog.")
                 _EVAL_STATS["rejected_nan_or_inf"] += 1
                 _push_event({"fp": fp, "event": "nan_or_inf"})
-                _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
+                _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
                 return _eval_cache[fp]
             
             all_raw_predictions_timeseries.append(raw_predictions_t.copy())
@@ -539,6 +716,24 @@ def evaluate_program(
             if _EVAL_CONFIG.get("sector_neutralize", False):
                 processed_predictions_t = _demean_by_groups(processed_predictions_t, sector_groups_vec)
             all_processed_predictions_timeseries.append(processed_predictions_t)
+
+            if factor_corr_tracker:
+                pred_centered = processed_predictions_t - float(np.mean(processed_predictions_t))
+                pred_std = float(np.std(pred_centered, ddof=0))
+                if pred_std > 1e-9:
+                    pred_z = pred_centered / pred_std
+                    for fname in factor_corr_tracker.keys():
+                        vec = _resolve_factor_vector(fname, features_at_t, aligned_dfs, stock_symbols, timestamp)
+                        if vec is None or vec.size != pred_z.size:
+                            continue
+                        vec_centered = vec - float(np.mean(vec))
+                        vec_std = float(np.std(vec_centered, ddof=0))
+                        if vec_std <= 1e-9:
+                            continue
+                        vec_z = vec_centered / vec_std
+                        corr = float(np.dot(pred_z, vec_z) / pred_z.size)
+                        if np.isfinite(corr):
+                            factor_corr_tracker[fname].append(corr)
 
             # Early abort checks (on raw predictions)
             if len(all_raw_predictions_timeseries) == _EVAL_CONFIG["early_abort_bars"]:
@@ -605,37 +800,38 @@ def evaluate_program(
                         mean_t_std_partial,
                         _EVAL_CONFIG["early_abort_t_threshold"],
                     )
-                    result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None)
+                    result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
                     _cache_set(fp, result)
                     return result
 
             # IC calculation
-            return_timestamp_for_ic = common_time_index[t_idx + eval_lag]
-            actual_returns_t_slice = np.array([aligned_dfs[sym].loc[return_timestamp_for_ic, "ret_fwd"] for sym in stock_symbols], dtype=float)
-            actual_returns_t = np.nan_to_num(actual_returns_t_slice, nan=0.0, posinf=0.0, neginf=0.0) # Clean returns
-
-            if np.all(np.isnan(actual_returns_t)): # If all returns are NaN (e.g. end of data for some reason)
-                daily_ic_values.append(0.0)
-                daily_pnl = 0.0
-            else:
-                # rank both sides for Spearman IC (tie-aware)
-                r_pred = _average_rank_ties(processed_predictions_t)
-                r_rets = _average_rank_ties(actual_returns_t)
-                ic_t = _safe_corr_eval(r_pred, r_rets)
-                daily_ic_values.append(0.0 if np.isnan(ic_t) else ic_t)
-                daily_pnl = float(np.mean(processed_predictions_t * actual_returns_t))
-
-            pnl_sum += daily_pnl
-            pnl_sq_sum += daily_pnl ** 2
-            daily_pnl_values.append(daily_pnl)
+            for horizon in horizons:
+                ret_matrix = returns_by_horizon.get(horizon)
+                if ret_matrix is None or t_idx >= ret_matrix.shape[0]:
+                    continue
+                actual_returns_t = ret_matrix[t_idx]
+                if np.all(np.isnan(actual_returns_t)):
+                    ic_value = 0.0
+                    pnl_val = 0.0
+                else:
+                    r_pred = _average_rank_ties(processed_predictions_t)
+                    r_rets = _average_rank_ties(actual_returns_t)
+                    ic_t = _safe_corr_eval(r_pred, r_rets)
+                    ic_value = 0.0 if np.isnan(ic_t) else ic_t
+                    pnl_val = float(np.mean(processed_predictions_t * actual_returns_t))
+                ic_values_by_h[horizon].append(ic_value)
+                pnl_values_by_h[horizon].append(pnl_val)
+                if horizon == primary_horizon:
+                    daily_ic_values.append(ic_value)
+                    daily_pnl_values.append(pnl_val)
 
         except Exception: # Broad exception during program's .eval() or IC calculation
-            _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
+            _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
             return _eval_cache[fp]
 
     if not daily_ic_values or not all_raw_predictions_timeseries or not all_processed_predictions_timeseries:
         _push_event({"fp": fp, "event": "exception"})
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None))
+        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
         return _eval_cache[fp]
 
     # Compute metrics (optionally on train/val splits)
@@ -673,10 +869,15 @@ def evaluate_program(
         mean_daily_ic = float(np.sum(w * np.array(daily_ic_values)) / (ws if ws > 0 else 1.0))
     else:
         mean_daily_ic = float(np.mean(daily_ic_values))
-    mean_pnl = pnl_sum / num_evaluation_steps
-    var_pnl = pnl_sq_sum / num_evaluation_steps - mean_pnl ** 2
-    std_pnl = var_pnl ** 0.5 if var_pnl > 0 else 0.0
-    sharpe_proxy = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
+    pnl_primary = np.array(pnl_values_by_h.get(primary_horizon, []), dtype=float)
+    if pnl_primary.size > 0:
+        mean_pnl = float(np.mean(pnl_primary))
+        std_pnl = float(np.std(pnl_primary, ddof=0))
+        sharpe_proxy = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
+    else:
+        mean_pnl = 0.0
+        std_pnl = 0.0
+        sharpe_proxy = 0.0
     ic_std = float(np.std(daily_ic_values, ddof=0)) if daily_ic_values else 0.0
     turnover_proxy = 0.0
 
@@ -806,6 +1007,100 @@ def evaluate_program(
             turnover_proxy = 0.0
         processed_for_hof = full_processed_predictions_matrix
 
+    horizon_metrics: Dict[int, Dict[str, float]] = {}
+    combined_ic_values = None
+    if len(horizons) > 1:
+        ic_means_components: List[float] = []
+        ic_std_components: List[float] = []
+        sharpe_components: List[float] = []
+        combined_segments: List[np.ndarray] = []
+        mean_pnl_components: List[float] = []
+        for h in horizons:
+            ic_vals = np.array(ic_values_by_h.get(h, []), dtype=float)
+            pnl_vals = np.array(pnl_values_by_h.get(h, []), dtype=float)
+            mean_ic_h = float(np.mean(ic_vals)) if ic_vals.size else 0.0
+            ic_std_h = float(np.std(ic_vals, ddof=0)) if ic_vals.size else 0.0
+            mean_pnl_h = float(np.mean(pnl_vals)) if pnl_vals.size else 0.0
+            if pnl_vals.size > 1:
+                sharpe_h = float(mean_pnl_h / np.std(pnl_vals, ddof=0)) if np.std(pnl_vals, ddof=0) > 1e-9 else 0.0
+            else:
+                sharpe_h = 0.0
+            horizon_metrics[h] = {
+                "mean_ic": mean_ic_h,
+                "ic_std": ic_std_h,
+                "mean_pnl": mean_pnl_h,
+                "sharpe": sharpe_h,
+            }
+            if ic_vals.size:
+                ic_means_components.append(mean_ic_h)
+                ic_std_components.append(ic_std_h)
+                combined_segments.append(ic_vals)
+            if pnl_vals.size:
+                mean_pnl_components.append(mean_pnl_h)
+            sharpe_components.append(sharpe_h)
+        if ic_means_components:
+            mean_daily_ic = float(np.mean(ic_means_components))
+        if ic_std_components:
+            ic_std = float(np.mean(ic_std_components))
+        if sharpe_components:
+            sharpe_proxy = float(np.mean(sharpe_components))
+        if mean_pnl_components:
+            mean_pnl = float(np.mean(mean_pnl_components))
+        if combined_segments:
+            combined_ic_values = np.concatenate(combined_segments)
+    else:
+        horizon_metrics[primary_horizon] = {
+            "mean_ic": mean_daily_ic,
+            "ic_std": ic_std,
+            "mean_pnl": mean_pnl,
+            "sharpe": sharpe_proxy,
+        }
+        combined_ic_values = np.array(daily_ic_values, dtype=float)
+
+    drawdown_proxy = 0.0
+    for horizon in horizons:
+        pnl_series = np.array(pnl_values_by_h.get(horizon, []), dtype=float)
+        dd_value = 0.0
+        if pnl_series.size:
+            equity_curve = np.cumsum(pnl_series)
+            dd_value = float(compute_max_drawdown(equity_curve))
+        bucket = horizon_metrics.setdefault(horizon, {})
+        bucket["max_drawdown"] = dd_value
+        if horizon == primary_horizon:
+            drawdown_proxy = dd_value
+
+    stress_metrics: Dict[str, float] = {}
+    robustness_penalty = 0.0
+    if pnl_primary.size > 0:
+        fee_bps = float(_EVAL_CONFIG.get("stress_fee_bps", 0.0) or 0.0)
+        slip_bps = float(_EVAL_CONFIG.get("stress_slippage_bps", 0.0) or 0.0)
+        fee_total = (fee_bps + slip_bps) / 10000.0
+        turnover_est = max(0.0, float(turnover_proxy))
+        stress_cost = fee_total * turnover_est
+        shock_scale = float(max(1.0, float(_EVAL_CONFIG.get("stress_shock_scale", 1.0) or 1.0)))
+        stressed = pnl_primary.astype(float, copy=True)
+        if stressed.size > 0:
+            neg_mask = stressed < 0.0
+            pos_mask = stressed > 0.0
+            stressed[neg_mask] *= shock_scale
+            if shock_scale > 1.0:
+                stressed[pos_mask] /= shock_scale
+        stress_equity = np.cumsum(stressed)
+        stress_dd = float(compute_max_drawdown(stress_equity))
+        stress_mean = float(np.mean(stressed)) - stress_cost
+        stress_metrics = {
+            "cost": float(stress_cost),
+            "drawdown": stress_dd,
+            "mean_pnl": stress_mean,
+            "shock_scale": shock_scale,
+        }
+        if stress_cost > 0.0:
+            robustness_penalty += stress_cost
+        if stress_dd > 0.0:
+            robustness_penalty += stress_dd
+        if stress_mean < 0.0:
+            robustness_penalty += abs(stress_mean)
+
     # Linear parsimony penalty to match expected tests: factor * (size / max_ops)
     try:
         max_ops_norm = float(max(1, _EVAL_CONFIG["max_ops_for_parsimony"]))
@@ -830,12 +1125,17 @@ def evaluate_program(
     # IC t-statistic component (optional)
     ic_tstat = 0.0
     try:
-        if daily_ic_values:
+        arr_ic: Optional[np.ndarray] = None
+        weighted = False
+        if combined_ic_values is not None and len(combined_ic_values) > 0:
+            arr_ic = np.array(combined_ic_values, dtype=float)
+        elif daily_ic_values:
             arr_ic = np.array(daily_ic_values, dtype=float)
-            if not use_splits and hl > 0.0:
+            weighted = not use_splits and hl > 0.0 and (int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0) <= 1)
+        if arr_ic is not None and arr_ic.size:
+            if weighted and arr_ic.size == len(daily_ic_values):
                 w = _decay_weights(arr_ic.size, hl)
                 mu_w = float(np.sum(w * arr_ic) / (np.sum(w) if np.sum(w) > 0 else 1.0))
-                # Kish effective sample size for weighted mean
                 wsum = float(np.sum(w))
                 w2sum = float(np.sum(w * w))
                 neff = wsum * wsum / (w2sum if w2sum > 0 else 1.0)
@@ -858,6 +1158,23 @@ def evaluate_program(
         + _EVAL_CONFIG.get("ic_tstat_weight", 0.0) * ic_tstat
     )
     correlation_penalty = 0.0
+
+    factor_penalty_components: Dict[str, float] = {}
+    if factor_corr_tracker:
+        for name, values in factor_corr_tracker.items():
+            if not values:
+                continue
+            mean_abs_corr = float(np.mean(np.abs(values)))
+            factor_penalty_components[name] = mean_abs_corr
+    factor_exposure_sum = float(sum(factor_penalty_components.values())) if factor_penalty_components else 0.0
+    factor_penalty_value = 0.0
+    if factor_penalty_weight > 0.0 and factor_penalty_components:
+        factor_penalty_value = factor_penalty_weight * factor_exposure_sum
+        score -= factor_penalty_value
+
+    stress_penalty_weight = float(_EVAL_CONFIG.get("stress_penalty_weight", 0.0) or 0.0)
+    if stress_penalty_weight > 0.0 and robustness_penalty > 0.0:
+        score -= stress_penalty_weight * robustness_penalty
 
     if np.all(processed_for_hof == 0):
         logger.debug("All-zero predictions – rejected")
@@ -988,15 +1305,22 @@ def evaluate_program(
             )
         score -= correlation_penalty
     result = EvalResult(
-        score,
-        mean_daily_ic,
-        sharpe_proxy,
-        parsimony_penalty,
-        correlation_penalty,
-        processed_for_hof if return_preds else None,
-        ic_std,
-        turnover_proxy,
-        None,
+        fitness=score,
+        mean_ic=mean_daily_ic,
+        sharpe_proxy=sharpe_proxy,
+        parsimony_penalty=parsimony_penalty,
+        correlation_penalty=correlation_penalty,
+        processed_predictions=processed_for_hof if return_preds else None,
+        ic_std=ic_std,
+        turnover_proxy=turnover_proxy,
+        factor_penalty=factor_penalty_value,
+        fitness_static=None,
+        horizon_metrics=horizon_metrics,
+        factor_exposures=factor_penalty_components,
+        max_drawdown=drawdown_proxy,
+        factor_exposure_sum=factor_exposure_sum,
+        robustness_penalty=robustness_penalty,
+        stress_metrics=stress_metrics,
     )
     # Compute fixed-weight fitness if candidate wasn't invalidated to -inf
     try:
@@ -1029,7 +1353,7 @@ def evaluate_program(
         pass
     if result.fitness_static is not None:
         logger.debug(
-            "Eval summary %s | fitness %.6f (fixed %.6f) mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
+            "Eval summary %s | fitness %.6f (fixed %.6f) mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f factor %.6f drawdown %.6f factor_sum %.6f robust %.6f stress %s ops %d factors %s horizons %s",
             fp,
             result.fitness,
             result.fitness_static,
@@ -1039,11 +1363,18 @@ def evaluate_program(
             result.sharpe_proxy,
             result.parsimony_penalty,
             result.correlation_penalty,
+            result.factor_penalty,
+            result.max_drawdown,
+            result.factor_exposure_sum,
+            result.robustness_penalty,
+            result.stress_metrics,
             prog.size,
+            factor_penalty_components,
+            horizon_metrics,
         )
     else:
         logger.debug(
-            "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f ops %d",
+            "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f factor %.6f drawdown %.6f factor_sum %.6f robust %.6f stress %s ops %d factors %s horizons %s",
             fp,
             result.fitness,
             result.mean_ic,
@@ -1052,7 +1383,14 @@ def evaluate_program(
             result.sharpe_proxy,
             result.parsimony_penalty,
             result.correlation_penalty,
+            result.factor_penalty,
+            result.max_drawdown,
+            result.factor_exposure_sum,
+            result.robustness_penalty,
+            result.stress_metrics,
             prog.size,
+            factor_penalty_components,
+            horizon_metrics,
         )
     _cache_set(fp, result)
     return result

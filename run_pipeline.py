@@ -17,6 +17,7 @@ Operation limit flags:
 from __future__ import annotations
 import argparse
 import logging
+import os
 import pickle
 import sys
 import time
@@ -32,7 +33,23 @@ import json as _json
 from utils.cli import add_dataclass_args
 from utils.config_layering import load_config_file, layer_dataclass_config, _flatten_sectioned_config  # type: ignore
 
-BASE_OUTPUT_DIR = Path("./pipeline_runs_cs")
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "pipeline_runs_cs"
+
+
+def _resolve_output_dir(cli_arg: str | None) -> Path:
+    """Resolve the pipeline output directory from CLI or env overrides."""
+    env_override = os.environ.get("AE_PIPELINE_DIR") or os.environ.get("AE_OUTPUT_DIR")
+    candidate = cli_arg or env_override
+    if candidate:
+        out = Path(candidate).expanduser()
+        if not out.is_absolute():
+            out = (PROJECT_ROOT / out).resolve()
+        else:
+            out = out.resolve()
+    else:
+        out = DEFAULT_OUTPUT_DIR.resolve()
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +84,9 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
                    help="Show resolved configs and planned outputs, then exit")
     p.add_argument("--print-config", action="store_true",
                    help="Print resolved Evolution and Backtest configs as JSON and exit")
+    p.add_argument("--output-dir", default=None,
+                   help="Base directory for pipeline run artefacts (defaults to pipeline_runs_cs relative to the project root)."
+                   )
     # Cache controls
     p.add_argument("--disable-align-cache", action="store_true",
                    help="Disable alignment cache (equivalent to AE_DISABLE_ALIGN_CACHE=1)")
@@ -332,8 +352,16 @@ def main() -> None:
 
     setup_logging(level=level, log_file=cli.log_file)
 
+    base_output_dir = _resolve_output_dir(getattr(cli, "output_dir", None))
+    try:
+        base_output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to create output directory: %s", base_output_dir)
+        sys.exit(1)
+    os.environ["AE_PIPELINE_DIR"] = str(base_output_dir)
+
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
-    run_dir = (BASE_OUTPUT_DIR /
+    run_dir = (base_output_dir /
                f"run_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
                f"{evo_cfg.max_lookback_data_option}_{run_stamp}")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -374,10 +402,18 @@ def main() -> None:
         with open(run_dir / "meta" / "run_metadata.json", "w") as fh:
             json.dump(meta, fh, indent=2)
         try:
-            with open(BASE_OUTPUT_DIR / "LATEST", "w") as fh:
-                fh.write(str(run_dir))
+            latest_path = base_output_dir / "LATEST"
+            value = str(run_dir.resolve())
+            try:
+                rel_to_root = run_dir.resolve().relative_to(PROJECT_ROOT)
+                value = str(rel_to_root)
+            except ValueError:
+                # Leave absolute path when run directory lives outside the project root.
+                value = str(run_dir.resolve())
+            with open(latest_path, "w") as fh:
+                fh.write(value)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("Failed to update LATEST pointer", exc_info=True)
     except Exception:
         logging.getLogger(__name__).warning("Failed to save run metadata.")
 

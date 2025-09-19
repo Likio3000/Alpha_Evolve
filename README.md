@@ -68,6 +68,23 @@ Recommendations:
   evolution and `--sector_neutralize_positions false` on backtests, or set those
   in `configs/sp500.toml`.
 
+### Pipeline output location
+
+Run artefacts default to `pipeline_runs_cs/` under the project root. Override the
+destination (e.g. a larger external volume) with either the `--output-dir`
+flag or the `AE_PIPELINE_DIR` environment variable:
+
+```bash
+uv run run_pipeline.py 10 --config configs/crypto.toml --output-dir ~/.alpha-evolve/runs
+
+# Match the dashboard server with the same directory
+AE_PIPELINE_DIR=~/.alpha-evolve/runs uv run scripts/run_dashboard.py
+```
+
+`run_pipeline.py` updates `pipeline_runs_cs/LATEST` (inside the chosen output
+directory) with a project-relative path whenever possible, keeping the Python
+dashboard compatible with older runs.
+
 ## Running tests
 
 Before running `pytest` you **must** install the project's dependencies:
@@ -253,7 +270,7 @@ For a tiny end‑to‑end check, use `scripts/smoke_run.sh`.
 
 ### Minimal Dashboard UI
 
-Start the iterative API server and open the built‑in UI:
+Start the iterative API server and open the built-in UI:
 
 ```bash
 uv run scripts/run_dashboard.py
@@ -264,7 +281,13 @@ The UI can:
 - Start pipeline runs (dataset + generations + optional overrides)
 - Stream live logs and progress (SSE)
 - List recent runs and render simple evolution charts from `diagnostics.json`
-- Show the backtest summary and per‑alpha timeseries charts
+- Show the backtest summary and per-alpha timeseries charts
+
+Need the richer front-end? See `docs/dashboard_ui_build.md` for rebuilding the
+advanced UI bundle and hooking it up to the FastAPI backend.
+
+For a full end-to-end tour (data prep → pipeline run → dashboard → cleanup),
+check `docs/first_run_walkthrough.md`.
 
 ### Adapting new data
 
@@ -289,6 +312,9 @@ Section 4.1 of the reproduction guide:
 * Sharpe proxy weight **0**
 * annualization factor **365 * 6** (default for 4-hour crypto bars)
 * long/short universe size **0** (use all symbols)
+* `factor_penalty_w` default **0.0** (set >0 to penalize exposure to style factors listed in `factor_penalty_factors`, e.g. `ret1d_t,vol20_t,range_rel_t`)
+* `evaluation_horizons` default **(1,)** (supply additional horizons such as `(1, 3, 6)` to score alphas on multiple holding periods; metrics are averaged across horizons)
+* `qd_archive_enabled` default **false** – enable a MAP-Elites style archive that keeps turnover/complexity-diverse elites (`qd_turnover_bins`, `qd_complexity_bins`, `qd_max_entries`)
 
 ## Data handling
 
@@ -318,6 +344,11 @@ The dataset itself cannot be shared due to provider restrictions. In limited exp
 ## Further Reading
 
 `Alpha_evolve_paper.pdf` is a reproduction guide describing the original experiment and how to replicate it with this code (kinda).
+
+## Utilities
+
+- `sh scripts/typecheck` – mypy quick pass (uses `uv run` when available).
+- `python scripts/cleanup_runs.py --help` – prune or inspect pipeline runs.
 
 ## License
 

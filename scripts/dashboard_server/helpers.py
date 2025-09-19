@@ -12,7 +12,21 @@ from sse_starlette.sse import EventSourceResponse
 
 # Resolve project root relative to this file (under scripts/dashboard_server)
 ROOT: Path = Path(__file__).resolve().parents[2]
-PIPELINE_DIR: Path = ROOT / "pipeline_runs_cs"
+
+
+def _compute_pipeline_dir() -> Path:
+    override = os.environ.get("AE_PIPELINE_DIR") or os.environ.get("AE_OUTPUT_DIR")
+    if override:
+        candidate = Path(override).expanduser()
+        if not candidate.is_absolute():
+            candidate = (ROOT / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+        return candidate
+    return (ROOT / "pipeline_runs_cs").resolve()
+
+
+PIPELINE_DIR: Path = _compute_pipeline_dir()
 
 
 def read_best_sharpe_from_run(run_dir: Path) -> Optional[float]:
@@ -44,8 +58,18 @@ def resolve_latest_run_dir() -> Optional[Path]:
         if latest.exists():
             p = latest.read_text().strip()
             if p:
-                run_path = Path(p)
-                return run_path if run_path.exists() else None
+                raw_path = Path(p)
+                candidates = []
+                if raw_path.is_absolute():
+                    candidates.append(raw_path.resolve())
+                else:
+                    candidates.append((ROOT / raw_path).resolve())
+                    parts = raw_path.parts
+                    if not parts or parts[0] != PIPELINE_DIR.name:
+                        candidates.append((PIPELINE_DIR / raw_path).resolve())
+                for run_path in candidates:
+                    if run_path.exists():
+                        return run_path
     except Exception:
         return None
     return None
@@ -111,4 +135,3 @@ def make_sse_response(request: Request, queue, keepalive_seconds: float = 10.0) 
                 continue
 
     return EventSourceResponse(event_generator())
-

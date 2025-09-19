@@ -12,7 +12,11 @@ CROSS_SECTIONAL_FEATURE_VECTOR_NAMES = [
     "opens_t", "highs_t", "lows_t", "closes_t", "ranges_t",
     "ma5_t", "ma10_t", "ma20_t", "ma30_t",
     "vol5_t", "vol10_t", "vol20_t", "vol30_t",
-    "ret1d_t", "range_rel_t",
+    "vol_spread_5_20_t", "vol_spread_10_30_t", "vol_ratio_5_20_t",
+    "trend_5_20_t", "intraday_ret_t",
+    "ret1d_t", "range_rel_t", "flow_proxy_t", "whale_move_proxy_t",
+    "market_rel_close_t", "market_rel_ret1d_t", "market_zclose_t",
+    "btc_ratio_proxy_t", "regime_volatility_t", "regime_momentum_t",
     "sector_id_vector",
 ]
 SCALAR_FEATURE_NAMES = ["const_1", "const_neg_1"]

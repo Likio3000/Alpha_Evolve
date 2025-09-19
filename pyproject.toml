@@ -8,12 +8,14 @@ package-mode = false
 dependencies = [
     "datetime>=5.5",
     "fastapi>=0.116.1",
+    "httpx>=0.27.2",
     "lxml>=6.0.1",
     "matplotlib>=3.10.5",
     "numpy>=2.2.6",
     "pandas>=2.2.3",
     "pyperclip>=1.9.0",
     "pytest>=8.4.0",
+    "mypy>=1.11.0",
     "ruff>=0.11.10",
     "sse-starlette>=3.0.2",
     "tqdm>=4.67.1",
@@ -24,3 +26,16 @@ dependencies = [
 [project.scripts]
 alpha-evolve-pipeline = "run_pipeline:main"
 alpha-evolve-backtest = "backtest_evolved_alphas:main"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "skip"
+show_error_codes = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+files = [
+    "scripts/dashboard_server",
+    "tests/test_dashboard_routes.py",
+]

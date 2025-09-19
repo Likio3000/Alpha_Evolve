@@ -83,6 +83,21 @@ def get_pipeline_params_ui_meta() -> Dict[str, Any]:
                     {"key": "turnover_penalty_w", "label": "Turnover Penalty", "type": "float", "default": 0.05, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Penalty for high position turnover (reduces trading)."},
                     {"key": "ic_tstat_w", "label": "IC t‑stat Weight", "type": "float", "default": 0.0, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Include IC t‑stat to reward stability in rank correlations."},
                     {"key": "temporal_decay_half_life", "label": "Temporal Decay Half‑life", "type": "float", "default": 0.0, "min": 0.0, "max": 10000.0, "step": 1.0, "help": "Exponential half-life in bars to weight recent data more (0 disables)."},
+                    {"key": "factor_penalty_w", "label": "Factor Neutral Penalty", "type": "float", "default": 0.0, "min": 0.0, "max": 2.0, "step": 0.01, "help": "Weight applied to style-factor exposure penalty."},
+                    {"key": "factor_penalty_factors", "label": "Factor List", "type": "text", "default": "ret1d_t,vol20_t,range_rel_t", "help": "Comma-separated factor names to neutralize (matches evaluation features)."},
+                    {"key": "stress_penalty_w", "label": "Stress Penalty Weight", "type": "float", "default": 0.0, "min": 0.0, "max": 5.0, "step": 0.01, "help": "Penalty weight for stress/transaction-cost robustness."},
+                    {"key": "stress_fee_bps", "label": "Stress Fee (bps)", "type": "float", "default": 5.0, "min": 0.0, "max": 100.0, "step": 0.5, "help": "Additional fee applied in stress fitness (per side)."},
+                    {"key": "stress_slippage_bps", "label": "Stress Slippage (bps)", "type": "float", "default": 2.0, "min": 0.0, "max": 100.0, "step": 0.5, "help": "Extra slippage applied in stress fitness."},
+                    {"key": "stress_shock_scale", "label": "Stress Shock Scale", "type": "float", "default": 1.5, "min": 1.0, "max": 5.0, "step": 0.1, "help": "Multiplier for downside shocks in stress fitness."},
+                ],
+            },
+            {
+                "title": "Evaluation Windows",
+                "items": [
+                    {"key": "evaluation_horizons", "label": "Evaluation Horizons", "type": "text", "default": "1", "help": "Comma-separated prediction horizons (in bars) used during evaluation."},
+                    {"key": "use_train_val_splits", "label": "Use Train/Val Splits", "type": "bool", "default": True, "help": "Split evaluation window into train/validation segments."},
+                    {"key": "train_points", "label": "Train Bars", "type": "int", "default": 840, "min": 0, "max": 100000, "step": 10, "help": "Number of bars allocated to training slice when splits enabled."},
+                    {"key": "val_points", "label": "Validation Bars", "type": "int", "default": 360, "min": 0, "max": 100000, "step": 10, "help": "Number of bars allocated to validation slice when splits enabled."},
                 ],
             },
             {
@@ -94,6 +109,15 @@ def get_pipeline_params_ui_meta() -> Dict[str, Any]:
                     {"key": "mf_initial_fraction", "label": "MF Initial Fraction", "type": "float", "default": 0.4, "min": 0.05, "max": 1.0, "step": 0.05, "help": "Fraction of bars used in the cheap first-pass evaluation."},
                     {"key": "mf_promote_fraction", "label": "MF Promote Fraction", "type": "float", "default": 0.3, "min": 0.05, "max": 1.0, "step": 0.05, "help": "Fraction of population promoted to full evaluation."},
                     {"key": "mf_min_promote", "label": "MF Min Promote", "type": "int", "default": 8, "min": 1, "max": 200, "step": 1, "help": "Minimum number promoted regardless of fraction."},
+                ],
+            },
+            {
+                "title": "Quality Diversity Archive",
+                "items": [
+                    {"key": "qd_archive_enabled", "label": "Enable QD Archive", "type": "bool", "default": False, "help": "Maintain a MAP-Elites style archive alongside the Hall of Fame."},
+                    {"key": "qd_turnover_bins", "label": "QD Turnover Bins", "type": "text", "default": "0.1,0.3,0.6", "help": "Comma-separated turnover breakpoints for QD descriptors."},
+                    {"key": "qd_complexity_bins", "label": "QD Complexity Bins", "type": "text", "default": "0.25,0.5,0.75", "help": "Comma-separated program-size breakpoints for QD descriptors."},
+                    {"key": "qd_max_entries", "label": "QD Max Entries", "type": "int", "default": 256, "min": 1, "max": 10000, "step": 1, "help": "Maximum archive cells to keep (older cells evicted)."},
                 ],
             },
             {
@@ -123,4 +147,3 @@ def get_pipeline_params_ui_meta() -> Dict[str, Any]:
             },
         ],
     }
-

@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import numpy as np
 import pandas as pd  # For DataFrame rolling in hold period
-from typing import TYPE_CHECKING, Dict, List, Any, OrderedDict as OrderedDictType
+from typing import TYPE_CHECKING, Dict, List, Any, Optional, OrderedDict as OrderedDictType
 
 from evolution_components.data_handling import get_sector_groups, get_features_at_time
+from .performance_metrics import compute_max_drawdown
 
 logger = logging.getLogger(__name__)
 
@@ -79,20 +80,10 @@ def _scale_signal_cross_sectionally(raw_signal_vector: np.ndarray, method: str, 
     
     return np.clip(scaled, -1, 1)
 
-# Helper function for max drawdown
 def _max_drawdown(equity_curve: np.ndarray) -> float:
-    if len(equity_curve) == 0:
-        return 0.0
+    """Backward-compatible wrapper around the shared helper."""
 
-    peak = np.maximum.accumulate(equity_curve)
-    drawdown = (equity_curve - peak) / (peak + 1e-9)
-
-    if drawdown.size == 0 or not np.any(drawdown):
-        return 0.0
-
-    # Drawdowns are negative percentages.  Return the magnitude as a positive
-    # number so callers don't have to negate the value.
-    return float(-np.min(drawdown))
+    return compute_max_drawdown(equity_curve)
 
 # Main backtesting function
 def backtest_cross_sectional_alpha(
@@ -121,6 +112,7 @@ def backtest_cross_sectional_alpha(
     min_leverage: float = 0.25,
     dd_limit: float = 0.0,
     dd_reduction: float = 0.5,
+    stress_config: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Backtest a cross‑sectional trading rule.
 
@@ -183,6 +175,13 @@ def backtest_cross_sectional_alpha(
     dd_limit : float
         Maximum allowed drawdown.  If breached, exposure is multiplied by
         ``dd_reduction``.
+    dd_reduction : float
+        Exposure multiplier applied when the drawdown limit is exceeded.
+    stress_config : dict, optional
+        Parameters controlling stress-test metrics. When provided the
+        resulting dictionary includes a ``"Stress"`` entry with performance
+        statistics under heightened costs and amplified downside moves. Keys
+        include ``"fee_bps"``, ``"slippage_bps"`` and ``"shock_scale"``.
 
     Assumptions
     -----------
@@ -363,6 +362,11 @@ def backtest_cross_sectional_alpha(
     T = base_returns.shape[0]
     exposure_mult = np.ones(T, dtype=float)
     fee_rate = (fee_bps * 1e-4)
+    stress_cfg = stress_config or {}
+    stress_fee_bps = float(stress_cfg.get("fee_bps", fee_bps * 2.0))
+    stress_slippage_bps = float(stress_cfg.get("slippage_bps", fee_bps))
+    stress_shock_scale_bt = float(stress_cfg.get("shock_scale", 1.5))
+    stress_fee_rate = (stress_fee_bps + stress_slippage_bps) * 1e-4
     eps = 1e-9
     # Forward compute scaled positions, costs, and returns
     scaled_positions = np.zeros_like(actual_positions)
@@ -463,7 +467,7 @@ def backtest_cross_sectional_alpha(
     max_dd = _max_drawdown(equity_curve)
     avg_daily_turnover_fraction = np.mean(abs_pos_diff_sum) / 2.0
 
-    return {
+    result = {
         "Sharpe": sharpe_ratio,
         "AnnReturn": annualized_return,
         "AnnVol": annualized_volatility,
@@ -481,3 +485,54 @@ def backtest_cross_sectional_alpha(
         "StopHitsPerBar": per_bar_stop_hits,
         "RetNet": daily_portfolio_returns_net,
     }
+
+    if len(daily_portfolio_returns_net) > 0:
+        extra_costs = stress_fee_rate * abs_pos_diff_sum
+        stressed_returns = daily_portfolio_returns_net - extra_costs
+        stressed_returns = stressed_returns.copy()
+        if stressed_returns.size > 0 and stress_shock_scale_bt > 1.0:
+            neg_mask = stressed_returns < 0.0
+            pos_mask = stressed_returns > 0.0
+            stressed_returns[neg_mask] *= stress_shock_scale_bt
+            stressed_returns[pos_mask] /= stress_shock_scale_bt
+        if stressed_returns.size > 0:
+            stress_equity_curve = np.cumprod(1 + stressed_returns)
+            stress_dd = _max_drawdown(stress_equity_curve)
+            stress_mean = float(np.mean(stressed_returns))
+            stress_std = float(np.std(stressed_returns, ddof=0))
+            stress_sharpe = (stress_mean / (stress_std + 1e-9)) * np.sqrt(annualization_factor)
+            if num_years > 0 and stress_equity_curve[-1] > 0:
+                stress_ann_return = (stress_equity_curve[-1] ** (1.0 / num_years)) - 1.0
+            else:
+                stress_ann_return = 0.0
+            result["Stress"] = {
+                "Sharpe": stress_sharpe,
+                "AnnReturn": stress_ann_return,
+                "AnnVol": stress_std * np.sqrt(annualization_factor),
+                "MaxDD": stress_dd,
+                "MeanRet": stress_mean,
+                "CostExtra": float(np.mean(extra_costs)),
+                "ShockScale": stress_shock_scale_bt,
+            }
+        else:
+            result["Stress"] = {
+                "Sharpe": 0.0,
+                "AnnReturn": 0.0,
+                "AnnVol": 0.0,
+                "MaxDD": 0.0,
+                "MeanRet": 0.0,
+                "CostExtra": 0.0,
+                "ShockScale": stress_shock_scale_bt,
+            }
+    else:
+        result["Stress"] = {
+            "Sharpe": 0.0,
+            "AnnReturn": 0.0,
+            "AnnVol": 0.0,
+            "MaxDD": 0.0,
+            "MeanRet": 0.0,
+            "CostExtra": 0.0,
+            "ShockScale": stress_shock_scale_bt,
+        }
+
+    return result

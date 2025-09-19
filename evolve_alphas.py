@@ -1,7 +1,7 @@
 from __future__ import annotations
 import random
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Set
 import math
 from multiprocessing import Pool, cpu_count
 import numpy as np
@@ -23,6 +23,7 @@ from evolution_components import (
     clear_hof,
     pbar,
 )
+from evolution_components import qd_archive
 from evolution_components import data_handling as dh_module
 from evolution_components import hall_of_fame_manager as hof_module
 from evolution_components import evaluation_logic as el_module
@@ -41,6 +42,7 @@ from utils.context import make_eval_context_from_dir
 _RNG = np.random.default_rng()
 _CTX: EvalContext | None = None
 _WORKER_CTX: EvalContext | None = None
+_QD_ENABLED = False
 
 def _pool_init(data_dir: str, strategy: str, min_common_points: int, eval_lag: int, sector_mapping: dict):
     """Initializer for worker processes to build an EvalContext once per worker."""
@@ -70,6 +72,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
     np.random.seed(cfg.seed)
     _RNG = np.random.default_rng(cfg.seed)
     # No longer initialize global data; EvalContext will be used instead
+    horizons = _resolve_eval_horizons(cfg)
     el_module.configure_evaluation(
         parsimony_penalty=cfg.parsimony_penalty,
         max_ops=cfg.max_ops,
@@ -84,6 +87,9 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         ic_std_penalty_weight=cfg.ic_std_penalty_w,
         turnover_penalty_weight=cfg.turnover_penalty_w,
         ic_tstat_weight=cfg.ic_tstat_w,
+        factor_penalty_weight=getattr(cfg, "factor_penalty_w", 0.0),
+        factor_penalty_factors=getattr(cfg, "factor_penalty_factors", ""),
+        evaluation_horizons=horizons,
         use_train_val_splits=cfg.use_train_val_splits,
         train_points=cfg.train_points,
         val_points=cfg.val_points,
@@ -101,6 +107,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         cv_k_folds=getattr(cfg, "cv_k_folds", 0),
         cv_embargo=getattr(cfg, "cv_embargo", 0),
     )
+    _initialize_qd_archive(cfg)
     initialize_hof(
         max_size=cfg.hof_size,
         keep_dupes=cfg.keep_dupes_in_hof,
@@ -140,6 +147,58 @@ def _build_evo_params(cfg: EvoConfig) -> EvolutionParams:
         ),
         ops_split_jitter=float(getattr(cfg, "ops_split_jitter", 0.0)),
     )
+
+
+def _resolve_eval_horizons(cfg: EvoConfig) -> tuple[int, ...]:
+    raw = getattr(cfg, "evaluation_horizons", None)
+    horizons: Set[int] = set()
+    if raw is not None:
+        for val in raw:
+            try:
+                h = int(val)
+            except Exception:
+                continue
+            if h > 0:
+                horizons.add(h)
+    if not horizons:
+        horizons.add(int(getattr(cfg, "eval_lag", 1) or 1))
+    else:
+        eval_lag = int(getattr(cfg, "eval_lag", 1) or 1)
+        horizons.add(eval_lag if eval_lag > 0 else 1)
+    return tuple(sorted(horizons))
+
+
+def _initialize_qd_archive(cfg: EvoConfig) -> None:
+    global _QD_ENABLED
+    enabled = bool(getattr(cfg, "qd_archive_enabled", False))
+    _QD_ENABLED = enabled
+    if not enabled:
+        qd_archive.clear_archive()
+        return
+    def _coerce_bins(raw, fallback):
+        try:
+            items = tuple(float(x) for x in raw)
+            return items if items else fallback
+        except Exception:
+            return fallback
+    turnover_bins = _coerce_bins(getattr(cfg, "qd_turnover_bins", (0.1, 0.3, 0.6)), (0.1, 0.3, 0.6))
+    complexity_bins = _coerce_bins(getattr(cfg, "qd_complexity_bins", (0.25, 0.5, 0.75)), (0.25, 0.5, 0.75))
+    max_entries = int(getattr(cfg, "qd_max_entries", 256) or 256)
+    qd_archive.initialize_archive(
+        turnover_bins=turnover_bins,
+        complexity_bins=complexity_bins,
+        max_entries=max_entries,
+    )
+
+
+def _program_feature_usage(prog: AlphaProgram) -> Set[str]:
+    used: Set[str] = set()
+    feature_names = FEATURE_VARS.keys()
+    for op in prog.setup + prog.predict_ops + prog.update_ops:
+        for name in op.inputs:
+            if name in feature_names:
+                used.add(name)
+    return used
 
 def _random_prog(cfg: EvoConfig) -> AlphaProgram:
     params = _build_evo_params(cfg)
@@ -198,6 +257,10 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
             parsimony_penalty=0.0,
             correlation_penalty=0.0,
             processed_predictions=None,
+            ic_std=0.0,
+            turnover_proxy=0.0,
+            factor_penalty=0.0,
+            fitness_static=None,
         )
 
 ###############################################################################
@@ -280,6 +343,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     fixed_turnover_penalty_weight=cfg.turnover_penalty_w,
                     fixed_corr_penalty_weight=cfg.corr_penalty_w,
                     fixed_ic_tstat_weight=cfg.ic_tstat_w,
+                    stress_penalty_weight=cfg.stress_penalty_w,
+                    stress_fee_bps=cfg.stress_fee_bps,
+                    stress_slippage_bps=cfg.stress_slippage_bps,
+                    stress_shock_scale=cfg.stress_shock_scale,
                 )
             except Exception:
                 pass
@@ -402,6 +469,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         if result is None:
                             _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
+                    if _QD_ENABLED and np.isfinite(result.fitness):
+                        try:
+                            qd_archive.add_candidate(
+                                prog=pop[i],
+                                metrics=result,
+                                generation=gen,
+                                max_ops=cfg.max_ops,
+                            )
+                        except Exception:
+                            pass
                     pop_fitness_scores[i] = _sel_score(result)
             elif (cfg.workers or 0) > 1:
                 with Pool(
@@ -420,6 +497,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     completed = 0
                     for i, result in bar:
                         eval_results.append((i, result))
+                        if _QD_ENABLED and np.isfinite(result.fitness):
+                            try:
+                                qd_archive.add_candidate(
+                                    prog=pop[i],
+                                    metrics=result,
+                                    generation=gen,
+                                    max_ops=cfg.max_ops,
+                                )
+                            except Exception:
+                                pass
                         pop_fitness_scores[i] = _sel_score(result)
                         completed += 1
                         logger.debug(
@@ -464,6 +551,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 for idx_in_seq, i in enumerate(iterator, start=1):
                     _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
+                    if _QD_ENABLED and np.isfinite(result.fitness):
+                        try:
+                            qd_archive.add_candidate(
+                                prog=pop[i],
+                                metrics=result,
+                                generation=gen,
+                                max_ops=cfg.max_ops,
+                            )
+                        except Exception:
+                            pass
                     pop_fitness_scores[i] = _sel_score(result)
                     logger.debug(
                         "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
@@ -548,8 +645,27 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             "count": int(arr.size),
                         }
                     top_summary = []
+                    feature_counts = {name: 0 for name in FEATURE_VARS.keys()}
+                    population_size = max(1, len(pop))
+                    factor_accum: Dict[str, List[float]] = {}
+                    horizon_accum: Dict[int, Dict[str, List[float]]] = {}
+                    factor_sum_samples: List[float] = []
+                    turnover_samples: List[float] = []
+                    drawdown_samples: List[float] = []
+                    ic_std_samples: List[float] = []
+                    sharpe_samples: List[float] = []
+                    robustness_samples: List[float] = []
+                    stress_accum: Dict[str, List[float]] = {}
                     for idx_in_pop, res in tmp_sorted[:K]:
                         prog = pop[idx_in_pop]
+                        if res.factor_exposures:
+                            for name, val in res.factor_exposures.items():
+                                factor_accum.setdefault(name, []).append(float(val))
+                        if res.horizon_metrics:
+                            for h, metrics_h in res.horizon_metrics.items():
+                                bucket = horizon_accum.setdefault(int(h), {})
+                                for key, value in metrics_h.items():
+                                    bucket.setdefault(key, []).append(float(value))
                         top_summary.append({
                             "fingerprint": prog.fingerprint,
                             "fitness": float(res.fitness),
@@ -557,11 +673,77 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             "mean_ic": float(res.mean_ic),
                             "ic_std": float(getattr(res, "ic_std", 0.0)),
                             "turnover": float(getattr(res, "turnover_proxy", 0.0)),
+                            "drawdown": float(getattr(res, "max_drawdown", 0.0)),
                             "parsimony": float(res.parsimony_penalty),
                             "corr_pen": float(res.correlation_penalty),
+                            "factor_exposure_sum": float(getattr(res, "factor_exposure_sum", 0.0)),
+                            "robustness_penalty": float(getattr(res, "robustness_penalty", 0.0)),
                             "ops": int(prog.size),
+                            "factor_exposures": {k: float(v) for k, v in res.factor_exposures.items()},
+                            "stress_metrics": {k: float(v) for k, v in getattr(res, "stress_metrics", {}).items()},
+                            "horizon_metrics": {int(h): {mk: float(mv) for mk, mv in metrics.items()} for h, metrics in res.horizon_metrics.items()},
                             "program": prog.to_string(max_len=180),
                         })
+                        factor_sum_samples.append(float(getattr(res, "factor_exposure_sum", 0.0)))
+                        turnover_samples.append(float(getattr(res, "turnover_proxy", 0.0)))
+                        drawdown_samples.append(float(getattr(res, "max_drawdown", 0.0)))
+                        ic_std_samples.append(float(getattr(res, "ic_std", 0.0)))
+                        sharpe_samples.append(float(getattr(res, "sharpe_proxy", 0.0)))
+                        robustness_samples.append(float(getattr(res, "robustness_penalty", 0.0)))
+                        for key, val in getattr(res, "stress_metrics", {}).items():
+                            stress_accum.setdefault(key, []).append(float(val))
+                    for idx_in_pop, _ in eval_results:
+                        for feat in _program_feature_usage(pop[idx_in_pop]):
+                            if feat in feature_counts:
+                                feature_counts[feat] += 1
+                    factor_summary = {
+                        k: float(np.mean(v))
+                        for k, v in factor_accum.items()
+                        if v
+                    }
+                    if factor_sum_samples:
+                        factor_summary["total_abs"] = float(np.mean(factor_sum_samples))
+                    horizon_summary = {
+                        h: {
+                            key: float(np.mean(vals))
+                            for key, vals in metrics.items()
+                            if vals
+                        }
+                        for h, metrics in horizon_accum.items()
+                    }
+                    stress_summary = {
+                        key: float(np.mean(values))
+                        for key, values in stress_accum.items()
+                        if values
+                    }
+                    robustness_summary: Dict[str, float] = {}
+                    if robustness_samples:
+                        robustness_summary["mean"] = float(np.mean(robustness_samples))
+                        robustness_summary["std"] = float(np.std(robustness_samples))
+                    regime_summary: Dict[str, float | str] = {}
+                    if turnover_samples:
+                        regime_summary["turnover_mean"] = float(np.mean(turnover_samples))
+                        regime_summary["turnover_std"] = float(np.std(turnover_samples))
+                    if drawdown_samples:
+                        dd_mean = float(np.mean(drawdown_samples))
+                        dd_std = float(np.std(drawdown_samples))
+                        regime_summary["drawdown_mean"] = dd_mean
+                        regime_summary["drawdown_std"] = dd_std
+                    if factor_sum_samples:
+                        regime_summary["factor_exposure_mean"] = float(np.mean(factor_sum_samples))
+                    if ic_std_samples:
+                        regime_summary["ic_std_mean"] = float(np.mean(ic_std_samples))
+                    if sharpe_samples:
+                        regime_summary["sharpe_mean"] = float(np.mean(sharpe_samples))
+                    dd_val = regime_summary.get("drawdown_mean")
+                    if isinstance(dd_val, float):
+                        if dd_val > 0.1:
+                            regime_state = "stress"
+                        elif dd_val > 0.05:
+                            regime_state = "volatile"
+                        else:
+                            regime_state = "calm"
+                        regime_summary["risk_state"] = regime_state
                     diag.record_generation(
                         generation=gen + 1,
                         eval_stats=stats,
@@ -572,6 +754,15 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     diag.enrich_last(
                         pop_quantiles=(q or {}),
                         topK=top_summary,
+                        factor_exposure_summary=factor_summary,
+                        horizon_summary=horizon_summary,
+                        regime_summary=regime_summary,
+                        stress_summary=stress_summary,
+                        robustness_summary=robustness_summary,
+                        feature_coverage={
+                            name: feature_counts[name] / population_size
+                            for name in feature_counts
+                        },
                         ramp={
                             "corr_w": float(cfg.corr_penalty_w * ramp),
                             "ic_std_w": float(cfg.ic_std_penalty_w * ramp),
@@ -583,12 +774,15 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     # Optional Pareto front summary for diagnostics
                     try:
                         if getattr(cfg, "moea_enabled", False):
-                            def _objs(res: el_module.EvalResult) -> tuple[float, float, float, float]:
+                            def _objs(res: el_module.EvalResult) -> tuple[float, ...]:
                                 return (
                                     float(res.mean_ic),
                                     float(res.sharpe_proxy),
                                     float(-res.turnover_proxy),
                                     float(-res.parsimony_penalty),
+                                    float(-getattr(res, "max_drawdown", 0.0)),
+                                    float(-getattr(res, "factor_exposure_sum", 0.0)),
+                                    float(-getattr(res, "robustness_penalty", 0.0)),
                                 )
                             # Build naive first-front (non-dominated set)
                             objs = [(_i, _objs(_r)) for _i, _r in eval_results if np.isfinite(_r.fitness)]
@@ -607,7 +801,15 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             pf = [{
                                 "idx": int(i),
                                 "fp": pop[i].fingerprint,
-                                "obj": {"ic": oi[0], "sh": oi[1], "neg_turn": oi[2], "neg_complex": oi[3]},
+                                "obj": {
+                                    "ic": oi[0],
+                                    "sh": oi[1],
+                                    "neg_turn": oi[2],
+                                    "neg_complex": oi[3],
+                                    "neg_dd": oi[4],
+                                    "neg_factor": oi[5],
+                                    "neg_robust": oi[6],
+                                },
                                 "ops": int(pop[i].size),
                             } for (i, oi) in pareto[: min(10, len(pareto))]]
                             diag.enrich_last(pareto_front=pf, pareto_size=len(pf))
@@ -655,6 +857,11 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             diag.enrich_last(pop_hist={"edges": edges.tolist(), "counts": counts.astype(int).tolist()})
                     except Exception:
                         pass
+                    if _QD_ENABLED:
+                        try:
+                            diag.enrich_last(qd_summary=qd_archive.get_summary())
+                        except Exception:
+                            pass
                     # Emit a structured per-generation diagnostic line for live dashboards
                     try:
                         import json as _json
@@ -700,6 +907,8 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
                 initialize_evaluation_cache(cfg.eval_cache_size)
                 clear_hof()
+                if _QD_ENABLED:
+                    qd_archive.clear_archive()
                 gen_eval_times_history.clear()
                 continue
 
@@ -755,12 +964,15 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             new_pop: List[AlphaProgram] = []
             # Optional Pareto-based elite selection (NSGA-II style fronts)
             if getattr(cfg, "moea_enabled", False):
-                def _objectives(res: el_module.EvalResult) -> tuple[float, float, float, float]:
+                def _objectives(res: el_module.EvalResult) -> tuple[float, ...]:
                     return (
                         float(res.mean_ic),                 # maximize
                         float(res.sharpe_proxy),            # maximize
                         float(-res.turnover_proxy),         # minimize turnover
                         float(-res.parsimony_penalty),      # minimize complexity
+                        float(-getattr(res, "max_drawdown", 0.0)),   # minimize drawdown proxy
+                        float(-getattr(res, "factor_exposure_sum", 0.0)),  # minimize aggregate factor exposure
+                        float(-getattr(res, "robustness_penalty", 0.0)),  # minimize stress penalty
                     )
                 def _nondominated_sort(objs: list[tuple[float, ...]]):
                     n = len(objs)
@@ -976,6 +1188,21 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
         )
     
     final_top_programs_with_ic = get_final_hof_programs()
+    if _QD_ENABLED:
+        try:
+            seen = {
+                getattr(prog, "fingerprint", idx)
+                for idx, (prog, _) in enumerate(final_top_programs_with_ic)
+                if hasattr(prog, "fingerprint")
+            }
+        except Exception:
+            seen = set()
+        for entry in qd_archive.get_elites():
+            fp = entry.fingerprint
+            if fp in seen:
+                continue
+            final_top_programs_with_ic.append((entry.program, entry.metrics.mean_ic))
+            seen.add(fp)
     return final_top_programs_with_ic
 
 
@@ -984,7 +1211,12 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
     # Precompute column matrices for all cross-sectional vector features (strip _t)
     try:
         from alpha_framework.alpha_framework_types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN
-        cols = [c.replace("_t", "") for c in _VECN if c != "sector_id_vector"]
+        derived = set(getattr(dh_module, "DERIVED_VECTOR_FEATURES", set()))
+        cols = [
+            c.replace("_t", "")
+            for c in _VECN
+            if c != "sector_id_vector" and c not in derived
+        ]
     except Exception:
         cols = None
     ctx = make_eval_context_from_dir(

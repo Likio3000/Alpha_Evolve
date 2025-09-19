@@ -48,17 +48,45 @@ def _find_runs() -> List[Path]:
     return runs
 
 
+def _format_path_for_ui(p: Path) -> str:
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        try:
+            return str(p.relative_to(PIPELINE_DIR))
+        except ValueError:
+            return str(p)
+
+
+def _resolve_run_dir(run_dir: str) -> Path:
+    candidate = Path(run_dir)
+    base_candidates = []
+    if candidate.is_absolute():
+        base_candidates.append(candidate.resolve())
+    else:
+        base_candidates.append((PIPELINE_DIR / candidate).resolve())
+        base_candidates.append((ROOT / candidate).resolve())
+    for resolved in base_candidates:
+        try:
+            resolved.relative_to(PIPELINE_DIR.resolve())
+        except ValueError:
+            continue
+        if resolved.exists():
+            return resolved
+    raise HTTPException(status_code=400, detail="run_dir must resolve under pipeline_runs_cs/")
+
+
 @router.get("/api/runs")
 def list_runs(limit: int = Query(default=50, ge=1, le=1000)) -> List[Dict[str, Any]]:
     labels = _load_labels()
     items: List[Dict[str, Any]] = []
     for p in _find_runs()[:limit]:
-        rel = p.relative_to(ROOT)
+        rel = _format_path_for_ui(p)
         name = p.name
         label = labels.get(name)
         sharpe = read_best_sharpe_from_run(p)
         items.append({
-            "path": str(rel),
+            "path": rel,
             "name": name,
             "label": label,
             "sharpe_best": None if sharpe is None else float(sharpe),
@@ -72,7 +100,7 @@ def get_last_run() -> Dict[str, Any]:
     if p is None:
         return {"run_dir": None, "sharpe_best": None}
     sharpe = read_best_sharpe_from_run(p)
-    return {"run_dir": str(p.relative_to(ROOT)), "sharpe_best": None if sharpe is None else float(sharpe)}
+    return {"run_dir": _format_path_for_ui(p), "sharpe_best": None if sharpe is None else float(sharpe)}
 
 
 def _summary_csv(run_dir: Path) -> Optional[Path]:
@@ -87,11 +115,7 @@ def _summary_csv(run_dir: Path) -> Optional[Path]:
 
 @router.get("/api/backtest-summary")
 def backtest_summary(run_dir: str) -> List[Dict[str, Any]]:
-    p = (ROOT / run_dir).resolve()
-    try:
-        p.relative_to(PIPELINE_DIR.resolve())
-    except Exception:
-        raise HTTPException(status_code=400, detail="run_dir must be under pipeline_runs_cs/")
+    p = _resolve_run_dir(run_dir)
     csv_path = _summary_csv(p)
     if csv_path is None:
         return []
@@ -149,11 +173,7 @@ def _resolve_ts_file(run_dir: Path, file: Optional[str], alpha_id: Optional[str]
 
 @router.get("/api/alpha-timeseries")
 def alpha_timeseries(run_dir: str, file: Optional[str] = None, alpha_id: Optional[str] = None) -> Dict[str, Any]:
-    p = (ROOT / run_dir).resolve()
-    try:
-        p.relative_to(PIPELINE_DIR.resolve())
-    except Exception:
-        raise HTTPException(status_code=400, detail="run_dir must be under pipeline_runs_cs/")
+    p = _resolve_run_dir(run_dir)
     ts_path = _resolve_ts_file(p, file, alpha_id)
     if not ts_path.exists():
         raise HTTPException(status_code=404, detail="Timeseries CSV not found")

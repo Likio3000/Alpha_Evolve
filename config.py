@@ -87,6 +87,17 @@ class EvolutionConfig(DataConfig):
     ic_std_penalty_w: float = 0.10
     turnover_penalty_w: float = 0.05
     ic_tstat_w: float = 0.0                 # weight for IC t-stat component
+    factor_penalty_w: float = 0.0           # weight for style-factor neutrality penalty
+    factor_penalty_factors: str = "ret1d_t,vol20_t,range_rel_t"
+    stress_penalty_w: float = 0.0           # weight for transaction-cost / stress penalty
+    stress_fee_bps: float = 5.0             # additional stress transaction fee (bps)
+    stress_slippage_bps: float = 2.0        # stress slippage (bps)
+    stress_shock_scale: float = 1.5         # multiplier applied to negative pnl under stress
+    evaluation_horizons: tuple[int, ...] = (1,)
+    qd_archive_enabled: bool = False
+    qd_turnover_bins: tuple[float, ...] = (0.1, 0.3, 0.6)
+    qd_complexity_bins: tuple[float, ...] = (0.25, 0.5, 0.75)
+    qd_max_entries: int = 256
     use_train_val_splits: bool = True
     train_points: int = 840
     val_points: int = 360

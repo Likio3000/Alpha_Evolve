@@ -16,12 +16,20 @@ def test_high_corr_program_rejected_from_hof():
 
     prog_a = make_prog("const_1")
     preds_a = np.array([[1.0, 2.0], [3.0, 4.0]])
-    hof.add_program_to_hof(prog_a, EvalResult(1.0, 0.0, 0.0, 0.0, 0.0, preds_a), 0)
+    hof.add_program_to_hof(
+        prog_a,
+        EvalResult(1.0, 0.0, 0.0, 0.0, 0.0, preds_a, 0.0, 0.0, 0.0, None),
+        0,
+    )
     assert len(hof._hof_programs_data) == 1
 
     prog_b = make_prog("const_neg_1")
     preds_b = preds_a * 2.0  # perfectly correlated with preds_a
-    hof.add_program_to_hof(prog_b, EvalResult(0.9, 0.0, 0.0, 0.0, 0.0, preds_b), 0)
+    hof.add_program_to_hof(
+        prog_b,
+        EvalResult(0.9, 0.0, 0.0, 0.0, 0.0, preds_b, 0.0, 0.0, 0.0, None),
+        0,
+    )
 
     assert len(hof._hof_programs_data) == 1
     assert len(hof._hof_rank_pred_matrix) == 1

@@ -15,6 +15,15 @@ from alpha_framework.alpha_framework_types import (
 )
 from utils.features import compute_basic_features
 
+DERIVED_VECTOR_FEATURES = {
+    "market_rel_close_t",
+    "market_rel_ret1d_t",
+    "market_zclose_t",
+    "btc_ratio_proxy_t",
+    "regime_volatility_t",
+    "regime_momentum_t",
+}
+
 logger = logging.getLogger(__name__)
 
 # Module-level state for loaded data
@@ -231,38 +240,94 @@ def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tup
     return tuple(slices)  # type: ignore[return-value]
 
 def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
-    """Return feature dict for a given timestamp.
-
-    Parameters
-    ----------
-    timestamp : Any
-        Timestamp at which to collect features.
-    aligned_dfs : Mapping[str, pd.DataFrame]
-        Aligned data frames keyed by symbol.
-    stock_symbols : Sequence[str]
-        Symbols to pull data for.
-    sector_groups_vec : np.ndarray
-        Precomputed sector id vector for ``stock_symbols``.
-    """
-    features_at_t = {}
+    """Return feature dict for a given timestamp."""
+    features_at_t: Dict[str, np.ndarray] = {}
     n_stocks = len(stock_symbols)
+    zeros = np.zeros(n_stocks, dtype=float)
+
+    column_cache: Dict[str, np.ndarray] = {}
+
+    def _get_column(col_name: str) -> np.ndarray:
+        if col_name in column_cache:
+            return column_cache[col_name]
+        arr = np.zeros(n_stocks, dtype=float)
+        for idx, sym in enumerate(stock_symbols):
+            try:
+                arr[idx] = float(aligned_dfs[sym].loc[timestamp, col_name])
+            except Exception:
+                arr[idx] = 0.0
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        column_cache[col_name] = arr
+        return arr
+
+    eps = 1e-9
+    close_vec = _get_column("closes")
+    ret_vec = _get_column("ret1d")
+    vol20_vec = _get_column("vol20")
+    trend_vec = _get_column("trend_5_20")
+
+    derived_vectors: Dict[str, np.ndarray] = {}
+    if close_vec.size:
+        mean_close = float(np.mean(close_vec))
+        if abs(mean_close) > eps:
+            rel_close = (close_vec / mean_close) - 1.0
+        else:
+            rel_close = np.zeros_like(close_vec)
+        derived_vectors["market_rel_close_t"] = np.nan_to_num(rel_close, nan=0.0, posinf=0.0, neginf=0.0)
+
+        std_close = float(np.std(close_vec, ddof=0))
+        if std_close > eps:
+            zclose = (close_vec - mean_close) / std_close
+        else:
+            zclose = np.zeros_like(close_vec)
+        derived_vectors["market_zclose_t"] = np.nan_to_num(zclose, nan=0.0, posinf=0.0, neginf=0.0)
+
+        reference_idx = 0
+        for idx, sym in enumerate(stock_symbols):
+            sym_upper = sym.upper()
+            if "BTC" in sym_upper or "SPY" in sym_upper or "^GSPC" in sym_upper:
+                reference_idx = idx
+                break
+        ref_close = float(close_vec[reference_idx]) if close_vec.size > reference_idx else 0.0
+        if abs(ref_close) > eps:
+            btc_ratio = (close_vec / ref_close) - 1.0
+        else:
+            btc_ratio = np.zeros_like(close_vec)
+        derived_vectors["btc_ratio_proxy_t"] = np.nan_to_num(btc_ratio, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if ret_vec.size:
+        mean_ret = float(np.mean(ret_vec))
+        derived_vectors["market_rel_ret1d_t"] = np.nan_to_num(ret_vec - mean_ret, nan=0.0, posinf=0.0, neginf=0.0)
+    else:
+        derived_vectors["market_rel_ret1d_t"] = zeros
+
+    if vol20_vec.size:
+        mean_vol20 = float(np.mean(vol20_vec))
+        if abs(mean_vol20) > eps:
+            rel_vol = (vol20_vec / mean_vol20) - 1.0
+        else:
+            rel_vol = np.zeros_like(vol20_vec)
+        derived_vectors["regime_volatility_t"] = np.nan_to_num(rel_vol, nan=0.0, posinf=0.0, neginf=0.0)
+    else:
+        derived_vectors["regime_volatility_t"] = zeros
+
+    if trend_vec.size:
+        mean_trend = float(np.mean(trend_vec))
+        derived_vectors["regime_momentum_t"] = np.nan_to_num(trend_vec - mean_trend, nan=0.0, posinf=0.0, neginf=0.0)
+    else:
+        derived_vectors["regime_momentum_t"] = zeros
 
     for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
         if feat_name_template == "sector_id_vector":
             features_at_t[feat_name_template] = sector_groups_vec
             continue
+        derived_vec = derived_vectors.get(feat_name_template)
+        if derived_vec is not None:
+            features_at_t[feat_name_template] = derived_vec.copy()
+            continue
         col_name = feat_name_template.replace("_t", "")
-        try:
-            vec = np.array([
-                aligned_dfs[sym].loc[timestamp, col_name] for sym in stock_symbols
-            ], dtype=float)
-            features_at_t[feat_name_template] = np.nan_to_num(
-                vec, nan=0.0, posinf=0.0, neginf=0.0
-            )
-        except KeyError:
-            features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
-        except Exception:
-            features_at_t[feat_name_template] = np.zeros(n_stocks, dtype=float)
+        vec = _get_column(col_name)
+        features_at_t[feat_name_template] = vec.copy() if vec.size else zeros.copy()
 
     for sc_name in SCALAR_FEATURE_NAMES:
         if sc_name == "const_1":
