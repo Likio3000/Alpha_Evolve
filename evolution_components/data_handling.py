@@ -22,6 +22,9 @@ DERIVED_VECTOR_FEATURES = {
     "btc_ratio_proxy_t",
     "regime_volatility_t",
     "regime_momentum_t",
+    "market_dispersion_t",
+    "cross_btc_momentum_t",
+    "sector_momentum_diff_t",
 }
 
 logger = logging.getLogger(__name__)
@@ -266,6 +269,13 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
     vol20_vec = _get_column("vol20")
     trend_vec = _get_column("trend_5_20")
 
+    reference_idx = 0
+    for idx, sym in enumerate(stock_symbols):
+        sym_upper = sym.upper()
+        if "BTC" in sym_upper or "SPY" in sym_upper or "^GSPC" in sym_upper:
+            reference_idx = idx
+            break
+
     derived_vectors: Dict[str, np.ndarray] = {}
     if close_vec.size:
         mean_close = float(np.mean(close_vec))
@@ -282,18 +292,16 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
             zclose = np.zeros_like(close_vec)
         derived_vectors["market_zclose_t"] = np.nan_to_num(zclose, nan=0.0, posinf=0.0, neginf=0.0)
 
-        reference_idx = 0
-        for idx, sym in enumerate(stock_symbols):
-            sym_upper = sym.upper()
-            if "BTC" in sym_upper or "SPY" in sym_upper or "^GSPC" in sym_upper:
-                reference_idx = idx
-                break
         ref_close = float(close_vec[reference_idx]) if close_vec.size > reference_idx else 0.0
         if abs(ref_close) > eps:
             btc_ratio = (close_vec / ref_close) - 1.0
         else:
             btc_ratio = np.zeros_like(close_vec)
         derived_vectors["btc_ratio_proxy_t"] = np.nan_to_num(btc_ratio, nan=0.0, posinf=0.0, neginf=0.0)
+
+        median_close = float(np.median(close_vec))
+        dispersion = close_vec - median_close
+        derived_vectors["market_dispersion_t"] = np.nan_to_num(dispersion, nan=0.0, posinf=0.0, neginf=0.0)
 
     if ret_vec.size:
         mean_ret = float(np.mean(ret_vec))
@@ -314,8 +322,25 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
     if trend_vec.size:
         mean_trend = float(np.mean(trend_vec))
         derived_vectors["regime_momentum_t"] = np.nan_to_num(trend_vec - mean_trend, nan=0.0, posinf=0.0, neginf=0.0)
+        ref_trend = float(trend_vec[reference_idx]) if trend_vec.size > reference_idx else 0.0
+        cross_btc = trend_vec - ref_trend
+        derived_vectors["cross_btc_momentum_t"] = np.nan_to_num(cross_btc, nan=0.0, posinf=0.0, neginf=0.0)
+        try:
+            sector_diff = np.zeros_like(trend_vec)
+            if sector_groups_vec is not None and sector_groups_vec.size == trend_vec.size:
+                for sector_id in np.unique(sector_groups_vec):
+                    mask = sector_groups_vec == sector_id
+                    if not np.any(mask):
+                        continue
+                    sector_mean = float(np.mean(trend_vec[mask]))
+                    sector_diff[mask] = trend_vec[mask] - sector_mean
+            derived_vectors["sector_momentum_diff_t"] = np.nan_to_num(sector_diff, nan=0.0, posinf=0.0, neginf=0.0)
+        except Exception:
+            derived_vectors["sector_momentum_diff_t"] = zeros
     else:
         derived_vectors["regime_momentum_t"] = zeros
+        derived_vectors["cross_btc_momentum_t"] = zeros
+        derived_vectors["sector_momentum_diff_t"] = zeros
 
     for feat_name_template in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
         if feat_name_template == "sector_id_vector":

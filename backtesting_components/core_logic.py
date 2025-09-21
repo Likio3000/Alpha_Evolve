@@ -366,6 +366,9 @@ def backtest_cross_sectional_alpha(
     stress_fee_bps = float(stress_cfg.get("fee_bps", fee_bps * 2.0))
     stress_slippage_bps = float(stress_cfg.get("slippage_bps", fee_bps))
     stress_shock_scale_bt = float(stress_cfg.get("shock_scale", 1.5))
+    stress_tail_fee_bps = float(stress_cfg.get("tail_fee_bps", stress_fee_bps))
+    stress_tail_slippage_bps = float(stress_cfg.get("tail_slippage_bps", stress_slippage_bps))
+    stress_tail_shock_scale = float(stress_cfg.get("tail_shock_scale", stress_shock_scale_bt * 1.5))
     stress_fee_rate = (stress_fee_bps + stress_slippage_bps) * 1e-4
     eps = 1e-9
     # Forward compute scaled positions, costs, and returns
@@ -486,53 +489,94 @@ def backtest_cross_sectional_alpha(
         "RetNet": daily_portfolio_returns_net,
     }
 
-    if len(daily_portfolio_returns_net) > 0:
-        extra_costs = stress_fee_rate * abs_pos_diff_sum
-        stressed_returns = daily_portfolio_returns_net - extra_costs
-        stressed_returns = stressed_returns.copy()
-        if stressed_returns.size > 0 and stress_shock_scale_bt > 1.0:
-            neg_mask = stressed_returns < 0.0
-            pos_mask = stressed_returns > 0.0
-            stressed_returns[neg_mask] *= stress_shock_scale_bt
-            stressed_returns[pos_mask] /= stress_shock_scale_bt
-        if stressed_returns.size > 0:
-            stress_equity_curve = np.cumprod(1 + stressed_returns)
-            stress_dd = _max_drawdown(stress_equity_curve)
-            stress_mean = float(np.mean(stressed_returns))
-            stress_std = float(np.std(stressed_returns, ddof=0))
-            stress_sharpe = (stress_mean / (stress_std + 1e-9)) * np.sqrt(annualization_factor)
-            if num_years > 0 and stress_equity_curve[-1] > 0:
-                stress_ann_return = (stress_equity_curve[-1] ** (1.0 / num_years)) - 1.0
-            else:
-                stress_ann_return = 0.0
-            result["Stress"] = {
-                "Sharpe": stress_sharpe,
-                "AnnReturn": stress_ann_return,
-                "AnnVol": stress_std * np.sqrt(annualization_factor),
-                "MaxDD": stress_dd,
-                "MeanRet": stress_mean,
-                "CostExtra": float(np.mean(extra_costs)),
-                "ShockScale": stress_shock_scale_bt,
-            }
-        else:
-            result["Stress"] = {
+    scenario_specs = {
+        "base": {
+            "fee_bps": stress_fee_bps,
+            "slippage_bps": stress_slippage_bps,
+            "shock_scale": stress_shock_scale_bt,
+        }
+    }
+    if stress_tail_fee_bps > 0.0 or stress_tail_slippage_bps > 0.0 or stress_tail_shock_scale > 0.0:
+        scenario_specs["tail"] = {
+            "fee_bps": stress_tail_fee_bps,
+            "slippage_bps": stress_tail_slippage_bps,
+            "shock_scale": stress_tail_shock_scale if stress_tail_shock_scale > 0.0 else stress_shock_scale_bt,
+        }
+
+    stress_results: Dict[str, Dict[str, float]] = {}
+
+    def _compute_scenario(label: str, fee_bps_local: float, slip_bps_local: float, shock_scale_local: float) -> Dict[str, float]:
+        if len(daily_portfolio_returns_net) == 0:
+            return {
                 "Sharpe": 0.0,
                 "AnnReturn": 0.0,
                 "AnnVol": 0.0,
                 "MaxDD": 0.0,
                 "MeanRet": 0.0,
                 "CostExtra": 0.0,
-                "ShockScale": stress_shock_scale_bt,
+                "ShockScale": float(shock_scale_local),
             }
-    else:
-        result["Stress"] = {
-            "Sharpe": 0.0,
-            "AnnReturn": 0.0,
-            "AnnVol": 0.0,
-            "MaxDD": 0.0,
-            "MeanRet": 0.0,
-            "CostExtra": 0.0,
-            "ShockScale": stress_shock_scale_bt,
+        fee_rate_local = (float(fee_bps_local) + float(slip_bps_local)) * 1e-4
+        extra_costs_local = fee_rate_local * abs_pos_diff_sum
+        stressed_returns_local = daily_portfolio_returns_net - extra_costs_local
+        stressed_returns_local = stressed_returns_local.copy()
+        scale_local = float(max(1.0, shock_scale_local))
+        if stressed_returns_local.size > 0 and scale_local > 1.0:
+            neg_mask = stressed_returns_local < 0.0
+            pos_mask = stressed_returns_local > 0.0
+            stressed_returns_local[neg_mask] *= scale_local
+            stressed_returns_local[pos_mask] /= scale_local
+        if stressed_returns_local.size == 0:
+            return {
+                "Sharpe": 0.0,
+                "AnnReturn": 0.0,
+                "AnnVol": 0.0,
+                "MaxDD": 0.0,
+                "MeanRet": 0.0,
+                "CostExtra": 0.0,
+                "ShockScale": float(scale_local),
+            }
+        stress_equity_curve_local = np.cumprod(1 + stressed_returns_local)
+        stress_dd_local = _max_drawdown(stress_equity_curve_local)
+        stress_mean_local = float(np.mean(stressed_returns_local))
+        stress_std_local = float(np.std(stressed_returns_local, ddof=0))
+        stress_sharpe_local = (stress_mean_local / (stress_std_local + 1e-9)) * np.sqrt(annualization_factor)
+        if num_years > 0 and stress_equity_curve_local[-1] > 0:
+            stress_ann_return_local = (stress_equity_curve_local[-1] ** (1.0 / num_years)) - 1.0
+        else:
+            stress_ann_return_local = 0.0
+        return {
+            "Sharpe": stress_sharpe_local,
+            "AnnReturn": stress_ann_return_local,
+            "AnnVol": stress_std_local * np.sqrt(annualization_factor),
+            "MaxDD": stress_dd_local,
+            "MeanRet": stress_mean_local,
+            "CostExtra": float(np.mean(extra_costs_local)) if extra_costs_local.size else 0.0,
+            "ShockScale": float(scale_local),
         }
+
+    for label, spec in scenario_specs.items():
+        stress_results[label] = _compute_scenario(
+            label,
+            spec.get("fee_bps", 0.0),
+            spec.get("slippage_bps", 0.0),
+            spec.get("shock_scale", 1.0),
+        )
+
+    result["Stress"] = stress_results.get("base", {
+        "Sharpe": 0.0,
+        "AnnReturn": 0.0,
+        "AnnVol": 0.0,
+        "MaxDD": 0.0,
+        "MeanRet": 0.0,
+        "CostExtra": 0.0,
+        "ShockScale": stress_shock_scale_bt,
+    })
+    result["StressScenarios"] = stress_results
+    baseline_tc = fee_rate * abs_pos_diff_sum if len(daily_portfolio_returns_net) > 0 else np.zeros(0)
+    result["TransactionCosts"] = {
+        "baseline_cost": float(np.mean(baseline_tc)) if baseline_tc.size else 0.0,
+        "turnover_mean": float(np.mean(abs_pos_diff_sum)) if len(abs_pos_diff_sum) else 0.0,
+    }
 
     return result

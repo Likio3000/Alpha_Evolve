@@ -12,8 +12,23 @@
 - [x] Score programs across multiple holding horizons and blend those metrics into both evolution fitness and backtests.
 - [x] Prototype a quality-diversity archive (MAP-Elites style) to replace/augment the current Hall of Fame heuristics.
 - [x] Instrument diagnostics with factor exposure traces, per-horizon stats, feature coverage, and MAP-Elites summaries; surface via dashboard APIs.
-- [ ] Enable/extend multi-objective selection so turnover, drawdown proxies, and factor exposures are considered alongside fitness.
-- [ ] Expand feature inputs (volatility spreads, cross-asset signals, on-chain metrics) and surface regime-aware diagnostics.
-- [ ] Integrate richer transaction-cost and stress backtests, feeding robustness penalties back into evolution and dashboards.
-- [ ] Update dashboard UI to expose new pipeline knobs (`factor_penalty_*`, `evaluation_horizons`, QD archive controls).
-- [ ] Extend dashboard views to display generation diagnostics (`factor_exposure_summary`, `horizon_summary`, `feature_coverage`, `qd_summary`).
+- [x] Enable/extend multi-objective selection so turnover, drawdown proxies, and factor exposures are considered alongside fitness.
+- [x] Expand feature inputs (volatility spreads, cross-asset signals, on-chain metrics) and surface regime-aware diagnostics.
+- [x] Integrate richer transaction-cost and stress backtests, feeding robustness penalties back into evolution and dashboards.
+- [x] Update dashboard UI to expose new pipeline knobs (`factor_penalty_*`, `evaluation_horizons`, QD archive controls).
+- [x] Extend dashboard views to display generation diagnostics (`factor_exposure_summary`, `horizon_summary`, `feature_coverage`, `qd_summary`).
+- [x] Pin the ambient animation to the bottom-left corner so it stays visible while scrolling.
+- [x] Accelerate and recolor the ambient animation (green, higher amplitude) during active runs.
+- [x] Remove the Runner title/description and adjust the retro animation presentation during jobs.
+- [x] Center the primary run controls, settings, and status indicators on the page layout.
+- [x] Keep the backtest summary table fixed while making diagnostics sections collapsible and better balanced (feature coverage vs others).
+- [x] Stream terminal output in a minimized/silent mode that hides generation completion animations.
+- [x] Rename the charts section to "Graphs" with collapsible titles to prepare per-graph drilldowns.
+- [x] When the window is half open, (taking half the space of the page) it only shows the left bar, or part of the web, i would like it to act a bit more dynamically even if cut.
+- [x] What before was named the "runner" animation says "running" when running, but its not necesary because the animation shows that, so delete that "running" text. Keep the idle one though.
+- [x] What you added in graphs, i want it back to how it was before. By graphs section i mean the  "Top K programs: Fitness vs Ops" Thats the one i wanted to create a section of clickable graphs about. THe ones you grouped like i said i want to always be seen like it was before.
+- [x] Im not sure what you did for the terminal output, but the animation of completion of generations is still there, so it wasnt it.
+- [x] THe bottom left animation is great, i would howver like it to be a bit smaller in height. and just a little bit wider.
+- [x] This last point is very important, and its about, for each run, i would like to output a text that could be easilty copied with the parameters used as well as the results, meant to be used to pass it to you, and for you to tune better teh parameters, explanation on the parameters might also be necesary, Whats important really isnt this text, but rather that there is a framework for a selfplay where the system autoevolves by tuning the parameters and comparing results and continuing to iterate. I would be nice if it were watchable through the UI but hands off. And that the UI allowed for the viewing of the results, (lasts runs or iterations), for now thought it might be easier for that selfplay to be human assisted. im not sure. Thought on how to execute this. I think it would honor the evolve part of alpha evolve project.
+- [x] SOme parameters dont have descriptions on what they do, add them,
+- [ ] Keep dashboard interactions responsive while a run executes (alpha drill-downs / run switching should respond even mid-job). *Tried lowering process priority and restricting CPU affinity via niceness/sched_setaffinity but the UI still stalls; needs deeper fix.*

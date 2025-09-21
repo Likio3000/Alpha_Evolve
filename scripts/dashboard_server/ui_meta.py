@@ -89,6 +89,10 @@ def get_pipeline_params_ui_meta() -> Dict[str, Any]:
                     {"key": "stress_fee_bps", "label": "Stress Fee (bps)", "type": "float", "default": 5.0, "min": 0.0, "max": 100.0, "step": 0.5, "help": "Additional fee applied in stress fitness (per side)."},
                     {"key": "stress_slippage_bps", "label": "Stress Slippage (bps)", "type": "float", "default": 2.0, "min": 0.0, "max": 100.0, "step": 0.5, "help": "Extra slippage applied in stress fitness."},
                     {"key": "stress_shock_scale", "label": "Stress Shock Scale", "type": "float", "default": 1.5, "min": 1.0, "max": 5.0, "step": 0.1, "help": "Multiplier for downside shocks in stress fitness."},
+                    {"key": "stress_tail_fee_bps", "label": "Tail Stress Fee (bps)", "type": "float", "default": 10.0, "min": 0.0, "max": 200.0, "step": 0.5, "help": "Heightened fee applied in tail stress scenario."},
+                    {"key": "stress_tail_slippage_bps", "label": "Tail Stress Slippage (bps)", "type": "float", "default": 3.5, "min": 0.0, "max": 200.0, "step": 0.5, "help": "Heightened slippage applied in tail stress scenario."},
+                    {"key": "stress_tail_shock_scale", "label": "Tail Shock Scale", "type": "float", "default": 2.5, "min": 1.0, "max": 6.0, "step": 0.1, "help": "Amplified downside shock multiplier for tail stress."},
+                    {"key": "transaction_cost_bps", "label": "Baseline TC (bps)", "type": "float", "default": 0.0, "min": 0.0, "max": 100.0, "step": 0.5, "help": "Baseline transaction-cost assumption applied to turnover."},
                 ],
             },
             {
@@ -98,6 +102,7 @@ def get_pipeline_params_ui_meta() -> Dict[str, Any]:
                     {"key": "use_train_val_splits", "label": "Use Train/Val Splits", "type": "bool", "default": True, "help": "Split evaluation window into train/validation segments."},
                     {"key": "train_points", "label": "Train Bars", "type": "int", "default": 840, "min": 0, "max": 100000, "step": 10, "help": "Number of bars allocated to training slice when splits enabled."},
                     {"key": "val_points", "label": "Validation Bars", "type": "int", "default": 360, "min": 0, "max": 100000, "step": 10, "help": "Number of bars allocated to validation slice when splits enabled."},
+                    {"key": "regime_diagnostic_factors", "label": "Regime Diagnostic Factors", "type": "text", "default": "regime_volatility_t,regime_momentum_t,cross_btc_momentum_t,sector_momentum_diff_t,onchain_activity_proxy_t,onchain_velocity_proxy_t,onchain_whale_proxy_t", "help": "Comma-separated features tracked in regime diagnostics."},
                 ],
             },
             {

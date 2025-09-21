@@ -39,6 +39,9 @@ class EvalResult:
     factor_exposure_sum: float = 0.0
     robustness_penalty: float = 0.0
     stress_metrics: Dict[str, float] = field(default_factory=dict)
+    regime_exposures: Dict[str, float] = field(default_factory=dict)
+    stress_scenarios: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    transaction_costs: Dict[str, float] = field(default_factory=dict)
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
@@ -112,6 +115,10 @@ _EVAL_CONFIG = {
     "stress_fee_bps": 5.0,
     "stress_slippage_bps": 2.0,
     "stress_shock_scale": 1.5,
+    "stress_tail_fee_bps": 10.0,
+    "stress_tail_slippage_bps": 3.5,
+    "stress_tail_shock_scale": 2.5,
+    "transaction_cost_bps": 0.0,
     "evaluation_horizons": (1,),
     "hof_corr_mode": "flat",   # 'flat' (default) or 'per_bar'
     "temporal_decay_half_life": 0.0,
@@ -122,6 +129,15 @@ _EVAL_CONFIG = {
     "cv_k_folds": 0,
     "cv_embargo": 0,
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
+    "regime_diagnostic_factors": (
+        "regime_volatility_t",
+        "regime_momentum_t",
+        "cross_btc_momentum_t",
+        "sector_momentum_diff_t",
+        "onchain_activity_proxy_t",
+        "onchain_velocity_proxy_t",
+        "onchain_whale_proxy_t",
+    ),
 }
 
 # Lightweight, per-process evaluation stats for visibility during evolution
@@ -181,6 +197,10 @@ def configure_evaluation(
     stress_fee_bps: float = 5.0,
     stress_slippage_bps: float = 2.0,
     stress_shock_scale: float = 1.5,
+    stress_tail_fee_bps: float = 10.0,
+    stress_tail_slippage_bps: float = 3.5,
+    stress_tail_shock_scale: float = 2.5,
+    transaction_cost_bps: float = 0.0,
     evaluation_horizons: Iterable[int] | None = None,
     use_train_val_splits: bool = False,
     train_points: int = 0,
@@ -200,7 +220,8 @@ def configure_evaluation(
     temporal_decay_half_life: float | None = None,
     cv_k_folds: int | None = None,
     cv_embargo: int | None = None,
-    ):
+    regime_diagnostic_factors: Iterable[str] | None = None,
+):
     global _EVAL_CONFIG
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
     _EVAL_CONFIG["max_ops_for_parsimony"] = max_ops
@@ -235,6 +256,10 @@ def configure_evaluation(
     _EVAL_CONFIG["stress_fee_bps"] = float(stress_fee_bps)
     _EVAL_CONFIG["stress_slippage_bps"] = float(stress_slippage_bps)
     _EVAL_CONFIG["stress_shock_scale"] = float(stress_shock_scale)
+    _EVAL_CONFIG["stress_tail_fee_bps"] = float(stress_tail_fee_bps)
+    _EVAL_CONFIG["stress_tail_slippage_bps"] = float(stress_tail_slippage_bps)
+    _EVAL_CONFIG["stress_tail_shock_scale"] = float(stress_tail_shock_scale)
+    _EVAL_CONFIG["transaction_cost_bps"] = float(transaction_cost_bps)
 
     horizons_set: Set[int] = set()
     if evaluation_horizons is not None:
@@ -281,6 +306,13 @@ def configure_evaluation(
     except Exception:
         pj = 0.0
     _EVAL_CONFIG["parsimony_jitter_pct"] = max(0.0, min(1.0, pj))
+    if regime_diagnostic_factors is not None:
+        try:
+            names = tuple(sorted({str(x).strip() for x in regime_diagnostic_factors if str(x).strip()}))
+        except Exception:
+            names = tuple()
+        if names:
+            _EVAL_CONFIG["regime_diagnostic_factors"] = names
     logging.getLogger(__name__).debug(
         "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s factor_w=%s factors=%s horizons=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f jitter=%.3f",
         scale_method,
@@ -654,6 +686,24 @@ def evaluate_program(
         factor_names = tuple()
     factor_corr_tracker: Dict[str, List[float]] = {name: [] for name in factor_names}
 
+    regime_names_cfg = _EVAL_CONFIG.get("regime_diagnostic_factors", tuple())
+    if isinstance(regime_names_cfg, (list, tuple, set)):
+        regime_names = tuple(str(n) for n in regime_names_cfg if str(n))
+    else:
+        regime_names = tuple()
+    default_regime_names = (
+        "regime_volatility_t",
+        "regime_momentum_t",
+        "cross_btc_momentum_t",
+        "sector_momentum_diff_t",
+        "onchain_activity_proxy_t",
+        "onchain_velocity_proxy_t",
+        "onchain_whale_proxy_t",
+    )
+    if not regime_names:
+        regime_names = default_regime_names
+    regime_corr_tracker: Dict[str, List[float]] = {name: [] for name in regime_names}
+
     # The common_time_index from data_handling is already sliced appropriately for eval_lag
     # Loop until common_time_index.size - eval_lag -1 (for python 0-indexing)
     # Or more simply, loop `len(common_time_index) - eval_lag` times.
@@ -717,23 +767,31 @@ def evaluate_program(
                 processed_predictions_t = _demean_by_groups(processed_predictions_t, sector_groups_vec)
             all_processed_predictions_timeseries.append(processed_predictions_t)
 
-            if factor_corr_tracker:
+            if factor_corr_tracker or regime_corr_tracker:
                 pred_centered = processed_predictions_t - float(np.mean(processed_predictions_t))
                 pred_std = float(np.std(pred_centered, ddof=0))
                 if pred_std > 1e-9:
                     pred_z = pred_centered / pred_std
-                    for fname in factor_corr_tracker.keys():
-                        vec = _resolve_factor_vector(fname, features_at_t, aligned_dfs, stock_symbols, timestamp)
-                        if vec is None or vec.size != pred_z.size:
+                    trackers = (
+                        (factor_corr_tracker, True),
+                        (regime_corr_tracker, False),
+                    )
+                    for tracker, use_abs in trackers:
+                        if not tracker:
                             continue
-                        vec_centered = vec - float(np.mean(vec))
-                        vec_std = float(np.std(vec_centered, ddof=0))
-                        if vec_std <= 1e-9:
-                            continue
-                        vec_z = vec_centered / vec_std
-                        corr = float(np.dot(pred_z, vec_z) / pred_z.size)
-                        if np.isfinite(corr):
-                            factor_corr_tracker[fname].append(corr)
+                        for fname in list(tracker.keys()):
+                            vec = _resolve_factor_vector(fname, features_at_t, aligned_dfs, stock_symbols, timestamp)
+                            if vec is None or vec.size != pred_z.size:
+                                continue
+                            vec_centered = vec - float(np.mean(vec))
+                            vec_std = float(np.std(vec_centered, ddof=0))
+                            if vec_std <= 1e-9:
+                                continue
+                            vec_z = vec_centered / vec_std
+                            corr = float(np.dot(pred_z, vec_z) / pred_z.size)
+                            if not np.isfinite(corr):
+                                continue
+                            tracker[fname].append(abs(corr) if use_abs else corr)
 
             # Early abort checks (on raw predictions)
             if len(all_raw_predictions_timeseries) == _EVAL_CONFIG["early_abort_bars"]:
@@ -1069,37 +1127,75 @@ def evaluate_program(
         if horizon == primary_horizon:
             drawdown_proxy = dd_value
 
-    stress_metrics: Dict[str, float] = {}
+    transaction_costs: Dict[str, float] = {}
     robustness_penalty = 0.0
-    if pnl_primary.size > 0:
-        fee_bps = float(_EVAL_CONFIG.get("stress_fee_bps", 0.0) or 0.0)
-        slip_bps = float(_EVAL_CONFIG.get("stress_slippage_bps", 0.0) or 0.0)
-        fee_total = (fee_bps + slip_bps) / 10000.0
+    tc_bps = float(_EVAL_CONFIG.get("transaction_cost_bps", 0.0) or 0.0)
+    if tc_bps > 0.0 and turnover_proxy > 0.0:
+        base_cost = (tc_bps / 10000.0) * float(turnover_proxy)
+        transaction_costs["baseline_cost"] = float(base_cost)
+        robustness_penalty += float(base_cost)
+
+    stress_scenarios: Dict[str, Dict[str, float]] = {}
+    stress_metrics: Dict[str, float] = {}
+
+    def _compute_stress(label: str, fee_bps: float, slip_bps: float, shock_scale: float) -> Dict[str, float]:
+        if pnl_primary.size == 0:
+            metrics_local = {
+                "cost": 0.0,
+                "drawdown": 0.0,
+                "mean_pnl": 0.0,
+                "shock_scale": float(shock_scale),
+            }
+            stress_scenarios[label] = metrics_local
+            return metrics_local
+        fee_total = (float(fee_bps) + float(slip_bps)) / 10000.0
         turnover_est = max(0.0, float(turnover_proxy))
-        stress_cost = fee_total * turnover_est
-        shock_scale = float(max(1.0, float(_EVAL_CONFIG.get("stress_shock_scale", 1.0) or 1.0)))
+        stress_cost_local = fee_total * turnover_est
         stressed = pnl_primary.astype(float, copy=True)
+        scale = float(max(1.0, shock_scale))
         if stressed.size > 0:
             neg_mask = stressed < 0.0
             pos_mask = stressed > 0.0
-            stressed[neg_mask] *= shock_scale
-            if shock_scale > 1.0:
-                stressed[pos_mask] /= shock_scale
+            stressed[neg_mask] *= scale
+            if scale > 1.0:
+                stressed[pos_mask] /= scale
         stress_equity = np.cumsum(stressed)
-        stress_dd = float(compute_max_drawdown(stress_equity))
-        stress_mean = float(np.mean(stressed)) - stress_cost
-        stress_metrics = {
-            "cost": float(stress_cost),
-            "drawdown": stress_dd,
-            "mean_pnl": stress_mean,
-            "shock_scale": shock_scale,
+        stress_dd_local = float(compute_max_drawdown(stress_equity))
+        stress_mean_local = float(np.mean(stressed)) - stress_cost_local
+        metrics_local = {
+            "cost": float(stress_cost_local),
+            "drawdown": stress_dd_local,
+            "mean_pnl": stress_mean_local,
+            "shock_scale": float(scale),
         }
-        if stress_cost > 0.0:
-            robustness_penalty += stress_cost
-        if stress_dd > 0.0:
-            robustness_penalty += stress_dd
-        if stress_mean < 0.0:
-            robustness_penalty += abs(stress_mean)
+        stress_scenarios[label] = metrics_local
+        return metrics_local
+
+    base_metrics = _compute_stress(
+        "base",
+        float(_EVAL_CONFIG.get("stress_fee_bps", 0.0) or 0.0),
+        float(_EVAL_CONFIG.get("stress_slippage_bps", 0.0) or 0.0),
+        float(_EVAL_CONFIG.get("stress_shock_scale", 1.0) or 1.0),
+    )
+
+    tail_fee = float(_EVAL_CONFIG.get("stress_tail_fee_bps", 0.0) or 0.0)
+    tail_slip = float(_EVAL_CONFIG.get("stress_tail_slippage_bps", 0.0) or 0.0)
+    tail_scale = float(_EVAL_CONFIG.get("stress_tail_shock_scale", 0.0) or 0.0)
+    if tail_fee > 0.0 or tail_slip > 0.0 or tail_scale > 0.0:
+        _compute_stress("tail", tail_fee, tail_slip, tail_scale if tail_scale > 0.0 else 1.0)
+
+    for label, metrics in stress_scenarios.items():
+        for key, value in metrics.items():
+            stress_metrics[f"{label}_{key}"] = float(value)
+        if metrics.get("cost", 0.0) > 0.0:
+            transaction_costs.setdefault(f"{label}_cost", float(metrics["cost"]))
+            robustness_penalty += float(metrics["cost"])
+        dd_val = float(metrics.get("drawdown", 0.0))
+        if dd_val > 0.0:
+            robustness_penalty += dd_val
+        mean_val = float(metrics.get("mean_pnl", 0.0))
+        if mean_val < 0.0:
+            robustness_penalty += abs(mean_val)
 
     # Linear parsimony penalty to match expected tests: factor * (size / max_ops)
     try:
@@ -1171,6 +1267,12 @@ def evaluate_program(
     if factor_penalty_weight > 0.0 and factor_penalty_components:
         factor_penalty_value = factor_penalty_weight * factor_exposure_sum
         score -= factor_penalty_value
+
+    regime_exposures: Dict[str, float] = {}
+    for name, values in regime_corr_tracker.items():
+        if not values:
+            continue
+        regime_exposures[name] = float(np.mean(values))
 
     stress_penalty_weight = float(_EVAL_CONFIG.get("stress_penalty_weight", 0.0) or 0.0)
     if stress_penalty_weight > 0.0 and robustness_penalty > 0.0:
@@ -1321,6 +1423,9 @@ def evaluate_program(
         factor_exposure_sum=factor_exposure_sum,
         robustness_penalty=robustness_penalty,
         stress_metrics=stress_metrics,
+        regime_exposures=regime_exposures,
+        stress_scenarios=stress_scenarios,
+        transaction_costs=transaction_costs,
     )
     # Compute fixed-weight fitness if candidate wasn't invalidated to -inf
     try:

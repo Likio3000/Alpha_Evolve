@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
@@ -46,11 +47,44 @@ async def start_pipeline_run(payload: PipelineRunRequest):
     q = STATE.new_queue(job_id)
 
     args = build_pipeline_args(payload.model_dump())
+    context_payload = payload.model_dump()
+    ui_context = {
+        "job_id": job_id,
+        "submitted_at": datetime.utcnow().isoformat() + "Z",
+        "payload": context_payload,
+        "pipeline_args": args,
+    }
+    STATE.set_meta(job_id, ui_context)
 
     async def _pump():
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
+        try:
+            total_cpus = os.cpu_count() or 1
+            if total_cpus > 1:
+                worker_cpus = max(1, total_cpus - 1)
+                for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+                    env.setdefault(var, str(worker_cpus))
+        except Exception:
+            pass
+
+        def _prep_child() -> None:
+            try:
+                if hasattr(os, "nice"):
+                    os.nice(5)
+            except Exception:
+                pass
+            try:
+                if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+                    current = os.sched_getaffinity(0)
+                    if len(current) > 1:
+                        keep = sorted(current)[1:]
+                        if keep:
+                            os.sched_setaffinity(0, set(keep))
+            except Exception:
+                pass
+
         proc = subprocess.Popen(
             args,
             cwd=str(ROOT),
@@ -59,6 +93,7 @@ async def start_pipeline_run(payload: PipelineRunRequest):
             text=True,
             bufsize=1,
             env=env,
+            preexec_fn=_prep_child,
         )
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
@@ -104,6 +139,7 @@ async def start_pipeline_run(payload: PipelineRunRequest):
             code = proc.wait()
             q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
             latest = resolve_latest_run_dir()
+            context = STATE.pop_meta(job_id)
             if latest is not None:
                 bs = read_best_sharpe_from_run(latest)
                 q.put_nowait(
@@ -115,6 +151,17 @@ async def start_pipeline_run(payload: PipelineRunRequest):
                         }
                     )
                 )
+                if context:
+                    try:
+                        run_path = latest.resolve()
+                        meta_dir = run_path / "meta"
+                        meta_dir.mkdir(exist_ok=True)
+                        context_out = dict(context)
+                        context_out["run_dir"] = str(run_path)
+                        with open(meta_dir / "ui_context.json", "w", encoding="utf-8") as fh:
+                            json.dump(context_out, fh, indent=2)
+                    except Exception:
+                        pass
             if code != 0:
                 q.put_nowait(json.dumps({"type": "error", "code": int(code), "last": last_line}))
 

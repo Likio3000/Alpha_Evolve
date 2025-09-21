@@ -109,3 +109,57 @@ def test_long_short_n_trades_only_requested_symbols():
     sharpe = (mean_ret / (std_ret + 1e-9)) * np.sqrt(365 * 6)
     assert metrics["Sharpe"] == pytest.approx(sharpe)
 
+
+def test_backtest_reports_extended_stress_metrics():
+    index = pd.date_range("2021-01-01", periods=6)
+    rets = np.array([
+        [0.01, -0.02, 0.03],
+        [-0.01, 0.02, 0.01],
+        [0.03, 0.01, -0.02],
+        [0.02, -0.01, 0.02],
+        [-0.015, 0.005, 0.01],
+        [0.0, 0.0, 0.0],
+    ])
+    aligned = OrderedDict({
+        "AAA": _build_df(rets[:, 0], index),
+        "BBB": _build_df(rets[:, 1], index),
+        "CCC": _build_df(rets[:, 2], index),
+    })
+    signals = np.array([
+        [0.1, 0.2, -0.3],
+        [0.4, -0.1, 0.2],
+        [0.3, 0.5, 0.1],
+        [-0.2, 0.2, 0.0],
+        [0.15, -0.05, 0.05],
+    ])
+    prog = DummyProg(signals)
+    stress_cfg = {
+        "fee_bps": 4.0,
+        "slippage_bps": 3.0,
+        "shock_scale": 1.4,
+        "tail_fee_bps": 12.0,
+        "tail_slippage_bps": 6.0,
+        "tail_shock_scale": 2.0,
+    }
+    metrics = backtest_cross_sectional_alpha(
+        prog=prog,
+        aligned_dfs=aligned,
+        common_time_index=index,
+        stock_symbols=list(aligned.keys()),
+        n_stocks=3,
+        fee_bps=1.0,
+        lag=0,
+        hold=1,
+        scale_method="zscore",
+        long_short_n=1,
+        initial_state_vars_config={},
+        scalar_feature_names=[],
+        cross_sectional_feature_vector_names=[],
+        stress_config=stress_cfg,
+    )
+    assert "StressScenarios" in metrics
+    scenarios = metrics["StressScenarios"]
+    assert set(scenarios.keys()) >= {"base", "tail"}
+    assert metrics["Stress"]["ShockScale"] == scenarios["base"]["ShockScale"]
+    assert "TransactionCosts" in metrics
+    assert "baseline_cost" in metrics["TransactionCosts"]

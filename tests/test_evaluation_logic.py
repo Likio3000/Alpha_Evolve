@@ -3,6 +3,7 @@ import pandas as pd
 from collections import OrderedDict
 import pytest
 from evolution_components import data_handling
+from utils.features import compute_basic_features
 
 from evolution_components.evaluation_logic import (
     _safe_corr_eval,
@@ -619,3 +620,100 @@ def test_sharpe_proxy_weight_alters_fitness():
     res1 = evaluate_program(prog, dh, hof, {})
 
     assert res1.fitness == pytest.approx(res0.fitness + res1.sharpe_proxy)
+
+def test_evaluate_program_stress_and_regime(monkeypatch):
+    prog = build_simple_program("stress")
+
+    class DummyDH:
+        def __init__(self):
+            raw_idx = pd.RangeIndex(20)
+            raw_a = pd.DataFrame({
+                "open": np.linspace(100, 120, len(raw_idx)),
+                "high": np.linspace(101, 121, len(raw_idx)),
+                "low": np.linspace(99, 119, len(raw_idx)),
+                "close": np.linspace(100.5, 120.5, len(raw_idx)),
+            }, index=raw_idx)
+            raw_b = pd.DataFrame({
+                "open": np.linspace(90, 110, len(raw_idx)),
+                "high": np.linspace(91, 111, len(raw_idx)),
+                "low": np.linspace(89, 109, len(raw_idx)),
+                "close": np.linspace(90.5, 110.5, len(raw_idx)),
+            }, index=raw_idx)
+            feat_a = compute_basic_features(raw_a)
+            feat_b = compute_basic_features(raw_b)
+            self.index = raw_idx
+            self.dfs = OrderedDict({
+                "AAA": feat_a,
+                "BBB": feat_b,
+            })
+
+        def get_aligned_dfs(self):
+            return self.dfs
+
+        def get_common_time_index(self):
+            return self.index
+
+        def get_stock_symbols(self):
+            return list(self.dfs.keys())
+
+        def get_n_stocks(self):
+            return len(self.dfs)
+
+        def get_eval_lag(self):
+            return 1
+
+        def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
+            return np.array([0, 1])
+
+        def get_features_at_time(self, timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
+            return data_handling.get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec)
+
+    dh = DummyDH()
+
+    class DummyHOF:
+        def get_correlation_penalty_with_hof(self, ts):
+            return 0.0
+
+    hof = DummyHOF()
+
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=64,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=0,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="rank",
+        stress_penalty_weight=0.5,
+        stress_fee_bps=5.0,
+        stress_slippage_bps=4.0,
+        stress_shock_scale=1.5,
+        stress_tail_fee_bps=12.0,
+        stress_tail_slippage_bps=6.0,
+        stress_tail_shock_scale=2.0,
+        transaction_cost_bps=15.0,
+        factor_penalty_weight=0.1,
+        factor_penalty_factors=("ret1d_t",),
+        evaluation_horizons=(1,),
+        regime_diagnostic_factors=(
+            "regime_volatility_t",
+            "regime_momentum_t",
+            "onchain_activity_proxy_t",
+        ),
+    )
+    initialize_evaluation_cache(max_size=2)
+    res = evaluate_program(prog, dh, hof, {})
+
+    assert isinstance(res.regime_exposures, dict)
+    expected_regime = {"regime_volatility_t", "regime_momentum_t", "onchain_activity_proxy_t"}
+    assert res.regime_exposures.keys() & expected_regime
+    assert isinstance(res.stress_metrics, dict)
+    assert any(k.startswith("base_") for k in res.stress_metrics)
+    assert isinstance(res.stress_scenarios, dict)
+    assert "base" in res.stress_scenarios
+    assert "tail" in res.stress_scenarios
+    # When turnover > 0, transaction costs should be recorded
+    if res.transaction_costs:
+        assert any("cost" in k for k in res.transaction_costs)

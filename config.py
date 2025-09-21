@@ -93,6 +93,10 @@ class EvolutionConfig(DataConfig):
     stress_fee_bps: float = 5.0             # additional stress transaction fee (bps)
     stress_slippage_bps: float = 2.0        # stress slippage (bps)
     stress_shock_scale: float = 1.5         # multiplier applied to negative pnl under stress
+    stress_tail_fee_bps: float = 10.0       # heightened cost scenario for stress tests
+    stress_tail_slippage_bps: float = 3.5   # heightened slippage scenario for stress tests
+    stress_tail_shock_scale: float = 2.5    # amplified downside shock for tail stress
+    transaction_cost_bps: float = 0.0       # baseline transaction-cost estimate applied to turnover
     evaluation_horizons: tuple[int, ...] = (1,)
     qd_archive_enabled: bool = False
     qd_turnover_bins: tuple[float, ...] = (0.1, 0.3, 0.6)
@@ -126,6 +130,17 @@ class EvolutionConfig(DataConfig):
     split_weighting: str = "equal"
     # Exponential temporal decay half-life (bars). 0 disables decay.
     temporal_decay_half_life: float = 0.0
+
+    # diagnostics & regime analysis
+    regime_diagnostic_factors: tuple[str, ...] = (
+        "regime_volatility_t",
+        "regime_momentum_t",
+        "cross_btc_momentum_t",
+        "sector_momentum_diff_t",
+        "onchain_activity_proxy_t",
+        "onchain_velocity_proxy_t",
+        "onchain_whale_proxy_t",
+    )
 
     # evaluation cache
     eval_cache_size: int = 128

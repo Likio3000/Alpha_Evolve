@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Dict
+from typing import Any, Dict
 import subprocess
 
 
@@ -12,6 +12,7 @@ class JobState:
         self.queues: Dict[str, object] = {}
         self.procs: Dict[str, subprocess.Popen] = {}
         self.logs: Dict[str, deque[str]] = {}
+        self.meta: Dict[str, Any] = {}
 
     def new_queue(self, job_id: str):
         import asyncio
@@ -41,6 +42,12 @@ class JobState:
         if not buf:
             return ""
         return "\n".join(buf)
+
+    def set_meta(self, job_id: str, payload: Any) -> None:
+        self.meta[job_id] = payload
+
+    def pop_meta(self, job_id: str) -> Any:
+        return self.meta.pop(job_id, None)
 
     def stop(self, job_id: str) -> bool:
         p = self.procs.get(job_id)

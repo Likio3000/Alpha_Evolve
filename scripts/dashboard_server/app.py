@@ -12,6 +12,7 @@ from .routes.run_auto_improve import router as auto_router
 from .routes.run_pipeline import router as pipeline_router
 from .routes.config import router as config_router
 from .routes.runs import router as runs_router
+from .routes.selfplay import router as selfplay_router
 from .helpers import ROOT
 from .health import router as health_router
 
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_router)
     app.include_router(config_router)
     app.include_router(runs_router)
+    app.include_router(selfplay_router)
     return app
 
 

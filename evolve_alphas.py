@@ -27,6 +27,7 @@ from evolution_components import qd_archive
 from evolution_components import data_handling as dh_module
 from evolution_components import hall_of_fame_manager as hof_module
 from evolution_components import evaluation_logic as el_module
+from evolution_components import moea as moea_module
 from utils.context import make_eval_context_from_globals, EvalContext
 from evolution_components import diagnostics as diag
 
@@ -347,6 +348,11 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     stress_fee_bps=cfg.stress_fee_bps,
                     stress_slippage_bps=cfg.stress_slippage_bps,
                     stress_shock_scale=cfg.stress_shock_scale,
+                    stress_tail_fee_bps=getattr(cfg, "stress_tail_fee_bps", cfg.stress_fee_bps * 2.0),
+                    stress_tail_slippage_bps=getattr(cfg, "stress_tail_slippage_bps", cfg.stress_slippage_bps * 1.5),
+                    stress_tail_shock_scale=getattr(cfg, "stress_tail_shock_scale", cfg.stress_shock_scale * 1.5),
+                    transaction_cost_bps=getattr(cfg, "transaction_cost_bps", 0.0),
+                    regime_diagnostic_factors=getattr(cfg, "regime_diagnostic_factors", None),
                 )
             except Exception:
                 pass
@@ -609,6 +615,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 gen_eval_time,
             )
 
+            moea_analysis: moea_module.ParetoAnalysis | None = None
+            if getattr(cfg, "moea_enabled", False):
+                try:
+                    moea_analysis = moea_module.compute_pareto_analysis(eval_results)
+                    pop_fitness_scores[:] = -np.inf
+                    for idx_pop, score in moea_analysis.scores.items():
+                        pop_fitness_scores[idx_pop] = score
+                except Exception:
+                    moea_analysis = None
+
             # Emit evaluation diagnostics
             if hasattr(el_module, "get_eval_stats"):
                 stats = el_module.get_eval_stats()
@@ -656,6 +672,7 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     sharpe_samples: List[float] = []
                     robustness_samples: List[float] = []
                     stress_accum: Dict[str, List[float]] = {}
+                    regime_exposure_accum: Dict[str, List[float]] = {}
                     for idx_in_pop, res in tmp_sorted[:K]:
                         prog = pop[idx_in_pop]
                         if res.factor_exposures:
@@ -680,7 +697,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             "robustness_penalty": float(getattr(res, "robustness_penalty", 0.0)),
                             "ops": int(prog.size),
                             "factor_exposures": {k: float(v) for k, v in res.factor_exposures.items()},
+                            "regime_exposures": {k: float(v) for k, v in getattr(res, "regime_exposures", {}).items()},
                             "stress_metrics": {k: float(v) for k, v in getattr(res, "stress_metrics", {}).items()},
+                            "transaction_costs": {k: float(v) for k, v in getattr(res, "transaction_costs", {}).items()},
                             "horizon_metrics": {int(h): {mk: float(mv) for mk, mv in metrics.items()} for h, metrics in res.horizon_metrics.items()},
                             "program": prog.to_string(max_len=180),
                         })
@@ -692,6 +711,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         robustness_samples.append(float(getattr(res, "robustness_penalty", 0.0)))
                         for key, val in getattr(res, "stress_metrics", {}).items():
                             stress_accum.setdefault(key, []).append(float(val))
+                        for key, val in getattr(res, "transaction_costs", {}).items():
+                            stress_accum.setdefault(f"tc_{key}", []).append(float(val))
+                        for key, val in getattr(res, "regime_exposures", {}).items():
+                            regime_exposure_accum.setdefault(key, []).append(float(val))
                     for idx_in_pop, _ in eval_results:
                         for feat in _program_feature_usage(pop[idx_in_pop]):
                             if feat in feature_counts:
@@ -735,6 +758,12 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         regime_summary["ic_std_mean"] = float(np.mean(ic_std_samples))
                     if sharpe_samples:
                         regime_summary["sharpe_mean"] = float(np.mean(sharpe_samples))
+                    if regime_exposure_accum:
+                        regime_summary["exposures"] = {
+                            name: float(np.mean(vals))
+                            for name, vals in regime_exposure_accum.items()
+                            if vals
+                        }
                     dd_val = regime_summary.get("drawdown_mean")
                     if isinstance(dd_val, float):
                         if dd_val > 0.1:
@@ -773,46 +802,20 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     )
                     # Optional Pareto front summary for diagnostics
                     try:
-                        if getattr(cfg, "moea_enabled", False):
-                            def _objs(res: el_module.EvalResult) -> tuple[float, ...]:
-                                return (
-                                    float(res.mean_ic),
-                                    float(res.sharpe_proxy),
-                                    float(-res.turnover_proxy),
-                                    float(-res.parsimony_penalty),
-                                    float(-getattr(res, "max_drawdown", 0.0)),
-                                    float(-getattr(res, "factor_exposure_sum", 0.0)),
-                                    float(-getattr(res, "robustness_penalty", 0.0)),
-                                )
-                            # Build naive first-front (non-dominated set)
-                            objs = [(_i, _objs(_r)) for _i, _r in eval_results if np.isfinite(_r.fitness)]
-                            # Simple O(n^2) check for front 0
-                            pareto = []
-                            for i, oi in objs:
-                                dominated = False
-                                for j, oj in objs:
-                                    if i == j:
-                                        continue
-                                    if all(oj[k] >= oi[k] for k in range(len(oi))) and any(oj[k] > oi[k] for k in range(len(oi))):
-                                        dominated = True
-                                        break
-                                if not dominated:
-                                    pareto.append((i, oi))
-                            pf = [{
-                                "idx": int(i),
-                                "fp": pop[i].fingerprint,
-                                "obj": {
-                                    "ic": oi[0],
-                                    "sh": oi[1],
-                                    "neg_turn": oi[2],
-                                    "neg_complex": oi[3],
-                                    "neg_dd": oi[4],
-                                    "neg_factor": oi[5],
-                                    "neg_robust": oi[6],
-                                },
-                                "ops": int(pop[i].size),
-                            } for (i, oi) in pareto[: min(10, len(pareto))]]
-                            diag.enrich_last(pareto_front=pf, pareto_size=len(pf))
+                        if getattr(cfg, "moea_enabled", False) and moea_analysis is not None:
+                            front_zero = moea_analysis.front(0)
+                            pf: List[Dict[str, object]] = []
+                            for idx_in_pop in front_zero[: min(10, len(front_zero))]:
+                                objectives = moea_analysis.objectives.get(idx_in_pop)
+                                if objectives is None:
+                                    continue
+                                pf.append({
+                                    "idx": int(idx_in_pop),
+                                    "fp": pop[idx_in_pop].fingerprint,
+                                    "obj": moea_module.to_objective_dict(objectives, moea_analysis.labels),
+                                    "ops": int(pop[idx_in_pop].size),
+                                })
+                            diag.enrich_last(pareto_front=pf, pareto_size=len(front_zero))
                     except Exception:
                         pass
                     # Novelty vs HOF for best-of-gen (mean Spearman component)
@@ -964,92 +967,21 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             new_pop: List[AlphaProgram] = []
             # Optional Pareto-based elite selection (NSGA-II style fronts)
             if getattr(cfg, "moea_enabled", False):
-                def _objectives(res: el_module.EvalResult) -> tuple[float, ...]:
-                    return (
-                        float(res.mean_ic),                 # maximize
-                        float(res.sharpe_proxy),            # maximize
-                        float(-res.turnover_proxy),         # minimize turnover
-                        float(-res.parsimony_penalty),      # minimize complexity
-                        float(-getattr(res, "max_drawdown", 0.0)),   # minimize drawdown proxy
-                        float(-getattr(res, "factor_exposure_sum", 0.0)),  # minimize aggregate factor exposure
-                        float(-getattr(res, "robustness_penalty", 0.0)),  # minimize stress penalty
-                    )
-                def _nondominated_sort(objs: list[tuple[float, ...]]):
-                    n = len(objs)
-                    S = [set() for _ in range(n)]
-                    n_dom = [0] * n
-                    fronts: list[list[int]] = []
-                    for p in range(n):
-                        for q in range(n):
-                            if p == q:
-                                continue
-                            op, oq = objs[p], objs[q]
-                            if all(op[i] >= oq[i] for i in range(len(op))) and any(op[i] > oq[i] for i in range(len(op))):
-                                S[p].add(q)
-                            elif all(oq[i] >= op[i] for i in range(len(op))) and any(oq[i] > op[i] for i in range(len(op))):
-                                n_dom[p] += 1
-                        if n_dom[p] == 0:
-                            if not fronts:
-                                fronts.append([])
-                            fronts[0].append(p)
-                    i_f = 0
-                    while i_f < len(fronts):
-                        next_front: list[int] = []
-                        for p in fronts[i_f]:
-                            for q in S[p]:
-                                n_dom[q] -= 1
-                                if n_dom[q] == 0:
-                                    next_front.append(q)
-                        if next_front:
-                            fronts.append(next_front)
-                        i_f += 1
-                    return fronts
-                def _crowding(front: list[int], objs: list[tuple[float, ...]]):
-                    if not front:
-                        return {}
-                    m = len(objs[0])
-                    dist = {i: 0.0 for i in front}
-                    for k in range(m):
-                        front_sorted = sorted(front, key=lambda i: objs[i][k])
-                        dist[front_sorted[0]] = float("inf")
-                        dist[front_sorted[-1]] = float("inf")
-                        vals = [objs[i][k] for i in front_sorted]
-                        vmin, vmax = vals[0], vals[-1]
-                        rng = (vmax - vmin) if (vmax > vmin) else 1.0
-                        for j in range(1, len(front_sorted) - 1):
-                            prev_v = objs[front_sorted[j - 1]][k]
-                            next_v = objs[front_sorted[j + 1]][k]
-                            dist[front_sorted[j]] += (next_v - prev_v) / rng
-                    return dist
-                # Build objective vectors aligned by index
-                # Default to using only valid results
-                objs_list: list[tuple[float, ...]] = [None] * len(pop)  # type: ignore
-                valid_idx: list[int] = []
-                for idx_in_pop, res in eval_results:
-                    if np.isfinite(res.fitness):
-                        objs_list[idx_in_pop] = _objectives(res)
-                        valid_idx.append(idx_in_pop)
-                # Map to a compact list for sorting
-                idx_map = {idx: k for k, idx in enumerate(valid_idx)}
-                compact_objs = [objs_list[i] for i in valid_idx]
-                fronts_local = _nondominated_sort(compact_objs)
-                # Elite fraction cap
                 elite_cap = max(0, min(cfg.pop_size, int(round(cfg.pop_size * float(getattr(cfg, "moea_elite_frac", 0.2))))))
                 picked = 0
-                for f in fronts_local:
-                    # Convert compact indices back to population indices
-                    front_pop_idx = [valid_idx[i] for i in f]
-                    cd = _crowding([idx_map[i] for i in front_pop_idx], compact_objs)
-                    for i in sorted(front_pop_idx, key=lambda x: cd.get(idx_map.get(x, -1), 0.0), reverse=True):
-                        new_pop.append(pop[i].copy())
+                if moea_analysis is None:
+                    moea_analysis = moea_module.compute_pareto_analysis(eval_results)
+                fronts_local = moea_analysis.fronts if moea_analysis else []
+                for front in fronts_local:
+                    for idx_in_pop in sorted(front, key=lambda idx: moea_analysis.crowding.get(idx, 0.0) if moea_analysis else 0.0, reverse=True):
+                        new_pop.append(pop[idx_in_pop].copy())
                         picked += 1
                         if picked >= elite_cap:
                             break
                     if picked >= elite_cap:
                         break
-                # Fallback to at least one elite
-                if not new_pop and valid_idx:
-                    new_pop.append(pop[valid_idx[0]].copy())
+                if not new_pop and fronts_local:
+                    new_pop.append(pop[fronts_local[0][0]].copy())
 
             # Diversity proxy and adaptive breeding rates
             try:
@@ -1144,11 +1076,13 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     new_pop.append(_random_prog(cfg))
                     continue
 
-                if getattr(cfg, "moea_enabled", False):
-                    # Binary tournament by selection rank (fallback to scalar if undefined)
-                    def _score_for_tour(i_tour: int) -> float:
-                        # Use scalar selection score as fallback
-                        return float(pop_fitness_scores[i_tour])
+                if getattr(cfg, "moea_enabled", False) and moea_analysis is not None and moea_analysis.ranks:
+                    # Binary tournament using (rank, crowding) ordering
+                    def _score_for_tour(i_tour: int) -> tuple[float, float]:
+                        rank = float(moea_analysis.ranks.get(i_tour, math.inf))
+                        crowd = moea_analysis.crowding.get(i_tour, -math.inf)
+                        crowd_adj = crowd if math.isfinite(crowd) else float('inf')
+                        return (-rank, crowd_adj)
                     parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=_score_for_tour)
                     parent2_idx = max(tournament_indices_pool[cfg.tournament_k:], key=_score_for_tour)
                 else:
