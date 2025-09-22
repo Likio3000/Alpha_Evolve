@@ -95,75 +95,102 @@ async def start_pipeline_run(payload: PipelineRunRequest):
             env=env,
             preexec_fn=_prep_child,
         )
+
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
+
+        loop = asyncio.get_running_loop()
         re_sharpe = RE_SHARPE
         re_diag = RE_DIAG
         re_progress = RE_PROGRESS
-        last_line: str | None = None
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                if line:
-                    last_line = line
-                try:
-                    print(line, flush=True)
-                except Exception:
-                    pass
-                STATE.add_log(job_id, line)
-                md = re_diag.search(line)
-                if md:
+
+        def _stream_output() -> None:
+            def _put(item: dict[str, Any]) -> None:
+                loop.call_soon_threadsafe(q.put_nowait, json.dumps(item))
+
+            def _log(line: str) -> None:
+                loop.call_soon_threadsafe(STATE.add_log, job_id, line)
+
+            last_line: str | None = None
+
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    if line:
+                        last_line = line
                     try:
-                        diag_obj = json.loads(md.group(1))
-                        q.put_nowait(json.dumps({"type": "diag", "data": diag_obj}))
-                    except Exception:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    continue
-                mp = re_progress.search(line)
-                if mp:
-                    try:
-                        prog_obj = json.loads(mp.group(1))
-                        q.put_nowait(json.dumps({"type": "progress", "data": prog_obj}))
-                    except Exception:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    continue
-                ms = re_sharpe.search(line)
-                if ms:
-                    q.put_nowait(
-                        json.dumps({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line})
-                    )
-                else:
-                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
-        finally:
-            code = proc.wait()
-            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
-            latest = resolve_latest_run_dir()
-            context = STATE.pop_meta(job_id)
-            if latest is not None:
-                bs = read_best_sharpe_from_run(latest)
-                q.put_nowait(
-                    json.dumps(
-                        {
-                            "type": "final",
-                            "run_dir": str(latest),
-                            "sharpe_best": None if bs is None else float(bs),
-                        }
-                    )
-                )
-                if context:
-                    try:
-                        run_path = latest.resolve()
-                        meta_dir = run_path / "meta"
-                        meta_dir.mkdir(exist_ok=True)
-                        context_out = dict(context)
-                        context_out["run_dir"] = str(run_path)
-                        with open(meta_dir / "ui_context.json", "w", encoding="utf-8") as fh:
-                            json.dump(context_out, fh, indent=2)
+                        print(line, flush=True)
                     except Exception:
                         pass
-            if code != 0:
-                q.put_nowait(json.dumps({"type": "error", "code": int(code), "last": last_line}))
+                    _log(line)
+                    md = re_diag.search(line)
+                    if md:
+                        try:
+                            diag_obj = json.loads(md.group(1))
+                            _put({"type": "diag", "data": diag_obj})
+                        except Exception:
+                            _put({"type": "log", "raw": line})
+                        continue
+                    mp = re_progress.search(line)
+                    if mp:
+                        try:
+                            prog_obj = json.loads(mp.group(1))
+                            _put({"type": "progress", "data": prog_obj})
+                        except Exception:
+                            _put({"type": "log", "raw": line})
+                        continue
+                    ms = re_sharpe.search(line)
+                    if ms:
+                        _put({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line})
+                    else:
+                        _put({"type": "log", "raw": line})
+            finally:
+                code = proc.wait()
+                latest = resolve_latest_run_dir()
+                context = STATE.pop_meta(job_id)
+                best = None
+                if latest is not None:
+                    best = read_best_sharpe_from_run(latest)
+                    if context:
+                        try:
+                            run_path = latest.resolve()
+                            meta_dir = run_path / "meta"
+                            meta_dir.mkdir(exist_ok=True)
+                            context_out = dict(context)
+                            context_out["run_dir"] = str(run_path)
+                            with open(meta_dir / "ui_context.json", "w", encoding="utf-8") as fh:
+                                json.dump(context_out, fh, indent=2)
+                        except Exception:
+                            pass
+
+                def _finalize() -> None:
+                    q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
+                    if latest is not None:
+                        q.put_nowait(
+                            json.dumps(
+                                {
+                                    "type": "final",
+                                    "run_dir": str(latest),
+                                    "sharpe_best": None if best is None else float(best),
+                                }
+                            )
+                        )
+                    if code != 0:
+                        q.put_nowait(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "code": int(code),
+                                    "last": last_line,
+                                }
+                            )
+                        )
+                    STATE.procs.pop(job_id, None)
+
+                loop.call_soon_threadsafe(_finalize)
+
+        await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
     return {"job_id": job_id}

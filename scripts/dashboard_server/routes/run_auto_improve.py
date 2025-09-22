@@ -93,67 +93,101 @@ async def start_run(payload: AutoImproveRequest):
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+        proc = subprocess.Popen(
+            args,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
+
+        loop = asyncio.get_running_loop()
         re_candidate = RE_CANDIDATE
         re_sharpe = RE_SHARPE
         re_diag = RE_DIAG
         re_progress = RE_PROGRESS
-        last_line: str | None = None
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                if line:
-                    last_line = line
-                try:
-                    print(line, flush=True)
-                except Exception:
-                    pass
-                m = re_candidate.search(line)
-                if m:
-                    q.put_nowait(json.dumps({
-                        "type": "candidate",
-                        "idx": int(m.group(1)),
-                        "total": int(m.group(2)),
-                        "params": m.group(3),
-                        "raw": line,
-                    }))
-                    continue
-                md = re_diag.search(line)
-                if md:
-                    try:
-                        diag_obj = json.loads(md.group(1))
-                        q.put_nowait(json.dumps({"type": "diag", "data": diag_obj}))
-                    except Exception:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    continue
-                mp = re_progress.search(line)
-                if mp:
-                    try:
-                        prog_obj = json.loads(mp.group(1))
-                        q.put_nowait(json.dumps({"type": "progress", "data": prog_obj}))
-                    except Exception:
-                        q.put_nowait(json.dumps({"type": "log", "raw": line}))
-                    continue
-                ms = re_sharpe.search(line)
-                if ms:
-                    q.put_nowait(json.dumps({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line}))
-                else:
-                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
-        finally:
-            code = proc.wait()
-            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
-            # attempt to fetch latest summary
+
+        def _stream_output() -> None:
+            last_line: str | None = None
+
+            def _put(item: dict[str, Any]) -> None:
+                loop.call_soon_threadsafe(q.put_nowait, json.dumps(item))
+
             try:
-                latest_file = PIPELINE_DIR / "LATEST"
-                if latest_file.exists():
-                    q.put_nowait(json.dumps({"type": "latest", "run_dir": latest_file.read_text().strip()}))
-            except Exception:
-                pass
-            if code != 0:
-                q.put_nowait(json.dumps({"type": "error", "code": int(code), "last": last_line}))
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    if line:
+                        last_line = line
+                    try:
+                        print(line, flush=True)
+                    except Exception:
+                        pass
+                    m = re_candidate.search(line)
+                    if m:
+                        _put(
+                            {
+                                "type": "candidate",
+                                "idx": int(m.group(1)),
+                                "total": int(m.group(2)),
+                                "params": m.group(3),
+                                "raw": line,
+                            }
+                        )
+                        continue
+                    md = re_diag.search(line)
+                    if md:
+                        try:
+                            diag_obj = json.loads(md.group(1))
+                            _put({"type": "diag", "data": diag_obj})
+                        except Exception:
+                            _put({"type": "log", "raw": line})
+                        continue
+                    mp = re_progress.search(line)
+                    if mp:
+                        try:
+                            prog_obj = json.loads(mp.group(1))
+                            _put({"type": "progress", "data": prog_obj})
+                        except Exception:
+                            _put({"type": "log", "raw": line})
+                        continue
+                    ms = re_sharpe.search(line)
+                    if ms:
+                        _put({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line})
+                    else:
+                        _put({"type": "log", "raw": line})
+            finally:
+                code = proc.wait()
+
+                def _finalize() -> None:
+                    q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
+                    try:
+                        latest_file = PIPELINE_DIR / "LATEST"
+                        if latest_file.exists():
+                            q.put_nowait(
+                                json.dumps({"type": "latest", "run_dir": latest_file.read_text().strip()})
+                            )
+                    except Exception:
+                        pass
+                    if code != 0:
+                        q.put_nowait(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "code": int(code),
+                                    "last": last_line,
+                                }
+                            )
+                        )
+                    STATE.procs.pop(job_id, None)
+
+                loop.call_soon_threadsafe(_finalize)
+
+        await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
     return {"job_id": job_id}
@@ -179,26 +213,47 @@ async def simple_run(payload: Dict[str, Any]):
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
-        proc = subprocess.Popen(args, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+        proc = subprocess.Popen(
+            args,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
         STATE.set_proc(job_id, proc)
         q.put_nowait(json.dumps({"type": "status", "msg": "started", "args": args}))
-        re_sharpe = re.compile(r"Sharpe\\(best\\)\\s*=\\s*([+\\-]?[0-9.]+)")
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                try:
-                    print(line, flush=True)
-                except Exception:
-                    pass
-                ms = re_sharpe.search(line)
-                if ms:
-                    q.put_nowait(json.dumps({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line}))
-                else:
-                    q.put_nowait(json.dumps({"type": "log", "raw": line}))
-        finally:
-            code = proc.wait()
-            q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
+        loop = asyncio.get_running_loop()
+        re_sharpe = re.compile(r"Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)")
+
+        def _stream_output() -> None:
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    try:
+                        print(line, flush=True)
+                    except Exception:
+                        pass
+                    ms = re_sharpe.search(line)
+                    if ms:
+                        loop.call_soon_threadsafe(
+                            q.put_nowait,
+                            json.dumps({"type": "score", "sharpe_best": float(ms.group(1)), "raw": line}),
+                        )
+                    else:
+                        loop.call_soon_threadsafe(q.put_nowait, json.dumps({"type": "log", "raw": line}))
+            finally:
+                code = proc.wait()
+
+                def _finalize() -> None:
+                    q.put_nowait(json.dumps({"type": "status", "msg": "exit", "code": code}))
+                    STATE.procs.pop(job_id, None)
+
+                loop.call_soon_threadsafe(_finalize)
+
+        await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
     return {"job_id": job_id}

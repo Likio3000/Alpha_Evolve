@@ -90,7 +90,8 @@ def build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
         args += ["--config", str(cfg_path)]
     if payload.get("data_dir"):
         args += ["--data_dir", str(payload["data_dir"])]
-    overrides = dict(payload.get("overrides", {}))
+    raw_overrides = payload.get("overrides") or {}
+    overrides = dict(raw_overrides)
     try:
         if "generations" in overrides:
             gens = int(overrides.pop("generations"))

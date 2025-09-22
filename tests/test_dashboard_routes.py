@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 from types import SimpleNamespace
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -98,3 +100,71 @@ def test_alpha_timeseries_endpoint(dashboard_env):
     payload = ok_resp.json()
     assert payload["date"]
     assert len(payload["equity"]) == len(payload["date"])
+
+
+def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
+    release = threading.Event()
+    iter_started = threading.Event()
+    lines = ["DIAG {\"foo\": 1}\n"]
+
+    class BlockingStdout:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            iter_started.set()
+            if not release.wait(timeout=3.0):
+                raise RuntimeError("test release event was not set")
+            if lines:
+                return lines.pop(0)
+            raise StopIteration
+
+    class DummyPopen:
+        def __init__(self):
+            self.stdout = BlockingStdout()
+            self._returncode = None
+
+        def wait(self):
+            if self._returncode is None:
+                self._returncode = 0
+            return self._returncode
+
+        def poll(self):
+            return self._returncode
+
+        def terminate(self):
+            release.set()
+            self._returncode = -15
+
+        def kill(self):
+            release.set()
+            self._returncode = -9
+
+    def fake_popen(*args, **kwargs):
+        return DummyPopen()
+
+    monkeypatch.setattr(
+        "scripts.dashboard_server.routes.run_pipeline.subprocess.Popen",
+        fake_popen,
+    )
+
+    resp = dashboard_env.client.post("/api/pipeline/run", json={"generations": 1})
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    assert iter_started.wait(timeout=1.0)
+
+    try:
+        health_resp = dashboard_env.client.get("/health", timeout=1.0)
+    finally:
+        release.set()
+
+    assert health_resp.status_code == 200
+    assert health_resp.json()["ok"] is True
+
+    # Ensure the background job plumbing settles before the fixture teardown
+    for _ in range(20):
+        status_resp = dashboard_env.client.get(f"/api/job-status/{job_id}")
+        payload = status_resp.json()
+        if not payload.get("running"):
+            break
+        time.sleep(0.05)
