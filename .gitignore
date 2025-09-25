@@ -98,7 +98,6 @@ dashboard-ui/.nuxt/
 dashboard-ui/.cache/
 dashboard-ui/.turbo/
 dashboard-ui/.vite/
-dashboard-ui/dist/
 dashboard-ui/build/
 dashboard-ui/coverage/
 dashboard-ui/.vercel/

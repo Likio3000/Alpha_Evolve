@@ -1,0 +1,1443 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alpha Evolve – Minimal UI</title>
+    <style>
+      :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#a7adb3; --acc:#5ab4f0; --good:#28a745; --bad:#d9534f; }
+      html, body { margin:0; padding:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; }
+      body { padding-bottom: 170px; }
+      a { color: var(--acc); text-decoration: none; }
+      h1 { font-size: 18px; margin: 12px 0; }
+      h2 { font-size: 16px; margin: 14px 0 8px; }
+      h3 { font-size: 14px; margin: 10px 0 6px; }
+      .topbar { position: sticky; top: 0; z-index: 50; background: linear-gradient(180deg, rgba(10,15,20,0.95), rgba(10,15,20,0.92)); border-bottom: 1px solid #1f242a; padding: 16px 12px; display:flex; justify-content:center; }
+      .top-actions { display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; text-align:center; max-width:720px; }
+      .wrap { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); grid-gap: 16px; padding: 12px; align-items:start; }
+      .panel { background: #12161a; border: 1px solid #1f242a; border-radius: 8px; padding: 12px; }
+      .panel-controls { position: relative; z-index: 1; }
+      .panel-main { min-width: 0; }
+      .control label { display:block; margin:6px 0 2px; color: var(--muted); }
+      .control input, .control select { width: 100%; padding:6px 8px; background:#0f1317; color:var(--fg); border:1px solid #2a3138; border-radius: 6px; }
+      .btn { display:inline-block; padding:8px 10px; border-radius:6px; border:1px solid #2a3138; background:#182028; color:var(--fg); cursor:pointer; }
+      .btn:disabled { opacity: .6; cursor: not-allowed; }
+      .btn.big { font-size: 16px; padding: 12px 18px; }
+      .btn.primary { background:#0f344a; border-color:#1e5f85; color:#e6f3ff; box-shadow: 0 0 0 1px rgba(26, 114, 168, 0.15) inset; }
+      .btn.primary:hover { background:#124059; border-color:#2a78a5; }
+      .btn.black { background:#0b0f14; border-color:#1f2a33; }
+      .muted { color: var(--muted); }
+      .row { display:flex; gap:10px; align-items:center; }
+      .mb8 { margin-bottom:8px; } .mb12 { margin-bottom:12px; } .mt8 { margin-top:8px; }
+      .grid2 { display:grid; grid-template-columns: 1fr; gap:12px; }
+      .grid3 { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+      .list { max-height: 420px; overflow:auto; border:1px solid #1f242a; border-radius:6px; }
+      .list a { display:block; padding:6px 8px; border-bottom:1px solid #1a1f24; transition:background 0.15s ease; }
+      .list a:hover { background:#0f1419; }
+      .list a.selected-run { background:#1a2733; color:#e6f3ff; }
+      .alphaLink { color:#5ab4f0; }
+      .alpha-row { transition: background 0.15s ease, color 0.15s ease; }
+      .alpha-row.selected-alpha { background: rgba(90, 180, 240, 0.12); }
+      .alpha-row.selected-alpha td { border-bottom-color: rgba(90, 180, 240, 0.25); }
+      .alpha-row.selected-alpha a { color:#9fd3ff; font-weight:600; }
+      .selected-alpha-label { margin-left:6px; padding:2px 8px; border-radius:999px; border:1px solid #1e5f85; background:#10202c; color:#9fd3ff; font-size:12px; vertical-align:middle; }
+      .selected-alpha-label.empty { border-color:#2a3138; background:#10161c; color:var(--muted); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; border-bottom: 1px solid #1f242a; padding: 6px 8px; }
+      th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background:#12161a; }
+      canvas { width: 100%; background:#0f1317; border:1px solid #1f242a; border-radius:6px; display:block; }
+      #animCanvas { height: 360px; }
+      #alphaCanvas, #retCanvas { height: 240px; }
+      pre { white-space: pre-wrap; background:#0b1014; border:1px solid #1f242a; border-radius:6px; padding:8px; max-height:320px; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .pill { display:inline-block; padding:2px 6px; border-radius:10px; background:#0f1317; border:1px solid #2a3138; font-size:12px; }
+      .pill.auto-pill { border-style:dashed; color:#c4dcff; border-color:#2d3d4f; }
+      .big-actions { display:flex; gap:10px; align-items:center; }
+      .status-badge { display:inline-block; font-weight:600; font-size:14px; padding:6px 10px; border-radius:999px; background:#0b0f14; border:1px solid #1e5f85; color:#9fd3ff; }
+      .panel-lite { background:#0f1317; border:1px solid #1f242a; border-radius:8px; padding:10px; }
+      .kv-row { display:flex; justify-content:space-between; gap:12px; margin-bottom:4px; font-size:13px; }
+      .kv-row span:last-child { color:var(--acc); text-align:right; }
+      .muted-small { color: var(--muted); font-size:12px; }
+      .small-table { width:100%; border-collapse:collapse; font-size:13px; }
+      .small-table th, .small-table td { border-bottom:1px solid #1f242a; padding:4px 6px; text-align:left; }
+      .small-table th { color:var(--muted); font-weight:600; }
+      .risk-badge { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; border:1px solid #2a3138; background:#10161c; }
+      .risk-badge.stress { border-color:#d9534f; color:#f7c1bd; background:#451a1a; }
+      .risk-badge.volatile { border-color:#d8a14f; color:#ffe5ba; background:#433113; }
+      .risk-badge.calm { border-color:#28a745; color:#bfffe0; background:#1f3b2a; }
+      .ambient-floating { position:fixed; left:16px; bottom:16px; width:300px; height:110px; pointer-events:none; z-index:40; background:rgba(15,19,23,0.92); border:1px solid rgba(31,36,42,0.85); border-radius:10px; padding:6px; box-shadow:0 12px 26px rgba(0,0,0,0.45); backdrop-filter:blur(4px); }
+      .ambient-floating canvas { width:100%; height:100%; border:none; background:transparent; }
+      .diag-scroll { max-height:420px; overflow:auto; padding-right:4px; }
+      .diag-stack { display:flex; flex-direction:column; gap:12px; }
+      .collapsible-card { background:#0f1317; border:1px solid #1f242a; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.18); }
+      .collapsible-card .card-header { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; cursor:pointer; font-weight:600; color:var(--fg); position:relative; }
+      .collapsible-card .card-header::after { content:'▾'; font-size:12px; color:var(--muted); transition: transform 0.2s ease; }
+      .collapsible-card.open .card-header::after { transform: rotate(180deg); }
+      .collapsible-card .card-header:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+      .collapsible-card .card-body { padding:0 12px 12px; }
+      .collapsible-card:not(.open) .card-body { display:none; }
+      .graph-tabs { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+      .graph-tab { border:1px solid #2a3138; background:#131a21; color:var(--muted); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; transition:all 0.2s ease; }
+      .graph-tab:hover { color:var(--fg); }
+      .graph-tab.active { color:var(--fg); border-color:#3a566c; background:#1b2732; box-shadow:0 0 0 1px rgba(90,180,240,0.25); }
+      .graph-stage { position:relative; min-height:320px; border:1px solid #1f242a; border-radius:8px; background:#0f1317; overflow:hidden; padding:12px; display:flex; align-items:center; justify-content:center; }
+      .graph-surface { max-width:100%; max-height:100%; opacity:0; transition:opacity 0.2s ease; display:block; border-radius:4px; }
+      .graph-surface.active { opacity:1; }
+      .graph-placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; letter-spacing:0.3px; text-transform:uppercase; }
+      .graph-placeholder.hidden { display:none; }
+      .selfplay-list { display:flex; flex-direction:column; gap:8px; }
+      .selfplay-entry { background:#10161c; border:1px solid #1f242a; border-radius:6px; padding:8px 10px; font-size:13px; }
+      .selfplay-entry .title { font-weight:600; color:var(--fg); }
+      .selfplay-entry .meta { margin-top:4px; color:var(--muted); font-size:12px; }
+      .runner-shell { margin-bottom:16px; }
+      @media (max-width: 1280px) {
+        .wrap { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); }
+      }
+      @media (max-width: 1080px) {
+        .wrap { display:flex; flex-direction:column; gap:12px; }
+        .panel-main { order:1; }
+        .panel-controls { order:2; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="top-actions">
+        <button class="btn big primary" id="startBtn">Start Run</button>
+        <button class="btn big black" id="openSettingsBtn">Settings…</button>
+        <span id="runStatus" class="status-badge">idle</span>
+      </div>
+    </div>
+    <div class="wrap">
+      <aside class="panel panel-controls">
+        <h1>Pipeline Controls</h1>
+        <div class="control">
+          <label>Dataset</label>
+          <select id="dataset">
+            <option value="crypto">Crypto (4h fast)</option>
+            <option value="sp500">SP500 (daily)</option>
+          </select>
+        </div>
+        <div class="muted mb8" id="settingsCount"></div>
+        <h2>Recent Runs</h2>
+        <div class="muted mb8">Tip: right‑click a run to rename it.</div>
+        <div id="runs" class="list"></div>
+      </aside>
+      <main class="panel panel-main">
+        <div class="runner-shell">
+          <canvas id="animCanvas"></canvas>
+        </div>
+
+        <h2 class="mt8">Backtest Summary</h2>
+        <table id="btTable">
+          <thead>
+            <tr>
+              <th>Alpha</th>
+              <th>Sharpe</th>
+              <th>AnnRet</th>
+              <th>MaxDD</th>
+              <th>Turnover</th>
+              <th>Ops</th>
+              <th>EvoIC</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <h2 class="mt8">Generation Diagnostics</h2>
+        <div class="muted mb8" id="diagMeta">n/a</div>
+        <div class="diag-scroll">
+          <div class="diag-stack">
+            <div class="collapsible-card open" data-key="factorSummary">
+              <div class="card-header" data-target="factorSummary" role="button" tabindex="0" aria-expanded="true">Factor Exposure</div>
+              <div class="card-body diag-content" id="factorSummary">n/a</div>
+            </div>
+            <div class="collapsible-card open" data-key="horizonSummary">
+              <div class="card-header" data-target="horizonSummary" role="button" tabindex="0" aria-expanded="true">Horizon Metrics</div>
+              <div class="card-body diag-content" id="horizonSummary">n/a</div>
+            </div>
+            <div class="collapsible-card" data-key="featureCoverage">
+              <div class="card-header" data-target="featureCoverage" role="button" tabindex="0" aria-expanded="false">Feature Coverage</div>
+              <div class="card-body diag-content" id="featureCoverage">n/a</div>
+            </div>
+            <div class="collapsible-card" data-key="regimeSummary">
+              <div class="card-header" data-target="regimeSummary" role="button" tabindex="0" aria-expanded="false">Regime Summary</div>
+              <div class="card-body diag-content" id="regimeSummary">n/a</div>
+            </div>
+            <div class="collapsible-card" data-key="stressSummary">
+              <div class="card-header" data-target="stressSummary" role="button" tabindex="0" aria-expanded="false">Stress &amp; Robustness</div>
+              <div class="card-body diag-content" id="stressSummary">n/a</div>
+            </div>
+            <div class="collapsible-card" data-key="qdSummary">
+              <div class="card-header" data-target="qdSummary" role="button" tabindex="0" aria-expanded="false">QD Archive</div>
+              <div class="card-body diag-content" id="qdSummary">n/a</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid2 mt8 charts-row">
+          <div>
+            <h2>Equity <span class="selected-alpha-label empty">no alpha selected</span></h2>
+            <canvas id="alphaCanvas"></canvas>
+          </div>
+          <div>
+            <h2>Returns per bar <span class="selected-alpha-label empty">no alpha selected</span></h2>
+            <canvas id="retCanvas"></canvas>
+          </div>
+        </div>
+
+        <h2 class="mt8">Run Snapshot</h2>
+        <div class="row mb8">
+          <button class="btn" id="copySummaryBtn">Copy Snapshot</button>
+          <span class="muted">Parameters &amp; headline metrics</span>
+        </div>
+        <pre id="summaryBox">(load a run to see summary)</pre>
+
+        <h2 class="mt8">Alpha Details</h2>
+        <div class="row mb8">
+          <button class="btn" id="copyProgramBtn">Copy Program</button>
+          <span class="muted">full equation for <span class="selected-alpha-label empty">no alpha selected</span></span>
+        </div>
+        <pre id="programBox">(select an alpha to view program)</pre>
+        <h2 class="mt8">Terminal Output</h2>
+        <div class="muted">Tip: live logs stream in the terminal where you started the server.</div>
+        <pre id="terminalBox" class="mt8">(appears after run)</pre>
+
+        <div class="collapsible-card open graphs-section" data-key="graphsDeck">
+          <div class="card-header" data-target="graphsDeck" role="button" tabindex="0" aria-expanded="true">Graphs</div>
+          <div class="card-body" id="graphsDeck">
+            <div class="muted mb8">Quick comparisons of saved plot artefacts.</div>
+            <div class="graph-tabs">
+              <button class="graph-tab active" type="button" data-graph="topk">Top‑K: Fitness vs Ops</button>
+            </div>
+            <div class="graph-stage">
+              <img id="topkImg" class="graph-surface active" alt="Top‑K Fitness vs Ops" />
+              <div id="graphPlaceholder" class="graph-placeholder">Select a graph to display.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="collapsible-card" data-key="selfplayHistory">
+          <div class="card-header" data-target="selfplayHistory" role="button" tabindex="0" aria-expanded="false">Self-Play History</div>
+          <div class="card-body">
+            <div id="selfplayHistoryBox" class="muted-small">No self-play runs logged yet.</div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div class="ambient-floating">
+      <canvas id="ambientCanvas"></canvas>
+    </div>
+
+    <script>
+      const $ = sel => document.querySelector(sel);
+      const runsEl = $('#runs');
+      const animCanvas = document.getElementById('animCanvas');
+      const alphaCanvas = document.getElementById('alphaCanvas');
+      const retCanvas = document.getElementById('retCanvas');
+      const ambientCanvas = document.getElementById('ambientCanvas');
+      const startBtn = document.getElementById('startBtn');
+      const openSettingsBtn = document.getElementById('openSettingsBtn');
+      const statusEl = document.getElementById('runStatus');
+      const btBody = document.querySelector('#btTable tbody');
+      const programBox = document.getElementById('programBox');
+      const copyProgramBtn = document.getElementById('copyProgramBtn');
+      const summaryBox = document.getElementById('summaryBox');
+      const copySummaryBtn = document.getElementById('copySummaryBtn');
+      const settingsCount = document.getElementById('settingsCount');
+      const selfplayHistoryBox = document.getElementById('selfplayHistoryBox');
+      const graphTabs = Array.from(document.querySelectorAll('[data-graph]'));
+      const graphViews = {
+        topk: document.getElementById('topkImg'),
+      };
+      const graphPlaceholder = document.getElementById('graphPlaceholder');
+      const selectedAlphaLabels = Array.from(document.querySelectorAll('.selected-alpha-label'));
+      let activeGraphKey = graphTabs[0] ? graphTabs[0].dataset.graph : 'topk';
+      let ambientController = null;
+      let currentJob = null;
+      let currentRunDir = null;
+      let lastBacktestRows = [];
+      let currentDiag = null;
+      let topkTimer = null;
+      let selectedRunDir = null;
+      let activeRunDir = null;
+      let jobIsRunning = false;
+      let userSelectedRun = false;
+      let selectedAlphaId = null;
+      const RUN_NAME_STORAGE_KEY = 'dashboard_run_names_spanish';
+      const SPANISH_FIRST_NAMES = [
+        'Alejandro','Alonso','Andres','Carlos','Diego','Eduardo','Emilio','Fernando','Gabriel','Hector','Javier','Jorge','Jose','Juan','Luis','Manuel','Miguel','Pablo','Rafael','Ricardo','Sergio','Vicente'
+      ];
+      const SPANISH_FIRST_NAMES_FEM = [
+        'Adriana','Alejandra','Ana','Beatriz','Camila','Carla','Carolina','Cecilia','Daniela','Elena','Isabel','Laura','Lucia','Maria','Marta','Paula','Rosa','Sara','Silvia','Sofia','Valeria','Veronica'
+      ];
+      const SPANISH_LAST_NAMES = [
+        'Alvarez','Campos','Castillo','Cortez','Diaz','Dominguez','Fernandez','Garcia','Gomez','Gonzalez','Gutierrez','Hernandez','Lopez','Marin','Martinez','Mendez','Morales','Navarro','Ortega','Perez','Ramirez','Reyes','Ruiz','Sanchez','Torres','Vargas'
+      ];
+      const SPANISH_FIRST_NAME_POOL = SPANISH_FIRST_NAMES.concat(SPANISH_FIRST_NAMES_FEM);
+      let autoRunNameCache = null;
+
+      function fmt(x, d=4){
+        if (x === null || x === undefined || isNaN(x)) return '';
+        return (+x).toFixed(d);
+      }
+
+      const FRACTION_FIELDS = new Set(['fresh_rate', 'p_mut', 'p_cross', 'Turnover', 'ensemble_max_corr']);
+      const PERCENT_METRIC_FIELDS = new Set(['AnnReturn', 'MaxDD', 'volatility_target', 'dd_limit', 'stop_loss_pct']);
+      const PARAM_DESCRIPTIONS = {
+        generations: 'evolution cycles',
+        pop_size: 'population per generation',
+        tournament_k: 'tournament size',
+        elite_keep: 'elites copied forward',
+        hof_size: 'hall-of-fame size',
+        hof_per_gen: 'hof additions per gen',
+        seed: 'random seed',
+        fresh_rate: 'new programs each generation',
+        p_mut: 'mutation probability',
+        p_cross: 'crossover probability',
+        max_ops: 'max operations per program',
+        parsimony_penalty: 'complexity penalty weight',
+        factor_penalty_ic: 'style-factor exposure penalty',
+        factor_penalty_turnover: 'turnover penalty weight',
+        turnover_penalty: 'turnover penalty weight',
+        drawdown_penalty: 'drawdown penalty weight',
+        ic_target: 'target IC for selection',
+        top_to_backtest: 'alphas sent to backtest',
+        fee: 'execution cost (bps)',
+        fee_bps: 'execution cost (bps)',
+        slippage_bps: 'slippage (bps)',
+        hold: 'bars to hold positions',
+        long_short_n: 'symbols per side',
+        winsor_p: 'winsorization tail prob',
+        ensemble_mode: 'build ensemble?',
+        ensemble_size: 'ensemble members',
+        ensemble_max_corr: 'max ensemble correlation',
+      };
+
+      let lastRunSnapshot = '';
+
+      function syncGraphPlaceholder(){
+        if (!graphPlaceholder) return;
+        const activeEl = graphViews[activeGraphKey];
+        let hasContent = false;
+        if (activeEl && activeEl.classList.contains('active')) {
+          if (activeEl.tagName === 'IMG') {
+            hasContent = Boolean(activeEl.getAttribute('src'));
+          } else {
+            hasContent = true;
+          }
+        }
+        graphPlaceholder.classList.toggle('hidden', hasContent);
+      }
+
+      function setSelectedAlpha(alphaId){
+        const normalized = alphaId != null ? `${alphaId}`.trim() : '';
+        selectedAlphaId = normalized ? normalized : null;
+        updateSelectedAlphaIndicators();
+      }
+
+      function updateSelectedAlphaIndicators(){
+        selectedAlphaLabels.forEach(label => {
+          if (selectedAlphaId) {
+            label.textContent = selectedAlphaId;
+            label.classList.remove('empty');
+          } else {
+            label.textContent = 'no alpha selected';
+            label.classList.add('empty');
+          }
+        });
+        highlightSelectedAlphaRow();
+      }
+
+      function highlightSelectedAlphaRow(){
+        if (!btBody) return;
+        btBody.querySelectorAll('tr[data-alpha]').forEach(tr => {
+          const alpha = tr.dataset.alpha || '';
+          const isMatch = Boolean(selectedAlphaId) && alpha === selectedAlphaId;
+          tr.classList.toggle('selected-alpha', isMatch);
+        });
+      }
+
+      updateSelectedAlphaIndicators();
+
+      function loadAutoRunNameCache(){
+        if (autoRunNameCache) return autoRunNameCache;
+        if (typeof localStorage === 'undefined'){
+          autoRunNameCache = {};
+          return autoRunNameCache;
+        }
+        try {
+          const raw = localStorage.getItem(RUN_NAME_STORAGE_KEY);
+          const parsed = raw ? JSON.parse(raw) : {};
+          if (parsed && typeof parsed === 'object') {
+            autoRunNameCache = parsed;
+          } else {
+            autoRunNameCache = {};
+          }
+        } catch(e){ autoRunNameCache = {}; }
+        return autoRunNameCache;
+      }
+
+      function persistAutoRunNameCache(){
+        if (typeof localStorage === 'undefined') return;
+        try { localStorage.setItem(RUN_NAME_STORAGE_KEY, JSON.stringify(loadAutoRunNameCache())); } catch(e){}
+      }
+
+      function pickRandom(arr){
+        if (!arr || !arr.length) return '';
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+
+      function makeSpanishName(){
+        const first = pickRandom(SPANISH_FIRST_NAME_POOL);
+        const last = pickRandom(SPANISH_LAST_NAMES);
+        return `${first} ${last}`;
+      }
+
+      function ensureAutoRunName(path){
+        if (!path) return null;
+        const cache = loadAutoRunNameCache();
+        if (cache[path]) return cache[path];
+        const used = new Set(Object.values(cache || {}));
+        let candidate = makeSpanishName();
+        let guard = 0;
+        while (used.has(candidate) && guard < 50){
+          candidate = makeSpanishName();
+          guard++;
+        }
+        cache[path] = candidate;
+        persistAutoRunNameCache();
+        return candidate;
+      }
+
+      function clearAutoRunName(path){
+        if (!path) return;
+        const cache = loadAutoRunNameCache();
+        if (cache && cache[path]){
+          delete cache[path];
+          persistAutoRunNameCache();
+        }
+      }
+
+      function activateGraphTab(key){
+        const fallback = graphViews[key] ? key : 'topk';
+        activeGraphKey = fallback;
+        graphTabs.forEach(btn => {
+          const tabKey = btn.dataset.graph;
+          const isActive = tabKey === fallback;
+          btn.classList.toggle('active', isActive);
+          btn.setAttribute('aria-pressed', String(isActive));
+        });
+        Object.entries(graphViews).forEach(([name, el]) => {
+          if (!el) return;
+          const isActive = name === fallback;
+          el.classList.toggle('active', isActive);
+        });
+        syncGraphPlaceholder();
+      }
+
+      function setupGraphTabs(){
+        if (!graphTabs.length) {
+          syncGraphPlaceholder();
+          return;
+        }
+        graphTabs.forEach(btn => {
+          const graphKey = btn.dataset.graph;
+          btn.setAttribute('aria-pressed', btn.classList.contains('active') ? 'true' : 'false');
+          btn.addEventListener('click', () => activateGraphTab(graphKey));
+          btn.addEventListener('keydown', ev => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              activateGraphTab(graphKey);
+            }
+          });
+        });
+        activateGraphTab(activeGraphKey || graphTabs[0].dataset.graph || 'topk');
+      }
+
+      function highlightSelectedRun(){
+        if (!runsEl) return;
+        runsEl.querySelectorAll('a[data-path]').forEach(link => {
+          const isSelected = !!selectedRunDir && link.dataset.path === selectedRunDir;
+          link.classList.toggle('selected-run', isSelected);
+        });
+      }
+
+      function formatFieldValue(key, value){
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'number'){
+          if (FRACTION_FIELDS.has(key)){
+            return `${fmt(value * 100, Math.abs(value * 100) >= 10 ? 1 : 2)}%`;
+          }
+          if (PERCENT_METRIC_FIELDS.has(key)){
+            if (Math.abs(value) <= 1.5){
+              return `${fmt(value * 100, Math.abs(value * 100) >= 10 ? 1 : 2)}%`;
+            }
+            return `${fmt(value, 2)}%`;
+          }
+          if (Math.abs(value) >= 1000){
+            return fmt(value, 0);
+          }
+          if (Math.abs(value) >= 100){
+            return fmt(value, 1);
+          }
+          return fmt(value, 3);
+        }
+        if (typeof value === 'boolean'){
+          return value ? 'yes' : 'no';
+        }
+        if (Array.isArray(value)){
+          return value.join('|');
+        }
+        return String(value);
+      }
+
+      function highlightFields(source, fields){
+        if (!source) return '';
+        const parts = [];
+        for (const key of fields){
+          if (!(key in source)) continue;
+          const raw = source[key];
+          if (raw === null || raw === undefined) continue;
+          const formatted = formatFieldValue(key, raw);
+          const desc = PARAM_DESCRIPTIONS[key];
+          parts.push(`${key}=${formatted}${desc ? ` (${desc})` : ''}`);
+        }
+        return parts.join(', ');
+      }
+
+      function formatOverrides(obj){
+        if (!obj || typeof obj !== 'object') return '';
+        const parts = [];
+        for (const [key, value] of Object.entries(obj)){
+          if (value === null || value === undefined) continue;
+          if (typeof value === 'object' && !Array.isArray(value)) continue;
+          const formatted = typeof value === 'number' ? formatFieldValue(key, value) : Array.isArray(value) ? value.join('|') : String(value);
+          parts.push(`${key}=${formatted}`);
+        }
+        return parts.join(', ');
+      }
+
+      function buildRunSnapshot(runDir, summary, evoCfg, btCfg, uiCtx, rows){
+        const lines = [];
+        const runLabel = (runDir || '').toString().split(/[/\\]/).filter(Boolean).pop() || (runDir || 'n/a');
+        lines.push(`Run: ${runLabel}`);
+        const payload = uiCtx && uiCtx.payload ? uiCtx.payload : uiCtx;
+        const dataset = payload && (payload.dataset || payload.config);
+        if (dataset){
+          lines.push(`Dataset: ${dataset}`);
+        } else if (btCfg && (btCfg.max_lookback_data_option || btCfg.data_dir)){
+          const ctxBits = [];
+          if (btCfg.max_lookback_data_option) ctxBits.push(`max_lookback=${btCfg.max_lookback_data_option}`);
+          if (btCfg.data_dir) ctxBits.push(`data_dir=${btCfg.data_dir}`);
+          if (ctxBits.length) lines.push(`Data context: ${ctxBits.join(', ')}`);
+        }
+        if (uiCtx && uiCtx.submitted_at){
+          lines.push(`Submitted: ${uiCtx.submitted_at}`);
+        }
+        if (summary && typeof summary.backtested_alphas === 'number'){
+          lines.push(`Backtested alphas: ${summary.backtested_alphas}`);
+        } else if (rows && rows.length){
+          lines.push(`Backtested alphas: ${rows.length}`);
+        }
+        const evoLine = highlightFields(evoCfg, ['generations', 'pop_size', 'tournament_k', 'elite_keep', 'hof_size', 'hof_per_gen', 'seed', 'fresh_rate', 'p_mut', 'p_cross', 'max_ops', 'parsimony_penalty']);
+        if (evoLine) lines.push(`Evolution: ${evoLine}`);
+        const penaltyLine = highlightFields(evoCfg, ['factor_penalty_ic', 'factor_penalty_turnover', 'turnover_penalty', 'drawdown_penalty', 'ic_target']);
+        if (penaltyLine) lines.push(`Penalties: ${penaltyLine}`);
+        const btLine = highlightFields(btCfg, ['top_to_backtest', 'fee', 'fee_bps', 'slippage_bps', 'hold', 'long_short_n', 'winsor_p', 'ensemble_mode', 'ensemble_size', 'ensemble_max_corr']);
+        if (btLine) lines.push(`Backtest: ${btLine}`);
+        if (payload && payload.overrides && Object.keys(payload.overrides).length){
+          const overridesText = formatOverrides(payload.overrides);
+          if (overridesText) lines.push(`Overrides: ${overridesText}`);
+        }
+        const best = (summary && summary.best_metrics) ? summary.best_metrics : (rows && rows.length ? rows[0] : null);
+        if (best){
+          const bestBits = [];
+          if (best.AlphaID || best.alpha_id) bestBits.push(best.AlphaID || best.alpha_id);
+          if (best.Sharpe !== undefined) bestBits.push(`Sharpe ${fmt(Number(best.Sharpe), 2)}`);
+          if (best.AnnReturn !== undefined) bestBits.push(`AnnRet ${formatFieldValue('AnnReturn', Number(best.AnnReturn))}`);
+          if (best.MaxDD !== undefined) bestBits.push(`MaxDD ${formatFieldValue('MaxDD', Number(best.MaxDD))}`);
+          if (best.Ops !== undefined) bestBits.push(`Ops ${best.Ops}`);
+          if (bestBits.length) lines.push(`Best alpha: ${bestBits.join(', ')}`);
+        }
+        if (rows && rows.length){
+          lines.push('Top alphas:');
+          rows.slice(0, 3).forEach((row, idx) => {
+            const parts = [];
+            const label = row.AlphaID || row.alpha_id || `#${idx + 1}`;
+            parts.push(label);
+            if (row.Sharpe !== undefined) parts.push(`Sharpe ${fmt(Number(row.Sharpe), 2)}`);
+            if (row.AnnReturn !== undefined) parts.push(`AnnRet ${formatFieldValue('AnnReturn', Number(row.AnnReturn))}`);
+            if (row.MaxDD !== undefined) parts.push(`MaxDD ${formatFieldValue('MaxDD', Number(row.MaxDD))}`);
+            if (row.Turnover !== undefined) parts.push(`Turnover ${formatFieldValue('Turnover', Number(row.Turnover))}`);
+            lines.push(`  - ${parts.join(', ')}`);
+          });
+        }
+        return lines.join('\n');
+      }
+
+      function setSummaryText(text){
+        const cleaned = (text || '').trim();
+        lastRunSnapshot = cleaned;
+        if (summaryBox) {
+          summaryBox.textContent = cleaned || '(summary unavailable)';
+        }
+        if (copySummaryBtn) {
+          copySummaryBtn.disabled = !cleaned;
+        }
+      }
+
+      async function populateRunSnapshot(runDir){
+        if (!summaryBox) return;
+        if (!runDir){
+          setSummaryText('');
+          return;
+        }
+        summaryBox.textContent = 'Loading…';
+        if (copySummaryBtn) copySummaryBtn.disabled = true;
+        const ts = Date.now();
+        const makeUrl = (file) => `/api/run-asset?run_dir=${encodeURIComponent(runDir)}&file=${encodeURIComponent(file)}&t=${ts}`;
+        try{
+          const [summary, evoCfg, btCfg, uiCtx] = await Promise.all([
+            fetchJSONFile(makeUrl('SUMMARY.json')).catch(()=>null),
+            fetchJSONFile(makeUrl('meta/evolution_config.json')).catch(()=>null),
+            fetchJSONFile(makeUrl('meta/backtest_config.json')).catch(()=>null),
+            fetchJSONFile(makeUrl('meta/ui_context.json')).catch(()=>null),
+          ]);
+          const snapshot = buildRunSnapshot(runDir, summary, evoCfg, btCfg, uiCtx, lastBacktestRows);
+          setSummaryText(snapshot);
+        }catch(e){
+          setSummaryText('');
+        }
+      }
+
+      async function refreshSelfPlayHistory(limit = 15){
+        if (!selfplayHistoryBox) return;
+        try{
+          const data = await fetchJSON(`/api/selfplay/history?limit=${limit}`);
+          const history = Array.isArray(data?.history) ? data.history : [];
+          if (!history.length){
+            selfplayHistoryBox.innerHTML = '<div class="muted-small">No self-play runs logged yet.</div>';
+            return;
+          }
+          const html = history.map(formatSelfPlayEntry).join('');
+          selfplayHistoryBox.innerHTML = `<div class="selfplay-list">${html}</div>`;
+        }catch(err){
+          selfplayHistoryBox.innerHTML = '<div class="muted-small">Failed to load self-play history.</div>';
+        }
+      }
+
+      function formatSelfPlayEntry(entry){
+        const iteration = entry && entry.iteration !== undefined ? entry.iteration : '?';
+        const dataset = entry?.dataset ? String(entry.dataset) : '';
+        const runLabel = entry?.run_dir ? String(entry.run_dir).split(/[/\\]/).filter(Boolean).pop() : '';
+        const metrics = entry?.metrics || {};
+        const parts = [];
+        if (metrics.Sharpe !== undefined) parts.push(`Sharpe ${fmt(Number(metrics.Sharpe), 2)}`);
+        if (metrics.AnnReturn !== undefined) parts.push(`AnnRet ${formatFieldValue('AnnReturn', Number(metrics.AnnReturn))}`);
+        if (metrics.MaxDD !== undefined) parts.push(`MaxDD ${formatFieldValue('MaxDD', Number(metrics.MaxDD))}`);
+        const overridesLine = entry?.overrides ? formatOverrides(entry.overrides) : '';
+        const headerBits = [`Iteration ${iteration}`];
+        if (dataset) headerBits.push(dataset);
+        if (entry?.timestamp) headerBits.push(entry.timestamp);
+        const header = headerBits.join(' · ');
+        const metaLineParts = [];
+        if (parts.length) metaLineParts.push(parts.join(', '));
+        if (runLabel) metaLineParts.push(runLabel);
+        const metaLine = metaLineParts.join(' · ');
+        const overridesHtml = overridesLine ? `<div class="meta">Overrides: ${overridesLine}</div>` : '';
+        return `<div class="selfplay-entry"><div class="title">${header}</div><div class="meta">${metaLine || 'Metrics pending'}</div>${overridesHtml}</div>`;
+      }
+
+      function toggleCard(header, forceState){
+        if (!header) return;
+        const card = header.closest('.collapsible-card');
+        if (!card) return;
+        const target = header.dataset.target;
+        const next = typeof forceState === 'boolean' ? forceState : !card.classList.contains('open');
+        card.classList.toggle('open', next);
+        header.setAttribute('aria-expanded', String(next));
+        if (next && target === 'graphsDeck') {
+          activateGraphTab(activeGraphKey || 'topk');
+        } else if (next && target === 'selfplayHistory') {
+          refreshSelfPlayHistory();
+        }
+      }
+
+      function setupCollapsibles(){
+        document.querySelectorAll('.collapsible-card .card-header').forEach(header => {
+          header.addEventListener('click', () => toggleCard(header));
+          header.addEventListener('keydown', ev => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              toggleCard(header);
+            }
+          });
+        });
+      }
+
+      function resizePrimaryCanvases(){
+        if (animCanvas) {
+          const r = animCanvas.getBoundingClientRect();
+          animCanvas.width = Math.max(460, r.width | 0);
+          animCanvas.height = Math.max(260, r.height | 0);
+        }
+        if (alphaCanvas) {
+          const r = alphaCanvas.getBoundingClientRect();
+          alphaCanvas.width = Math.max(420, r.width | 0);
+          alphaCanvas.height = Math.max(240, r.height | 0);
+        }
+        if (retCanvas) {
+          const r = retCanvas.getBoundingClientRect();
+          retCanvas.width = Math.max(380, r.width | 0);
+          retCanvas.height = Math.max(220, r.height | 0);
+        }
+        if (ambientCanvas) {
+          const r = ambientCanvas.getBoundingClientRect();
+          ambientCanvas.width = Math.max(300, r.width | 0);
+          ambientCanvas.height = Math.max(110, r.height | 0);
+        }
+        syncGraphPlaceholder();
+      }
+
+      function stripAnsi(text){
+        return text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '');
+      }
+
+      function sanitizeLog(log){
+        if (!log) return '';
+        const noAnsi = stripAnsi(log);
+        const merged = noAnsi.split(/\r+/).join('\n');
+        const rawLines = merged.split(/\n+/);
+        const filtered = [];
+        const spinnerRe = /^[-\\\|\/]{2,}\s*$/;
+        const barRe = /\[[=\-▮▯▰▱>█░▒▓▉▊▋▌▍▎▏\s]+\]\s*\d+%/;
+        const progressRe = /(?:generation|gen|evo)\s*\d+(?:\/\d+)?[^\n]*\d+%/i;
+        for (const line of rawLines) {
+          const clean = line.replace(/\x00/g, '').trimEnd();
+          if (!clean) {
+            if (filtered.length && filtered[filtered.length - 1] === '') continue;
+            filtered.push('');
+            continue;
+          }
+          if (spinnerRe.test(clean) || barRe.test(clean) || progressRe.test(clean)) continue;
+          filtered.push(clean);
+        }
+        const clipped = filtered.slice(-400);
+        return clipped.join('\n').trim();
+      }
+
+      function updateTerminalLog(raw){
+        const el = document.getElementById('terminalBox');
+        if (!el) return;
+        const cleaned = sanitizeLog(raw);
+        el.textContent = cleaned || '(quiet output)';
+      }
+
+      function renderKV(targetId, obj, opts = {}) {
+        const el = document.getElementById(targetId);
+        if (!el) return;
+        if (!obj || Object.keys(obj).length === 0) {
+          el.innerHTML = '<div class="muted-small">n/a</div>';
+          return;
+        }
+        const percentKeys = new Set(opts.percentKeys || []);
+        const rows = [];
+        for (const [key, value] of Object.entries(obj)) {
+          if (value === null || value === undefined) continue;
+          let formatted = value;
+          if (typeof value === 'number') {
+            if (opts.percent === true || percentKeys.has(key)) {
+              formatted = `${fmt((+value) * 100, opts.percentDecimals ?? 2)}%`;
+            } else {
+              formatted = fmt(value, opts.decimals ?? 3);
+            }
+          }
+          rows.push(`<div class="kv-row"><span>${key}</span><span>${formatted}</span></div>`);
+        }
+        el.innerHTML = rows.join('') || '<div class="muted-small">n/a</div>';}
+
+      function renderFactorSummary(data) { renderKV('factorSummary', data); }
+
+      function renderFeatureCoverage(data) { renderKV('featureCoverage', data, { percent: true, percentDecimals: 1 }); }
+
+      function renderHorizonSummary(data) {
+        const el = document.getElementById('horizonSummary');
+        if (!el) return;
+        if (!data || Object.keys(data).length === 0) {
+          el.innerHTML = '<div class="muted-small">n/a</div>';
+          return;
+        }
+        const columns = [
+          { key: 'mean_ic', label: 'IC', fmt: v => fmt(v, 3) },
+          { key: 'ic_std', label: 'IC std', fmt: v => fmt(v, 3) },
+          { key: 'mean_pnl', label: 'PNL', fmt: v => `${fmt((+v) * 100, 2)}%` },
+          { key: 'sharpe', label: 'Sharpe', fmt: v => fmt(v, 2) },
+          { key: 'max_drawdown', label: 'MaxDD', fmt: v => `${fmt((+v) * 100, 2)}%` },
+        ];
+        const head = ['H'].concat(columns.map(c => c.label)).map(label => `<th>${label}</th>`).join('');
+        const rows = Object.entries(data).map(([horizon, metrics]) => {
+          const cells = columns.map(col => {
+            const value = metrics && metrics[col.key];
+            if (value === undefined || value === null || Number.isNaN(value)) return '<td></td>';
+            return `<td>${col.fmt(value)}</td>`;
+          }).join('');
+          return `<tr><td>${horizon}</td>${cells}</tr>`;
+        }).join('');
+        el.innerHTML = `<table class="small-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;}
+
+      function renderRegimeSummary(data) {
+        const el = document.getElementById('regimeSummary');
+        if (!el) return;
+        if (!data || Object.keys(data).length === 0) {
+          el.innerHTML = '<div class="muted-small">n/a</div>';
+          return;
+        }
+        const { risk_state, ...rest } = data;
+        let html = '';
+        if (risk_state) {
+          const cls = risk_state === 'stress' ? 'risk-badge stress' : risk_state === 'volatile' ? 'risk-badge volatile' : 'risk-badge calm';
+          html += `<div class="kv-row"><span>Risk State</span><span><span class="${cls}">${risk_state}</span></span></div>`;
+        }
+        for (const [key, value] of Object.entries(rest)) {
+          if (value === null || value === undefined) continue;
+          if (typeof value === 'object' && !Array.isArray(value)) {
+            const entries = Object.entries(value).filter(([, v]) => typeof v === 'number' && isFinite(v));
+            if (entries.length) {
+              html += `<div class="muted-small" style="margin-top:6px;">${key}</div>`;
+              for (const [subKey, subVal] of entries) {
+                html += `<div class="kv-row"><span>${subKey}</span><span>${fmt(subVal, 3)}</span></div>`;
+              }
+            }
+            continue;
+          }
+          if (typeof value !== 'number' || !isFinite(value)) continue;
+          const lower = key.toLowerCase();
+          const formatted = lower.includes('drawdown') ? `${fmt((+value) * 100, 2)}%` : fmt(value, 3);
+          html += `<div class="kv-row"><span>${key}</span><span>${formatted}</span></div>`;
+        }
+        el.innerHTML = html || '<div class="muted-small">n/a</div>'; }
+
+      function renderStressSummary(stress, robust) {
+        const el = document.getElementById('stressSummary');
+        if (!el) return;
+        if ((!stress || Object.keys(stress).length === 0) && (!robust || Object.keys(robust).length === 0)) {
+          el.innerHTML = '<div class="muted-small">n/a</div>';
+          return;
+        }
+        let html = '';
+        if (stress && Object.keys(stress).length) {
+          for (const [key, value] of Object.entries(stress)) {
+            if (value === null || value === undefined) continue;
+            let formatted = value;
+            if (typeof value === 'number') {
+              const lower = key.toLowerCase();
+              if (lower.includes('drawdown') || lower.includes('return') || lower.includes('mean') || lower.includes('cost')) {
+                formatted = `${fmt((+value) * 100, 2)}%`;
+              } else {
+                formatted = fmt(value, 3);
+              }
+            }
+            html += `<div class="kv-row"><span>${key}</span><span>${formatted}</span></div>`;
+          }
+        }
+        if (robust && Object.keys(robust).length) {
+          html += '<div class="muted-small" style="margin-top:6px;">Robustness</div>';
+          for (const [key, value] of Object.entries(robust)) {
+            if (value === null || value === undefined || typeof value !== 'number') continue;
+            html += `<div class="kv-row"><span>${key}</span><span>${fmt(value, 3)}</span></div>`;
+          }
+        }
+        el.innerHTML = html || '<div class="muted-small">n/a</div>'; }
+
+      function renderQDSummary(data) {
+        const el = document.getElementById('qdSummary');
+        if (!el) return;
+        if (!data || Object.keys(data).length === 0) {
+          el.innerHTML = '<div class="muted-small">n/a</div>';
+          return;
+        }
+        let html = '';
+        if (data.cells !== undefined) { html += `<div class="kv-row"><span>Cells</span><span>${data.cells}</span></div>`; }
+        if (Array.isArray(data.turnover_bins)) { html += `<div class="kv-row"><span>Turnover bins</span><span>${data.turnover_bins.join(', ')}</span></div>`; }
+        if (Array.isArray(data.complexity_bins)) { html += `<div class="kv-row"><span>Complexity bins</span><span>${data.complexity_bins.join(', ')}</span></div>`; }
+        if (Array.isArray(data.elites)) {
+          const elites = data.elites.slice(0, 3);
+          if (elites.length) {
+            html += '<div class="muted-small" style="margin-top:6px;">Top elites</div>';
+            for (const elite of elites) {
+              html += `<div class="kv-row"><span>${elite.fingerprint || elite.fp || ''}</span><span>${fmt(elite.fitness ?? 0, 3)}</span></div>`;
+            }
+          }
+        }
+        el.innerHTML = html || '<div class="muted-small">n/a</div>'; }
+
+      function renderDiagnosticsEntry(entry) {
+        currentDiag = entry || null;
+        const meta = document.getElementById('diagMeta');
+        if (meta) meta.textContent = entry && entry.generation !== undefined ? `Gen ${entry.generation}` : 'n/a';
+        if (!entry) {
+          renderFactorSummary(null);
+          renderHorizonSummary(null);
+          renderFeatureCoverage(null);
+          renderRegimeSummary(null);
+          renderStressSummary(null, null);
+          renderQDSummary(null);
+          return;
+        }
+        renderFactorSummary(entry.factor_exposure_summary);
+        renderHorizonSummary(entry.horizon_summary);
+        renderFeatureCoverage(entry.feature_coverage);
+        renderRegimeSummary(entry.regime_summary);
+        renderStressSummary(entry.stress_summary, entry.robustness_summary);
+        renderQDSummary(entry.qd_summary); }
+
+      function clearDiagnostics() {
+        currentDiag = null;
+        const meta = document.getElementById('diagMeta');
+        if (meta) meta.textContent = 'n/a';
+        ['factorSummary', 'horizonSummary', 'featureCoverage', 'regimeSummary', 'stressSummary', 'qdSummary'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="muted-small">n/a</div>';
+        });
+      }
+
+      function line(ctx, pts, color='#5ab4f0', thick=2){
+        if (!pts || pts.length<2) return;
+        const w = ctx.canvas.width, h = ctx.canvas.height;
+        const xs = pts.map(p=>p[0]);
+        const ys = pts.map(p=>p[1]);
+        const minx = Math.min(...xs), maxx = Math.max(...xs);
+        const miny = Math.min(...ys), maxy = Math.max(...ys);
+        const sx = v => (w-20) * (v-minx) / (maxx-minx || 1) + 10;
+        const sy = v => h - ((h-20) * (v-miny) / (maxy-miny || 1) + 10);
+        ctx.save();
+        ctx.clearRect(0,0,w,h);
+        ctx.fillStyle = '#0b1014'; ctx.fillRect(0,0,w,h);
+        ctx.strokeStyle = '#1f242a';
+        for(let i=0;i<6;i++){ const y = i*h/5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+        ctx.beginPath();
+        ctx.lineWidth = thick; ctx.strokeStyle = color;
+        pts.forEach((p,i)=>{ const x=sx(p[0]); const y=sy(p[1]); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function quantile(arr, q){
+        const a = arr.slice().filter(v=>isFinite(v)).sort((x,y)=>x-y);
+        if(a.length===0) return NaN;
+        const p = (a.length-1)*q; const b=Math.floor(p), t=p-b; return b+1<a.length? a[b]*(1-t)+a[b+1]*t : a[b];
+      }
+
+      function drawReturns(ctx, pts, color='#ffcc66'){
+        if(!pts || pts.length<2) return;
+        const w = ctx.canvas.width, h = ctx.canvas.height;
+        const ys = pts.map(p=>p[1]).filter(v=>isFinite(v));
+        if(ys.length===0) return;
+        const q25 = quantile(ys, 0.25), q50 = quantile(ys, 0.5), q75 = quantile(ys, 0.75);
+        const miny = Math.min(...ys, 0), maxy = Math.max(...ys, 0);
+        const xs = pts.map(p=>p[0]); const minx = Math.min(...xs), maxx = Math.max(...xs);
+        const sx = v => (w-36) * (v-minx) / (maxx-minx || 1) + 30; // leave margin for labels
+        const sy = v => h - ((h-20) * (v-miny) / (maxy-miny || 1) + 10);
+        const grid = (y, label, col='#1f242a')=>{ const Y=sy(y); const c=ctx; c.beginPath(); c.strokeStyle=col; c.moveTo(0,Y); c.lineTo(w,Y); c.stroke(); c.fillStyle='#a7adb3'; c.font='12px monospace'; c.fillText(label, 4, Y-2); };
+        ctx.save(); ctx.clearRect(0,0,w,h); ctx.fillStyle='#0b1014'; ctx.fillRect(0,0,w,h);
+        // draw quartiles and zero line
+        grid(q25, `Q1 ${q25.toFixed(4)}`);
+        grid(0, `0`, '#2a3e50');
+        grid(q50, `Q2 ${q50.toFixed(4)}`);
+        grid(q75, `Q3 ${q75.toFixed(4)}`);
+        // series
+        ctx.beginPath(); ctx.lineWidth=1; ctx.strokeStyle=color;
+        pts.forEach((p,i)=>{ const x=sx(p[0]); const y=sy(p[1]); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+        ctx.stroke(); ctx.restore();
+      }
+
+      function multiLine(ctx, series){
+        const w = ctx.canvas.width, h = ctx.canvas.height;
+        ctx.save(); ctx.clearRect(0,0,w,h); ctx.fillStyle='#0b1014'; ctx.fillRect(0,0,w,h);
+        ctx.strokeStyle = '#1f242a'; for(let i=0;i<6;i++){ const y=i*h/5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+        // compute global mins/maxs
+        let minx=Infinity,maxx=-Infinity,miny=Infinity,maxy=-Infinity;
+        for(const s of series){ if(!s || !s.pts || s.pts.length<2) continue; const xs=s.pts.map(p=>p[0]); const ys=s.pts.map(p=>p[1]);
+          minx=Math.min(minx,...xs); maxx=Math.max(maxx,...xs); miny=Math.min(miny,...ys); maxy=Math.max(maxy,...ys); }
+        const sx=v=>(w-20)*(v-minx)/(maxx-minx||1)+10; const sy=v=>h-((h-20)*(v-miny)/(maxy-miny||1)+10);
+        for(const s of series){ if(!s || !s.pts || s.pts.length<2) continue; ctx.beginPath(); ctx.lineWidth = s.w||2; ctx.strokeStyle=s.c||'#5ab4f0';
+          s.pts.forEach((p,i)=>{ const x=sx(p[0]); const y=sy(p[1]); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke(); }
+        ctx.restore();
+      }
+
+      async function fetchJSON(url){
+        const r = await fetch(url);
+        if(!r.ok) throw new Error(await r.text());
+        return r.json();
+      }
+
+      async function fetchJSONFile(url){
+        const r = await fetch(url);
+        if(!r.ok) throw new Error(await r.text());
+        const txt = await r.text();
+        try { return JSON.parse(txt); } catch(e){ throw new Error('Invalid JSON'); }
+      }
+
+      async function refreshRuns(){
+        const items = await fetchJSON('/api/runs?limit=50');
+        loadAutoRunNameCache();
+        runsEl.innerHTML = items.map((item,idx)=>{
+          const n = idx + 1;
+          const path = item.path || '';
+          const userLabel = item.label && item.label.trim() ? item.label.trim() : '';
+          let displayLabel = '';
+          let labelClass = 'pill';
+          if (userLabel){
+            clearAutoRunName(path);
+            displayLabel = userLabel;
+          } else {
+            displayLabel = ensureAutoRunName(path) || '';
+            if (displayLabel) labelClass += ' auto-pill';
+          }
+          const pill = item.sharpe_best != null ? `<span class=pill>Sharpe ${fmt(item.sharpe_best,2)}</span>` : '';
+          const label = displayLabel ? `<span class=\"${labelClass}\">${displayLabel}</span>` : '';
+          const title = (displayLabel ? displayLabel + ' — ' : '') + item.name;
+          const parts = [`#${n}`, label, pill].filter(Boolean).join(' ');
+          const isSelected = !!selectedRunDir && selectedRunDir === item.path;
+          const cls = isSelected ? 'selected-run' : '';
+          return `<a href=\"#\" data-path=\"${item.path}\" title=\"${title}\" class=\"${cls}\">${parts}</a>`;
+        }).join('');
+        runsEl.querySelectorAll('a').forEach(a=>{
+          a.onclick=(e)=>{
+            e.preventDefault();
+            if (e.metaKey || e.ctrlKey) return;
+            const path = a.dataset.path;
+            if (!path) return;
+            userSelectedRun = true;
+            loadRun(path, { userInitiated: true }).catch(()=>{});
+          };
+          a.oncontextmenu=(e)=>{
+            e.preventDefault();
+            const p=a.dataset.path;
+            const name=prompt('Name for this run:');
+            if(!name) return;
+            fetch('/api/run-label',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path:p, label:name})}).then(()=> refreshRuns());
+          };
+        });
+        highlightSelectedRun();
+        return items;
+      }
+
+      async function loadRun(runDir, opts = {}){
+        const { userInitiated = false } = opts;
+        if (!runDir) return;
+        selectedRunDir = runDir;
+        currentRunDir = runDir;
+        if (userInitiated) {
+          userSelectedRun = true;
+        }
+        highlightSelectedRun();
+        setSelectedAlpha(null);
+        if (programBox) {
+          programBox.textContent = '(select an alpha to view program)';
+        }
+        const rows = await fetchJSON(`/api/backtest-summary?run_dir=${encodeURIComponent(runDir)}`);
+        renderBacktest(rows);
+        await populateRunSnapshot(runDir);
+        updateTopk(runDir);
+        try {
+          const diag = await fetchJSONFile(`/api/run-asset?run_dir=${encodeURIComponent(runDir)}&file=diagnostics.json&t=${Date.now()}`);
+          if (Array.isArray(diag) && diag.length){
+            renderDiagnosticsEntry(diag[diag.length - 1]);
+          } else {
+            clearDiagnostics();
+          }
+        } catch(e){
+          clearDiagnostics();
+        }
+        return rows;
+      }
+
+      // evolution diagnostics view removed in favor of a retro animation during runs
+
+      function renderBacktest(rows){
+        lastBacktestRows = rows || [];
+        btBody.innerHTML = lastBacktestRows.map(r=>{
+          const file = (r.TS || r.TimeseriesFile || '').toString().split('/').pop();
+          const rawAid = r.AlphaID ?? '';
+          const safeAid = rawAid.toString().trim();
+          const isSelectedAlpha = Boolean(selectedAlphaId) && selectedAlphaId === safeAid;
+          const clickAttrs = file ? `data-file="${file}"` : '';
+          return `<tr class="alpha-row${isSelectedAlpha ? ' selected-alpha' : ''}" data-alpha="${safeAid}">
+            <td><a href="#" class="alphaLink" ${clickAttrs} data-alpha="${safeAid}">${safeAid}</a></td>
+            <td>${fmt(r.Sharpe,2)}</td>
+            <td>${fmt((r.AnnReturn||0)*100,2)}%</td>
+            <td>${fmt((r.MaxDD||0)*100,2)}%</td>
+            <td>${fmt(r.Turnover,3)}</td>
+            <td>${r.Ops ?? ''}</td>
+            <td>${fmt(r.OriginalMetric ?? r.original_metric ?? r.IC ?? 0, 4)}</td>
+          </tr>`;
+        }).join('');
+        btBody.querySelectorAll('.alphaLink').forEach(a=>{
+          a.onclick=(e)=>{
+            e.preventDefault();
+            const f = a.dataset.file;
+            const id = a.dataset.alpha || '';
+            setSelectedAlpha(id);
+            loadAlphaTS(f,id);
+            showProgramByAlpha(id);
+          };
+        });
+        highlightSelectedAlphaRow();
+      }
+
+      async function loadAlphaTS(file, alphaId){
+        try{
+          let runDir = selectedRunDir || currentRunDir;
+          if(!runDir){
+            const last = await fetchJSON('/api/last-run');
+            if(last && last.run_dir){
+              runDir = last.run_dir;
+            }
+          }
+          if(!runDir) return;
+          const qp = file ? `file=${encodeURIComponent(file)}` : `alpha_id=${encodeURIComponent(alphaId)}`;
+          const data = await fetchJSON(`/api/alpha-timeseries?run_dir=${encodeURIComponent(runDir)}&${qp}`);
+          const n = data.date.length;
+          const eqPts = Array.from({length:n}, (_,i)=>[i, Number(data.equity[i] ?? NaN)]).filter(p=>isFinite(p[1]));
+          const retPts = Array.from({length:n}, (_,i)=>[i, Number(data.ret_net[i] ?? NaN)]).filter(p=>isFinite(p[1]));
+          line(alphaCanvas.getContext('2d'), eqPts, '#5ab4f0', 2);
+          line(retCanvas.getContext('2d'), retPts, '#ffcc66', 1);
+        }catch(e){ console.error(e); }
+      }
+
+      async function startRun(){
+        try{
+          const dataset = document.getElementById('dataset').value;
+          const saved = loadSavedOverrides();
+          startBtn.disabled = true; statusEl.textContent = 'starting…';
+          const r = await fetch('/api/pipeline/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({dataset, overrides: saved}) });
+          if(!r.ok){ startBtn.disabled=false; statusEl.textContent='error'; throw new Error(await r.text()); }
+          const { job_id } = await r.json(); currentJob = job_id; try{ localStorage.setItem('dashboard_current_job', currentJob||''); }catch(e){} statusEl.textContent = 'running…'; startRunAnim();
+          const es = new EventSource(`/api/events/${job_id}`);
+          es.onmessage = (ev)=>{
+            try{ const msg = JSON.parse(ev.data); handleEvent(msg); } catch(e){ /* ignore raw */ }
+          };
+          es.addEventListener('ping', ()=>{});
+        }catch(e){ console.error(e); alert('Failed to start run'); startBtn.disabled=false; statusEl.textContent='idle'; }
+        finally {
+          if(!currentJob && ambientController){ ambientController.setMode('idle'); }
+        }
+      }
+
+      function handleEvent(m){
+        if(m.type === 'status' && m.msg === 'started'){
+          statusEl.textContent = 'running…';
+          jobIsRunning = true;
+          activeRunDir = null;
+          if(ambientController){ ambientController.setMode('active'); }
+          clearDiagnostics();
+          updateTopk();
+          try{
+            fetch('/api/last-run').then(r=>r.json()).then(j=>{
+              if(j && j.run_dir){
+                activeRunDir = j.run_dir;
+                if(!selectedRunDir){
+                  selectedRunDir = j.run_dir;
+                  currentRunDir = j.run_dir;
+                  highlightSelectedRun();
+                }
+                if(!userSelectedRun){
+                  updateTopk();
+                }
+              }
+            });
+          }catch(e){}
+          if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
+          topkTimer = setInterval(()=>{ updateTopk(); }, 10000);
+        } else if(m.type === 'log'){
+          /* live log suppressed */
+        } else if(m.type === 'diag'){
+          if(m.data){ renderDiagnosticsEntry(m.data); }
+        } else if(m.type === 'score'){
+          /* score update suppressed */
+        } else if(m.type === 'final'){
+          statusEl.textContent = 'finished';
+          startBtn.disabled=false;
+          jobIsRunning = false;
+          activeRunDir = null;
+          userSelectedRun = false;
+          currentRunDir = m.run_dir;
+          selectedRunDir = m.run_dir;
+          try{ localStorage.setItem('dashboard_current_run', currentRunDir||''); localStorage.removeItem('dashboard_current_job'); }catch(e){}
+          highlightSelectedRun();
+          if(ambientController){ ambientController.setMode('idle'); }
+          stopRunAnim();
+          fetch(`/api/job-log/${currentJob}`).then(r=>r.json()).then(j=>{ updateTerminalLog(j.log || ''); }).catch(()=>{});
+          updateTopk(currentRunDir);
+          refreshData();
+          refreshSelfPlayHistory();
+          if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
+        } else if(m.type === 'status' && m.msg === 'exit'){
+          statusEl.textContent = `exit ${m.code}`;
+          startBtn.disabled=false;
+          jobIsRunning = false;
+          activeRunDir = null;
+          try{ localStorage.removeItem('dashboard_current_job'); }catch(e){}
+          if(ambientController){ ambientController.setMode('idle'); }
+          stopRunAnim(`exit ${m.code}`);
+          fetch(`/api/job-log/${currentJob}`).then(r=>r.json()).then(j=>{ updateTerminalLog(j.log || ''); }).catch(()=>{});
+          updateTopk();
+          refreshData();
+          refreshSelfPlayHistory();
+          if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
+        }
+      }
+
+      async function refreshData(){
+        const runs = await refreshRuns();
+        if(Array.isArray(runs) && runs.length){
+          const available = new Set(runs.map(r => r.path));
+          if(selectedRunDir && !available.has(selectedRunDir)){
+            selectedRunDir = runs[0].path;
+            currentRunDir = selectedRunDir;
+            userSelectedRun = false;
+            highlightSelectedRun();
+          }
+        }
+        if(jobIsRunning){
+          if(selectedRunDir && selectedRunDir !== activeRunDir){
+            await loadRun(selectedRunDir).catch(()=>{});
+          }
+          return;
+        }
+        if(selectedRunDir){
+          await loadRun(selectedRunDir).catch(()=>{});
+          return;
+        }
+        try{
+          const last = await fetchJSON('/api/last-run');
+          if(last.run_dir){
+            await loadRun(last.run_dir).catch(()=>{});
+          }
+        }catch(e){
+          /* ignore */
+        }
+      }
+
+      function updateTopk(runDir){
+        try{
+          const img = graphViews.topk;
+          if(!img) return;
+          const target = runDir || selectedRunDir || activeRunDir;
+          if(!target){
+            img.removeAttribute('src');
+            img.classList.remove('active');
+            syncGraphPlaceholder();
+            return;
+          }
+          activateGraphTab('topk');
+          const src = `/api/run-asset?run_dir=${encodeURIComponent(target)}&file=${encodeURIComponent('plots/topk_fitness_vs_ops.png')}&t=${Date.now()}`;
+          img.classList.remove('active');
+          img.onload = ()=>{ img.classList.add('active'); syncGraphPlaceholder(); };
+          img.onerror = ()=>{ img.removeAttribute('src'); img.classList.remove('active'); syncGraphPlaceholder(); };
+          img.src = src;
+          syncGraphPlaceholder();
+        }catch(e){}
+      }
+
+      async function rehydrateJob(){
+        try{
+          const savedRun = localStorage.getItem('dashboard_current_run');
+          if(savedRun){
+            currentRunDir = savedRun;
+            selectedRunDir = savedRun;
+            highlightSelectedRun();
+          }
+          const savedJob = localStorage.getItem('dashboard_current_job');
+          if(!savedJob) return;
+          const j = await fetchJSON(`/api/job-status/${encodeURIComponent(savedJob)}`);
+          if(j && j.exists && j.running){
+            currentJob = savedJob;
+            jobIsRunning = true;
+            startBtn.disabled = true;
+            statusEl.textContent = 'running…';
+            startRunAnim();
+            if(ambientController){ ambientController.setMode('active'); }
+            const es = new EventSource(`/api/events/${currentJob}`);
+            es.onmessage = (ev)=>{ try{ const msg = JSON.parse(ev.data); handleEvent(msg); } catch(e){} };
+            es.addEventListener('ping', ()=>{});
+            if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
+            topkTimer = setInterval(()=>{ updateTopk(); }, 10000);
+            updateTopk();
+          } else {
+            localStorage.removeItem('dashboard_current_job');
+          }
+        }catch(e){ /* ignore */ }
+      }
+
+      function showProgramByAlpha(alphaId){
+        const row = (lastBacktestRows||[]).find(r => (r.AlphaID||'') === alphaId);
+        const program = row && (row.Program || row.PROGRAM || '');
+        programBox.textContent = program || '(no program found)';
+      }
+
+      // Runner animations: idle vs running
+      let animState = { running:false, raf:null, mode:'idle', cols:[], particles:[] };
+      function _resizeAnimCanvas(){ if(!animCanvas) return; const r = animCanvas.getBoundingClientRect(); animCanvas.width = Math.max(400, r.width|0); animCanvas.height = Math.max(200, r.height|0); }
+      function startIdleAnim(){
+        try{
+          if(!animCanvas) return;
+          _resizeAnimCanvas();
+          const ctx = animCanvas.getContext('2d');
+          const w = animCanvas.width, h = animCanvas.height;
+          animState.mode = 'idle'; animState.running = true; if(animState.raf) cancelAnimationFrame(animState.raf);
+          // soft floating dots
+          const N = Math.max(40, Math.floor(w/18));
+          animState.particles = new Array(N).fill(0).map(()=>({x:Math.random()*w, y:Math.random()*h, vy:0.2+Math.random()*0.6, r:1+Math.random()*2}));
+          const step = ()=>{
+            if(!animState.running || animState.mode!=='idle') return;
+            ctx.fillStyle = '#0b1014'; ctx.fillRect(0,0,w,h);
+            ctx.strokeStyle = '#0f1317'; ctx.lineWidth = 1; for(let i=0;i<6;i++){ const y=i*h/5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+            ctx.fillStyle = '#2b3440';
+            for(const p of animState.particles){ ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill(); p.y += p.vy; if(p.y>h){ p.y = -5; p.x = Math.random()*w; } }
+            // subtle label
+            ctx.fillStyle = '#3b4a58'; ctx.font = 'bold 14px monospace'; ctx.fillText('IDLE', 12, 20);
+            animState.raf = requestAnimationFrame(step);
+          };
+          step();
+        }catch(e){}
+      }
+      function startRunAnim(){
+        try{
+          if(!animCanvas) return;
+          _resizeAnimCanvas();
+          const ctx = animCanvas.getContext('2d');
+          const w = animCanvas.width, h = animCanvas.height;
+          animState.mode = 'running'; animState.running = true; if(animState.raf) cancelAnimationFrame(animState.raf);
+          if(ambientController){ ambientController.setMode('active'); }
+          const cols = Math.floor(w / 12);
+          animState.cols = new Array(cols).fill(0).map(()=> Math.random()*-100|0);
+          ctx.font = '12px monospace';
+          const charset = '0123456789ABCDEF';
+          const step = ()=>{
+            if(!animState.running || animState.mode!=='running') return;
+            ctx.fillStyle = 'rgba(11,16,20,0.35)'; ctx.fillRect(0,0,w,h);
+            for(let i=0;i<animState.cols.length;i++){
+              const x = i*12; const y = animState.cols[i]*14; const ch = charset[(Math.random()*charset.length)|0];
+              ctx.fillStyle = '#5ab4f0'; ctx.fillText(ch, x, y); animState.cols[i]++; if(y>h && Math.random()<0.02){ animState.cols[i] = 0; }
+            }
+            animState.raf = requestAnimationFrame(step);
+          };
+          step();
+        }catch(e){}
+      }
+      function stopRunAnim(msg='✔ DONE'){
+        try{
+          animState.running = false; if(animState.raf) cancelAnimationFrame(animState.raf);
+          if(!animCanvas) return; const ctx = animCanvas.getContext('2d'); const w = animCanvas.width, h = animCanvas.height;
+          ctx.fillStyle = 'rgba(11,16,20,0.6)'; ctx.fillRect(0,0,w,h);
+          ctx.fillStyle = '#5ab4f0'; ctx.font = 'bold 28px monospace'; const tw = ctx.measureText(msg).width; ctx.fillText(msg, (w - tw)/2, h/2);
+          if(ambientController){ ambientController.setMode('idle'); }
+          // After a short pause, resume idle animation
+          setTimeout(()=>{ startIdleAnim(); }, 1200);
+        }catch(e){}
+      }
+
+      // Sidebar ambient animation: layered sine waves (distinct from runner)
+      function startAmbient(){
+        try{
+          if(!ambientCanvas) return;
+          const ctx = ambientCanvas.getContext('2d');
+          const state = { raf:null, w:0, h:0, t:0, mode:'idle', palette:[], crest:'', speed:1, amp:1, label:'WAVES', labelColor:'#3b4a58' };
+          const palettes = {
+            idle: ['rgba(26,39,51,0.55)', 'rgba(34,56,74,0.50)', 'rgba(43,76,98,0.45)', 'rgba(53,97,123,0.40)'],
+            active: ['rgba(16,66,36,0.75)', 'rgba(24,99,50,0.70)', 'rgba(36,136,68,0.65)', 'rgba(48,175,88,0.60)'],
+          };
+          const crestColors = { idle: 'rgba(90,180,240,0.25)', active: 'rgba(64,255,164,0.45)' };
+          const init = ()=>{
+            const r = ambientCanvas.getBoundingClientRect();
+            ambientCanvas.width = Math.max(300, r.width|0);
+            ambientCanvas.height = Math.max(110, r.height|0);
+            state.w = ambientCanvas.width; state.h = ambientCanvas.height;
+          };
+          const applyMode = (mode)=>{
+            const next = mode === 'active' ? 'active' : 'idle';
+            state.mode = next;
+            state.palette = palettes[next] || palettes.idle;
+            state.crest = crestColors[next] || crestColors.idle;
+            state.speed = next === 'active' ? 3.4 : 1.0;
+            state.amp = next === 'active' ? 1.9 : 1.0;
+            state.label = next === 'active' ? 'RUN' : 'WAVES';
+            state.labelColor = next === 'active' ? '#35ff9b' : '#3b4a58';
+          };
+          const wave = (yBase, amp, freq, speed, color, alpha)=>{
+            const w = state.w;
+            ctx.beginPath();
+            for(let x=0; x<=w; x+=2){
+              const y = yBase + Math.sin(x*freq + state.t*speed) * amp;
+              if(x===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.lineTo(w, state.h); ctx.lineTo(0, state.h); ctx.closePath();
+            ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha=1;
+            ctx.beginPath();
+            for(let x=0; x<=w; x+=3){
+              const y = yBase + Math.sin(x*freq + state.t*speed) * amp;
+              if(x===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = state.crest; ctx.lineWidth = 1; ctx.stroke();
+          };
+          const step = ()=>{
+            const r = ambientCanvas.getBoundingClientRect();
+            const targetW = Math.max(300, r.width|0), targetH = Math.max(110, r.height|0);
+            if(targetW !== state.w || targetH !== state.h){ init(); }
+            const w = state.w, h = state.h;
+            ctx.fillStyle = '#0b1014'; ctx.fillRect(0,0,w,h);
+            state.t += 0.03 * state.speed;
+            const baseOffsets = [0.58, 0.62, 0.66, 0.70];
+            const ampBase = [8, 10, 12, 14];
+            const freqBase = [0.020, 0.018, 0.016, 0.014];
+            const speedBase = [0.8, 1.0, 1.2, 1.4];
+            state.palette.forEach((color, idx)=>{
+              const amp = ampBase[idx] * state.amp;
+              const yBase = h * baseOffsets[idx];
+              wave(yBase, amp, freqBase[idx], speedBase[idx] * state.speed, color, 0.55 - idx*0.08);
+            });
+            ctx.fillStyle = state.labelColor;
+            ctx.font = 'bold 12px monospace';
+            ctx.fillText(state.label, 8, h - 10);
+            state.raf = requestAnimationFrame(step);
+          };
+          init();
+          applyMode('idle');
+          if(state.raf) cancelAnimationFrame(state.raf);
+          state.raf = requestAnimationFrame(step);
+          ambientController = {
+            setMode(mode){ applyMode(mode); }
+          };
+        }catch(e){}
+      }
+
+      // Helpers for saved overrides
+      function loadSavedOverrides(){ try { return JSON.parse(localStorage.getItem('pipeline_overrides')||'{}'); } catch(e){ return {}; } }
+      function updateSettingsCount(){ const s = loadSavedOverrides(); const n = Object.keys(s||{}).length; settingsCount.textContent = n>0 ? `Saved settings: ${n}` : 'Saved settings: none'; }
+
+      // Init
+      startBtn.addEventListener('click', startRun);
+      openSettingsBtn.addEventListener('click', ()=>{ try{ localStorage.setItem('dashboard_current_run', currentRunDir||''); localStorage.setItem('dashboard_current_job', currentJob||''); }catch(e){} window.location.href = '/ui/settings.html'; });
+      // no terminal controls in this variant
+      copyProgramBtn.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(programBox.textContent); } catch(e){} });
+      if (copySummaryBtn) {
+        copySummaryBtn.disabled = true;
+        copySummaryBtn.addEventListener('click', async ()=>{ if(!lastRunSnapshot) return; try{ await navigator.clipboard.writeText(lastRunSnapshot); } catch(e){} });
+      }
+      setupCollapsibles();
+      setupGraphTabs();
+      resizePrimaryCanvases();
+      updateSettingsCount();
+      clearDiagnostics();
+      startIdleAnim();
+      startAmbient();
+      window.addEventListener('resize', ()=>{ resizePrimaryCanvases(); });
+      rehydrateJob();
+      refreshData();
+      refreshSelfPlayHistory();
+    </script>
+  </body>
+</html>
