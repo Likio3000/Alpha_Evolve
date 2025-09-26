@@ -12,20 +12,28 @@
       h1 { font-size: 18px; margin: 12px 0; }
       h2 { font-size: 16px; margin: 14px 0 8px; }
       h3 { font-size: 14px; margin: 10px 0 6px; }
-      .topbar { position: sticky; top: 0; z-index: 50; background: linear-gradient(180deg, rgba(10,15,20,0.95), rgba(10,15,20,0.92)); border-bottom: 1px solid #1f242a; padding: 16px 12px; display:flex; justify-content:center; }
-      .top-actions { display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; text-align:center; max-width:720px; }
+      @keyframes topbarSweep { 0% { transform: translateX(-10%); opacity:0; } 30% { opacity:0.55; } 100% { transform: translateX(110%); opacity:0; } }
+      @keyframes glowPulse { 0% { box-shadow: 0 0 0 0 rgba(90,180,240,0.45), 0 18px 32px rgba(7,12,18,0.35); } 50% { box-shadow: 0 0 0 6px rgba(90,180,240,0.08), 0 20px 36px rgba(7,12,18,0.5); } 100% { box-shadow: 0 0 0 0 rgba(90,180,240,0.45), 0 18px 32px rgba(7,12,18,0.35); } }
+      @keyframes statusPulse { 0% { box-shadow: 0 0 0 0 rgba(53, 151, 255, 0.32); } 60% { box-shadow: 0 0 0 10px rgba(53, 151, 255, 0.0); } 100% { box-shadow: 0 0 0 0 rgba(53, 151, 255, 0.0); } }
+      .topbar { position: static; z-index: 50; background: radial-gradient(circle at top, rgba(22,34,46,0.88), rgba(10,15,20,0.96)); border-bottom: 1px solid rgba(38,58,76,0.8); padding: 24px 32px; display:flex; justify-content:center; box-shadow: 0 22px 36px rgba(0,0,0,0.45); backdrop-filter: blur(6px); }
+      .top-actions { position:relative; width:100%; max-width:960px; display:grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 220px) minmax(220px, 1fr); gap:18px; align-items:stretch; overflow:hidden; }
+      .top-actions::before { content:""; position:absolute; left:0; right:0; top:-12px; height:2px; background: linear-gradient(90deg, rgba(90,180,240,0), rgba(90,180,240,0.65), rgba(90,180,240,0)); filter: blur(0.3px); animation: topbarSweep 4.5s linear infinite; pointer-events:none; }
       .wrap { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); grid-gap: 16px; padding: 12px; align-items:start; }
       .panel { background: #12161a; border: 1px solid #1f242a; border-radius: 8px; padding: 12px; }
       .panel-controls { position: relative; z-index: 1; }
       .panel-main { min-width: 0; }
       .control label { display:block; margin:6px 0 2px; color: var(--muted); }
       .control input, .control select { width: 100%; padding:6px 8px; background:#0f1317; color:var(--fg); border:1px solid #2a3138; border-radius: 6px; }
-      .btn { display:inline-block; padding:8px 10px; border-radius:6px; border:1px solid #2a3138; background:#182028; color:var(--fg); cursor:pointer; }
+      .btn { display:inline-flex; align-items:center; justify-content:center; padding:8px 10px; border-radius:6px; border:1px solid #2a3138; background:#182028; color:var(--fg); cursor:pointer; transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.2s ease; }
       .btn:disabled { opacity: .6; cursor: not-allowed; }
-      .btn.big { font-size: 16px; padding: 12px 18px; }
-      .btn.primary { background:#0f344a; border-color:#1e5f85; color:#e6f3ff; box-shadow: 0 0 0 1px rgba(26, 114, 168, 0.15) inset; }
-      .btn.primary:hover { background:#124059; border-color:#2a78a5; }
-      .btn.black { background:#0b0f14; border-color:#1f2a33; }
+      .btn.big { font-size: 17px; padding: 16px 24px; border-radius: 12px; min-height: 58px; letter-spacing: 0.03em; text-transform: uppercase; }
+      .top-actions .btn.big { width:100%; position:relative; overflow:hidden; }
+      .btn.big::after { content:""; position:absolute; inset:0; border-radius: inherit; border:1px solid rgba(255,255,255,0.04); pointer-events:none; }
+      .btn.big:hover { transform: translateY(-1px); }
+      .btn.primary { background: linear-gradient(135deg, #0e3952, #136088); border-color:#2777a7; color:#e6f3ff; box-shadow: 0 16px 28px rgba(15,52,74,0.55); animation: glowPulse 6s ease-in-out infinite; }
+      .btn.primary:hover { background: linear-gradient(135deg, #124f75, #2b8bc0); border-color:#4aa6d6; }
+      .btn.black { background: linear-gradient(135deg, #0c1117, #161d26); border-color:#2a333d; box-shadow: 0 12px 24px rgba(4,7,11,0.55); }
+      .btn.black:hover { border-color:#3d4a58; }
       .muted { color: var(--muted); }
       .row { display:flex; gap:10px; align-items:center; }
       .mb8 { margin-bottom:8px; } .mb12 { margin-bottom:12px; } .mt8 { margin-top:8px; }
@@ -52,7 +60,8 @@
       .pill { display:inline-block; padding:2px 6px; border-radius:10px; background:#0f1317; border:1px solid #2a3138; font-size:12px; }
       .pill.auto-pill { border-style:dashed; color:#c4dcff; border-color:#2d3d4f; }
       .big-actions { display:flex; gap:10px; align-items:center; }
-      .status-badge { display:inline-block; font-weight:600; font-size:14px; padding:6px 10px; border-radius:999px; background:#0b0f14; border:1px solid #1e5f85; color:#9fd3ff; }
+      .status-badge { display:flex; align-items:center; justify-content:center; font-weight:600; font-size:14px; padding:12px 16px; border-radius:14px; background: linear-gradient(135deg, rgba(9,18,26,0.95), rgba(20,32,44,0.95)); border:1px solid rgba(64,126,168,0.7); color:#aee0ff; text-transform:uppercase; letter-spacing:0.06em; position:relative; min-width:140px; box-shadow: 0 14px 24px rgba(4,10,16,0.45); overflow:hidden; }
+      .status-badge::after { content:""; position:absolute; inset:-2px; border-radius:inherit; background: conic-gradient(from 120deg at 50% 50%, rgba(90,180,240,0.0), rgba(90,180,240,0.38), rgba(90,180,240,0)); opacity:0.4; mix-blend-mode:screen; animation: statusPulse 6.5s ease-out infinite; pointer-events:none; }
       .panel-lite { background:#0f1317; border:1px solid #1f242a; border-radius:8px; padding:10px; }
       .kv-row { display:flex; justify-content:space-between; gap:12px; margin-bottom:4px; font-size:13px; }
       .kv-row span:last-child { color:var(--acc); text-align:right; }
@@ -143,6 +152,17 @@
           <tbody></tbody>
         </table>
 
+        <div class="grid2 mt8 charts-row">
+          <div>
+            <h2>Equity <span class="selected-alpha-label empty">no alpha selected</span></h2>
+            <canvas id="alphaCanvas"></canvas>
+          </div>
+          <div>
+            <h2>Returns per bar <span class="selected-alpha-label empty">no alpha selected</span></h2>
+            <canvas id="retCanvas"></canvas>
+          </div>
+        </div>
+
         <h2 class="mt8">Generation Diagnostics</h2>
         <div class="muted mb8" id="diagMeta">n/a</div>
         <div class="diag-scroll">
@@ -174,16 +194,12 @@
           </div>
         </div>
 
-        <div class="grid2 mt8 charts-row">
-          <div>
-            <h2>Equity <span class="selected-alpha-label empty">no alpha selected</span></h2>
-            <canvas id="alphaCanvas"></canvas>
-          </div>
-          <div>
-            <h2>Returns per bar <span class="selected-alpha-label empty">no alpha selected</span></h2>
-            <canvas id="retCanvas"></canvas>
-          </div>
+        <h2 class="mt8">Alpha Details</h2>
+        <div class="row mb8">
+          <button class="btn" id="copyProgramBtn">Copy Program</button>
+          <span class="muted">full equation for <span class="selected-alpha-label empty">no alpha selected</span></span>
         </div>
+        <pre id="programBox">(select an alpha to view program)</pre>
 
         <h2 class="mt8">Run Snapshot</h2>
         <div class="row mb8">
@@ -191,13 +207,6 @@
           <span class="muted">Parameters &amp; headline metrics</span>
         </div>
         <pre id="summaryBox">(load a run to see summary)</pre>
-
-        <h2 class="mt8">Alpha Details</h2>
-        <div class="row mb8">
-          <button class="btn" id="copyProgramBtn">Copy Program</button>
-          <span class="muted">full equation for <span class="selected-alpha-label empty">no alpha selected</span></span>
-        </div>
-        <pre id="programBox">(select an alpha to view program)</pre>
         <h2 class="mt8">Terminal Output</h2>
         <div class="muted">Tip: live logs stream in the terminal where you started the server.</div>
         <pre id="terminalBox" class="mt8">(appears after run)</pre>
