@@ -1357,7 +1357,7 @@
           const state = { raf:null, w:0, h:0, t:0, mode:'idle', palette:[], crest:'', speed:1, amp:1, label:'WAVES', labelColor:'#3b4a58' };
           const palettes = {
             idle: ['rgba(26,39,51,0.55)', 'rgba(34,56,74,0.50)', 'rgba(43,76,98,0.45)', 'rgba(53,97,123,0.40)'],
-            active: ['rgba(16,66,36,0.75)', 'rgba(24,99,50,0.70)', 'rgba(36,136,68,0.65)', 'rgba(48,175,88,0.60)'],
+            active: ['rgba(16,66,36,0.50)', 'rgba(24,99,50,0.45)', 'rgba(36,136,68,0.40)', 'rgba(48,175,88,0.35)'],
           };
           const crestColors = { idle: 'rgba(90,180,240,0.25)', active: 'rgba(64,255,164,0.45)' };
           const init = ()=>{
@@ -1371,8 +1371,8 @@
             state.mode = next;
             state.palette = palettes[next] || palettes.idle;
             state.crest = crestColors[next] || crestColors.idle;
-            state.speed = next === 'active' ? 3.4 : 1.0;
-            state.amp = next === 'active' ? 1.9 : 1.0;
+            state.speed = next === 'active' ? 1.6 : 0.8;
+            state.amp = next === 'active' ? 1.4 : 1.0;
             state.label = next === 'active' ? 'RUN' : 'WAVES';
             state.labelColor = next === 'active' ? '#35ff9b' : '#3b4a58';
           };
