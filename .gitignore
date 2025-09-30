@@ -115,3 +115,7 @@ dashboard-ui/*.sw?
 dashboard-ui/.env
 dashboard-ui/.env.*
 dashboard-ui/*.local
+!dashboard-ui/dist/
+dashboard-ui/dist/*
+!dashboard-ui/dist/index.html
+!dashboard-ui/dist/live-chart.js

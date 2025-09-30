@@ -60,6 +60,14 @@
       th, td { text-align: left; border-bottom: 1px solid #1f242a; padding: 6px 8px; }
       th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background:#12161a; }
       canvas { width: 100%; background:#0f1317; border:1px solid #1f242a; border-radius:6px; display:block; }
+      .live-chart { margin-top: 16px; }
+      .live-chart-top { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+      .live-chart-meta { font-size:12px; color:var(--muted); }
+      #liveChartCanvas { height:220px; }
+      .live-chart-legend { display:flex; gap:16px; margin:6px 0 10px; font-size:12px; color:var(--muted); }
+      .live-chart-legend span { display:flex; align-items:center; gap:6px; }
+      .legend-line { width:20px; height:0; border-bottom:2px solid rgba(230,232,235,0.65); }
+      .legend-line.median { border-bottom-style:dashed; }
       #animCanvas { height: 360px; }
       #alphaCanvas, #retCanvas { height: 240px; }
       pre { white-space: pre-wrap; background:#0b1014; border:1px solid #1f242a; border-radius:6px; padding:8px; max-height:320px; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
@@ -137,6 +145,18 @@
       <main class="panel panel-main">
         <div class="runner-shell">
           <canvas id="animCanvas"></canvas>
+        </div>
+
+        <div class="live-chart">
+          <div class="live-chart-top">
+            <h2>Live Fitness</h2>
+            <div class="live-chart-meta" id="liveChartMeta">No active run.</div>
+          </div>
+          <div class="live-chart-legend">
+            <span><span class="legend-line"></span>Best fitness (solid)</span>
+            <span><span class="legend-line median"></span>Median fitness (dashed)</span>
+          </div>
+          <canvas id="liveChartCanvas"></canvas>
         </div>
 
         <h2 class="mt8">Backtest Summary</h2>
@@ -235,6 +255,7 @@
       <canvas id="ambientCanvas"></canvas>
     </div>
 
+    <script src="live-chart.js"></script>
     <script>
       const $ = sel => document.querySelector(sel);
       const runsEl = $('#runs');
@@ -242,6 +263,9 @@
       const alphaCanvas = document.getElementById('alphaCanvas');
       const retCanvas = document.getElementById('retCanvas');
       const ambientCanvas = document.getElementById('ambientCanvas');
+      const liveChartCanvas = document.getElementById('liveChartCanvas');
+      const liveChartMeta = document.getElementById('liveChartMeta');
+      const liveChart = (typeof LiveChart !== 'undefined' && liveChartCanvas) ? new LiveChart(liveChartCanvas, liveChartMeta) : null;
       const startBtn = document.getElementById('startBtn');
       const openSettingsBtn = document.getElementById('openSettingsBtn');
       const openSelfplayBtn = document.getElementById('openSelfplayBtn');
@@ -270,6 +294,7 @@
       let jobIsRunning = false;
       let userSelectedRun = false;
       let selectedAlphaId = null;
+      if (liveChart) liveChart.setIdle();
       const RUN_NAME_STORAGE_KEY = 'dashboard_run_names_spanish';
       const SPANISH_FIRST_NAMES = [
         'Alejandro','Alonso','Andres','Carlos','Diego','Eduardo','Emilio','Fernando','Gabriel','Hector','Javier','Jorge','Jose','Juan','Luis','Manuel','Miguel','Pablo','Rafael','Ricardo','Sergio','Vicente'
@@ -657,6 +682,13 @@
           const r = retCanvas.getBoundingClientRect();
           retCanvas.width = Math.max(380, r.width | 0);
           retCanvas.height = Math.max(220, r.height | 0);
+        }
+        if (liveChart) {
+          liveChart.resize();
+        } else if (liveChartCanvas) {
+          const r = liveChartCanvas.getBoundingClientRect();
+          liveChartCanvas.width = Math.max(420, r.width | 0);
+          liveChartCanvas.height = Math.max(200, r.height | 0);
         }
         if (ambientCanvas) {
           const r = ambientCanvas.getBoundingClientRect();
@@ -1109,6 +1141,7 @@
           currentJob = null;
           startBtn.disabled = false;
           statusEl.textContent = 'idle';
+          if(liveChart){ liveChart.setIdle(); }
           try {
             localStorage.removeItem('dashboard_current_job');
           } catch (e) {}
@@ -1121,6 +1154,7 @@
           statusEl.textContent = 'running…';
           jobIsRunning = true;
           activeRunDir = null;
+          if(liveChart){ liveChart.startRun(); }
           if(ambientController){ ambientController.setMode('active'); }
           clearDiagnostics();
           updateTopk();
@@ -1141,12 +1175,18 @@
           }catch(e){}
           if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
           topkTimer = setInterval(()=>{ updateTopk(); }, 10000);
+        } else if(m.type === 'progress'){
+          if(m.data && m.data.type === 'gen_progress' && liveChart){
+            liveChart.addProgress(m.data);
+          }
         } else if(m.type === 'log'){
           /* live log suppressed */
         } else if(m.type === 'diag'){
           if(m.data){ renderDiagnosticsEntry(m.data); }
         } else if(m.type === 'score'){
-          /* score update suppressed */
+          if(liveChart && typeof m.sharpe_best === 'number'){
+            liveChart.setSharpe(m.sharpe_best);
+          }
         } else if(m.type === 'final'){
           statusEl.textContent = 'finished';
           startBtn.disabled=false;
@@ -1155,6 +1195,7 @@
           userSelectedRun = false;
           currentRunDir = m.run_dir;
           selectedRunDir = m.run_dir;
+          if(liveChart){ liveChart.finish({ sharpeBest: m.sharpe_best }); }
           try{ localStorage.setItem('dashboard_current_run', currentRunDir||''); localStorage.removeItem('dashboard_current_job'); }catch(e){}
           highlightSelectedRun();
           if(ambientController){ ambientController.setMode('idle'); }
@@ -1172,11 +1213,15 @@
           try{ localStorage.removeItem('dashboard_current_job'); }catch(e){}
           if(ambientController){ ambientController.setMode('idle'); }
           stopRunAnim(`exit ${m.code}`);
+          if(liveChart && m.code !== 0){ liveChart.finish({ exitCode: m.code }); }
           fetch(`/api/job-log/${currentJob}`).then(r=>r.json()).then(j=>{ updateTerminalLog(j.log || ''); }).catch(()=>{});
           updateTopk();
           refreshData();
           refreshSelfPlayHistory();
           if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
+        }
+        else if(m.type === 'error'){
+          if(liveChart){ liveChart.finish({ exitCode: m.code }); }
         }
       }
 
@@ -1250,6 +1295,7 @@
             statusEl.textContent = 'running…';
             startRunAnim();
             if(ambientController){ ambientController.setMode('active'); }
+            if(liveChart){ liveChart.startRun(); }
             const es = new EventSource(`/api/events/${currentJob}`);
             es.onmessage = (ev)=>{ try{ const msg = JSON.parse(ev.data); handleEvent(msg); } catch(e){} };
             es.addEventListener('ping', ()=>{});
@@ -1258,6 +1304,7 @@
             updateTopk();
           } else {
             localStorage.removeItem('dashboard_current_job');
+            if(liveChart){ liveChart.setIdle(); }
           }
         }catch(e){ /* ignore */ }
       }
