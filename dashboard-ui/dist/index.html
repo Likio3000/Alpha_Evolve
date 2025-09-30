@@ -56,6 +56,8 @@
       .alpha-row.selected-alpha a { color:#9fd3ff; font-weight:600; }
       .selected-alpha-label { margin-left:6px; padding:2px 8px; border-radius:999px; border:1px solid #1e5f85; background:#10202c; color:#9fd3ff; font-size:12px; vertical-align:middle; }
       .selected-alpha-label.empty { border-color:#2a3138; background:#10161c; color:var(--muted); }
+      .run-context { margin-left:8px; font-size:12px; color:var(--muted); }
+      .run-context.empty { font-style:italic; }
       table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; border-bottom: 1px solid #1f242a; padding: 6px 8px; }
       th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background:#12161a; }
@@ -159,7 +161,7 @@
           <canvas id="liveChartCanvas"></canvas>
         </div>
 
-        <h2 class="mt8">Backtest Summary</h2>
+        <h2 class="mt8">Backtest Summary <span class="run-context empty" data-role="run-context">no run selected</span></h2>
         <table id="btTable">
           <thead>
             <tr>
@@ -186,7 +188,7 @@
           </div>
         </div>
 
-        <h2 class="mt8">Generation Diagnostics</h2>
+        <h2 class="mt8">Generation Diagnostics <span class="run-context empty" data-role="run-context">no run selected</span></h2>
         <div class="muted mb8" id="diagMeta">n/a</div>
         <div class="diag-scroll">
           <div class="diag-stack">
@@ -217,14 +219,14 @@
           </div>
         </div>
 
-        <h2 class="mt8">Alpha Details</h2>
+        <h2 class="mt8">Alpha Details <span class="run-context empty" data-role="run-context">no run selected</span></h2>
         <div class="row mb8">
           <button class="btn" id="copyProgramBtn">Copy Program</button>
           <span class="muted">full equation for <span class="selected-alpha-label empty">no alpha selected</span></span>
         </div>
         <pre id="programBox">(select an alpha to view program)</pre>
 
-        <h2 class="mt8">Run Snapshot</h2>
+        <h2 class="mt8">Run Snapshot <span class="run-context empty" data-role="run-context">no run selected</span></h2>
         <div class="row mb8">
           <button class="btn" id="copySummaryBtn">Copy Snapshot</button>
           <span class="muted">Parameters &amp; headline metrics</span>
@@ -294,6 +296,9 @@
       let jobIsRunning = false;
       let userSelectedRun = false;
       let selectedAlphaId = null;
+      const runContextEls = Array.from(document.querySelectorAll('[data-role="run-context"]'));
+      const runMeta = new Map();
+      const RUN_SUMMARY_PLACEHOLDER = '(load a run to see summary)';
       if (liveChart) liveChart.setIdle();
       const RUN_NAME_STORAGE_KEY = 'dashboard_run_names_spanish';
       const SPANISH_FIRST_NAMES = [
@@ -346,6 +351,53 @@
       };
 
       let lastRunSnapshot = '';
+
+      function resolveRunLabel(runDir){
+        if (!runDir) return '';
+        const meta = runMeta.get(runDir);
+        if (meta){
+          if (meta.friendly) return meta.friendly;
+          const fallback = meta.name || (meta.path ? meta.path.split('/').pop() : '');
+          const label = meta.displayLabel || '';
+          if (label && fallback && label !== fallback){
+            return `${label} (${fallback})`;
+          }
+          return label || fallback || runDir;
+        }
+        const parts = runDir.split('/').filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : runDir;
+      }
+
+      function setRunContext(runDir){
+        if (!runContextEls.length) return;
+        if (runDir){
+          const label = resolveRunLabel(runDir);
+          runContextEls.forEach(el => {
+            el.textContent = label ? `run: ${label}` : 'run: (unknown)';
+            el.classList.remove('empty');
+          });
+        } else {
+          runContextEls.forEach(el => {
+            el.textContent = 'no run selected';
+            el.classList.add('empty');
+          });
+        }
+      }
+
+      function clearAlphaCharts(){
+        [alphaCanvas, retCanvas].forEach(canvas => {
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          const w = canvas.width || canvas.clientWidth || 0;
+          const h = canvas.height || canvas.clientHeight || 0;
+          ctx.save();
+          ctx.clearRect(0, 0, w, h);
+          ctx.fillStyle = '#0b1014';
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        });
+      }
 
       function syncGraphPlaceholder(){
         if (!graphPlaceholder) return;
@@ -607,11 +659,11 @@
         return lines.join('\n');
       }
 
-      function setSummaryText(text){
+      function setSummaryText(text, fallback = RUN_SUMMARY_PLACEHOLDER){
         const cleaned = (text || '').trim();
         lastRunSnapshot = cleaned;
         if (summaryBox) {
-          summaryBox.textContent = cleaned || '(summary unavailable)';
+          summaryBox.textContent = cleaned || fallback;
         }
         if (copySummaryBtn) {
           copySummaryBtn.disabled = !cleaned;
@@ -638,7 +690,7 @@
           const snapshot = buildRunSnapshot(runDir, summary, evoCfg, btCfg, uiCtx, lastBacktestRows);
           setSummaryText(snapshot);
         }catch(e){
-          setSummaryText('');
+          setSummaryText('', 'summary unavailable');
         }
       }
 
@@ -900,6 +952,24 @@
         });
       }
 
+      function clearRunSelection(){
+        selectedRunDir = null;
+        currentRunDir = null;
+        activeRunDir = null;
+        userSelectedRun = false;
+        highlightSelectedRun();
+        setRunContext(null);
+        setSelectedAlpha(null);
+        if (programBox) {
+          programBox.textContent = '(select an alpha to view program)';
+        }
+        renderBacktest([]);
+        clearDiagnostics();
+        clearAlphaCharts();
+        setSummaryText('');
+        updateTopk();
+      }
+
       function line(ctx, pts, color='#5ab4f0', thick=2){
         if (!pts || pts.length<2) return;
         const w = ctx.canvas.width, h = ctx.canvas.height;
@@ -979,6 +1049,7 @@
 
       async function refreshRuns(){
         const items = await fetchJSON('/api/runs?limit=50');
+        runMeta.clear();
         loadAutoRunNameCache();
         runsEl.innerHTML = items.map((item,idx)=>{
           const n = idx + 1;
@@ -999,6 +1070,17 @@
           const parts = [`#${n}`, label, pill].filter(Boolean).join(' ');
           const isSelected = !!selectedRunDir && selectedRunDir === item.path;
           const cls = isSelected ? 'selected-run' : '';
+          const fallbackName = item.name || '';
+          const fallback = fallbackName || (path ? path.split('/').pop() : '');
+          const friendly = displayLabel && fallback && displayLabel !== fallback
+            ? `${displayLabel} (${fallback})`
+            : (displayLabel || fallback || path);
+          runMeta.set(path, {
+            path,
+            displayLabel,
+            name: fallbackName,
+            friendly,
+          });
           return `<a href=\"#\" data-path=\"${item.path}\" title=\"${title}\" class=\"${cls}\">${parts}</a>`;
         }).join('');
         runsEl.querySelectorAll('a').forEach(a=>{
@@ -1019,6 +1101,7 @@
           };
         });
         highlightSelectedRun();
+        setRunContext(selectedRunDir);
         return items;
       }
 
@@ -1031,6 +1114,7 @@
           userSelectedRun = true;
         }
         highlightSelectedRun();
+        setRunContext(runDir);
         setSelectedAlpha(null);
         if (programBox) {
           programBox.textContent = '(select an alpha to view program)';
@@ -1055,7 +1139,12 @@
       // evolution diagnostics view removed in favor of a retro animation during runs
 
       function renderBacktest(rows){
-        lastBacktestRows = rows || [];
+        lastBacktestRows = Array.isArray(rows) ? rows : [];
+        if (!lastBacktestRows.length) {
+          btBody.innerHTML = '<tr class="empty"><td colspan="7" class="muted">No data. Select a run.</td></tr>';
+          highlightSelectedAlphaRow();
+          return;
+        }
         btBody.innerHTML = lastBacktestRows.map(r=>{
           const file = (r.TS || r.TimeseriesFile || '').toString().split('/').pop();
           const rawAid = r.AlphaID ?? '';
@@ -1122,6 +1211,7 @@
             throw new Error(await resp.text());
           }
           const { job_id } = await resp.json();
+          clearRunSelection();
           currentJob = job_id;
           jobIsRunning = true;
           try {
@@ -1157,18 +1247,14 @@
           if(liveChart){ liveChart.startRun(); }
           if(ambientController){ ambientController.setMode('active'); }
           clearDiagnostics();
+          setRunContext(selectedRunDir);
           updateTopk();
           try{
             fetch('/api/last-run').then(r=>r.json()).then(j=>{
               if(j && j.run_dir){
                 activeRunDir = j.run_dir;
-                if(!selectedRunDir){
-                  selectedRunDir = j.run_dir;
-                  currentRunDir = j.run_dir;
-                  highlightSelectedRun();
-                }
                 if(!userSelectedRun){
-                  updateTopk();
+                  updateTopk(activeRunDir);
                 }
               }
             });
@@ -1198,6 +1284,7 @@
           if(liveChart){ liveChart.finish({ sharpeBest: m.sharpe_best }); }
           try{ localStorage.setItem('dashboard_current_run', currentRunDir||''); localStorage.removeItem('dashboard_current_job'); }catch(e){}
           highlightSelectedRun();
+          setRunContext(selectedRunDir);
           if(ambientController){ ambientController.setMode('idle'); }
           stopRunAnim();
           fetch(`/api/job-log/${currentJob}`).then(r=>r.json()).then(j=>{ updateTerminalLog(j.log || ''); }).catch(()=>{});
@@ -1216,6 +1303,7 @@
           if(liveChart && m.code !== 0){ liveChart.finish({ exitCode: m.code }); }
           fetch(`/api/job-log/${currentJob}`).then(r=>r.json()).then(j=>{ updateTerminalLog(j.log || ''); }).catch(()=>{});
           updateTopk();
+          setRunContext(selectedRunDir);
           refreshData();
           refreshSelfPlayHistory();
           if(topkTimer) { try{ clearInterval(topkTimer); }catch(e){} topkTimer=null; }
@@ -1234,6 +1322,7 @@
             currentRunDir = selectedRunDir;
             userSelectedRun = false;
             highlightSelectedRun();
+            setRunContext(selectedRunDir);
           }
         }
         if(jobIsRunning){
@@ -1285,6 +1374,7 @@
             selectedRunDir = savedRun;
             highlightSelectedRun();
           }
+          setRunContext(selectedRunDir);
           const savedJob = localStorage.getItem('dashboard_current_job');
           if(!savedJob) return;
           const j = await fetchJSON(`/api/job-status/${encodeURIComponent(savedJob)}`);
