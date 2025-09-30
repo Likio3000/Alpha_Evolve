@@ -61,6 +61,7 @@ class EvolutionConfig(DataConfig):
     tournament_k: int = 10
     elite_keep: int = 1
     hof_size: int = 20
+    hof_min_fill: int = 5
     # Add top-K candidates per generation to the Hall of Fame (subject to
     # correlation and duplicate filters). Increases diversity of saved alphas.
     hof_per_gen: int = 3

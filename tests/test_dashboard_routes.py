@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from types import SimpleNamespace
 import threading
 import time
@@ -39,6 +40,7 @@ def dashboard_env(tmp_path, monkeypatch):
 
     helpers_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.helpers"))
     runs_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.routes.runs"))
+    selfplay_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.routes.selfplay"))
     app_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.app"))
 
     client = TestClient(app_mod.create_app())
@@ -55,6 +57,7 @@ def dashboard_env(tmp_path, monkeypatch):
         # Reload modules so subsequent tests see default environment-derived paths
         importlib.reload(helpers_mod)
         importlib.reload(runs_mod)
+        importlib.reload(selfplay_mod)
         importlib.reload(app_mod)
 
 
@@ -168,3 +171,121 @@ def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
         if not payload.get("running"):
             break
         time.sleep(0.05)
+
+
+def _write_selfplay_session(root: Path) -> Path:
+    session_root = root / "self_evolution"
+    session_root.mkdir(exist_ok=True)
+    session_dir = session_root / "self_evo_session_20250101_000001"
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    (session_dir / "history.jsonl").write_text("", encoding="utf-8")
+    briefings = [
+        {
+            "timestamp": "2025-01-01T00:00:05Z",
+            "iteration": 0,
+            "objective_metric": "Sharpe",
+            "analysis": {"trend": "improving", "objective": 1.2, "alpha_count": 3},
+        },
+        {
+            "timestamp": "2025-01-01T00:10:05Z",
+            "iteration": 1,
+            "objective_metric": "Sharpe",
+            "analysis": {"trend": "flat", "objective": 1.18, "alpha_count": 2},
+        },
+    ]
+    with (session_dir / "agent_briefings.jsonl").open("w", encoding="utf-8") as fh:
+        for entry in briefings:
+            fh.write(json.dumps(entry) + "\n")
+
+    pending = {
+        "timestamp": "2025-01-01T00:10:10Z",
+        "iteration_completed": 1,
+        "status": "awaiting_approval",
+        "summary": "Trend: flat | Objective: 1.1800 | Alphas: 2",
+    }
+    (session_dir / "pending_action.json").write_text(json.dumps(pending, indent=2), encoding="utf-8")
+
+    summary = {
+        "objective_metric": "Sharpe",
+        "maximize": True,
+        "iterations": 2,
+        "history_file": str(session_dir / "history.jsonl"),
+    }
+    (session_dir / "session_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    return session_dir
+
+
+def test_selfplay_status_endpoint_returns_latest_session(dashboard_env):
+    session_dir = _write_selfplay_session(dashboard_env.pipeline_dir)
+
+    resp = dashboard_env.client.get("/api/selfplay/status")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["session_name"] == session_dir.name
+    assert payload["pending_action"]["status"] == "awaiting_approval"
+    assert len(payload["briefings"]) == 2
+
+
+def test_selfplay_approval_endpoint_updates_file(dashboard_env):
+    session_dir = _write_selfplay_session(dashboard_env.pipeline_dir)
+
+    resp = dashboard_env.client.post(
+        "/api/selfplay/approval",
+        json={"status": "approved"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["pending_action"]["status"] == "approved"
+
+    updated = json.loads((session_dir / "pending_action.json").read_text(encoding="utf-8"))
+    assert updated["status"] == "approved"
+
+
+def test_selfplay_run_endpoint_starts_job(dashboard_env, monkeypatch):
+    search_space = dashboard_env.helpers.ROOT / "configs" / "self_evolution" / "sample_crypto_space.json"
+
+    class DummyPopen:
+        def __init__(self, *args, **kwargs):
+            self._lines = ["Iteration 0 objective=0.10\n", "done\n"]
+            self.stdout = iter(self._lines)
+            self._returncode = 0
+
+        def wait(self):
+            return self._returncode
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self._returncode = -15
+
+        def kill(self):
+            self._returncode = -9
+
+    monkeypatch.setattr(
+        "scripts.dashboard_server.routes.selfplay.subprocess.Popen",
+        lambda *a, **kw: DummyPopen(),
+    )
+
+    resp = dashboard_env.client.post(
+        "/api/selfplay/run",
+        json={
+            "search_space": str(search_space),
+            "iterations": 1,
+            "auto_approve": True,
+        },
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    assert job_id
+
+    for _ in range(20):
+        status = dashboard_env.client.get(f"/api/job-status/{job_id}").json()
+        if not status.get("running"):
+            break
+        time.sleep(0.01)
+
+    log_payload = dashboard_env.client.get(f"/api/job-log/{job_id}").json()
+    assert "log" in log_payload

@@ -22,7 +22,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
-from dataclasses import fields as dc_fields
+from dataclasses import dataclass, fields as dc_fields
 
 from config import EvolutionConfig, BacktestConfig
 from utils.data_loading_common import DataLoadError
@@ -35,6 +35,22 @@ from utils.config_layering import load_config_file, layer_dataclass_config, _fla
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "pipeline_runs_cs"
+
+
+@dataclass
+class PipelineOptions:
+    """Runtime controls for programmatic pipeline execution."""
+
+    debug_prints: bool = False
+    run_baselines: bool = False
+    retrain_baselines: bool = False
+    log_level: str = "INFO"
+    log_file: str | None = None
+    dry_run: bool = False
+    output_dir: str | None = None
+    persist_hof_per_gen: bool = True
+    disable_align_cache: bool = False
+    align_cache_dir: str | None = None
 
 
 def _resolve_output_dir(cli_arg: str | None) -> Path:
@@ -322,60 +338,54 @@ def _write_data_alignment_meta(run_dir: Path, evo_cfg: EvolutionConfig) -> Path:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  main
+#  programmatic API
 # ─────────────────────────────────────────────────────────────────────────────
-def main() -> None:
-    evo_cfg, bt_cfg, cli = parse_args()
+def run_pipeline_programmatic(
+    evo_cfg: EvolutionConfig,
+    bt_cfg: BacktestConfig,
+    options: PipelineOptions | None = None,
+) -> Path:
+    opts = options or PipelineOptions()
 
-    # Apply cache controls early so loaders honor them
-    try:
-        import os
-        if getattr(cli, "disable_align_cache", False):
-            os.environ["AE_DISABLE_ALIGN_CACHE"] = "1"
-        if getattr(cli, "align_cache_dir", None):
-            os.environ["AE_ALIGN_CACHE_DIR"] = str(cli.align_cache_dir)
-    except Exception:
-        pass
+    if opts.disable_align_cache:
+        os.environ["AE_DISABLE_ALIGN_CACHE"] = "1"
+    if opts.align_cache_dir:
+        os.environ["AE_ALIGN_CACHE_DIR"] = str(opts.align_cache_dir)
 
-    # Print merged configuration and exit early (no logging, no side-effects)
-    if getattr(cli, "print_config", False):
-        from dataclasses import asdict
-        payload = {"evolution": asdict(evo_cfg), "backtest": asdict(bt_cfg)}
-        print(_json.dumps(payload, indent=2))
-        return
-
-    level = getattr(logging, str(cli.log_level).upper(), logging.INFO)
-    if getattr(cli, "debug_prints", False):
+    level = getattr(logging, str(opts.log_level).upper(), logging.INFO)
+    if opts.debug_prints:
         level = logging.DEBUG
-    elif getattr(cli, "quiet", False):
+    elif getattr(evo_cfg, "quiet", False):
         level = logging.WARNING
 
-    setup_logging(level=level, log_file=cli.log_file)
+    setup_logging(level=level, log_file=opts.log_file)
+    logger = logging.getLogger(__name__)
 
-    base_output_dir = _resolve_output_dir(getattr(cli, "output_dir", None))
-    try:
-        base_output_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        logging.getLogger(__name__).exception("Failed to create output directory: %s", base_output_dir)
-        sys.exit(1)
+    base_output_dir = _resolve_output_dir(opts.output_dir)
+    base_output_dir.mkdir(parents=True, exist_ok=True)
     os.environ["AE_PIPELINE_DIR"] = str(base_output_dir)
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
-    run_dir = (base_output_dir /
-               f"run_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
-               f"{evo_cfg.max_lookback_data_option}_{run_stamp}")
+    run_dir = (
+        base_output_dir
+        / f"run_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
+        f"{evo_cfg.max_lookback_data_option}_{run_stamp}"
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Persist configs and minimal run metadata for reproducibility
     try:
-        import json, platform, subprocess
+        import json
+        import platform
+        import subprocess
         from dataclasses import asdict
+
         (run_dir / "meta").mkdir(exist_ok=True)
         with open(run_dir / "meta" / "evolution_config.json", "w") as fh:
             json.dump(asdict(evo_cfg), fh, indent=2)
         with open(run_dir / "meta" / "backtest_config.json", "w") as fh:
             json.dump(asdict(bt_cfg), fh, indent=2)
-        meta = {
+
+        meta: dict[str, object] = {
             "python": sys.version,
             "platform": platform.platform(),
             "time": run_stamp,
@@ -385,12 +395,14 @@ def main() -> None:
             meta["git_commit"] = sha
         except Exception:
             pass
-        # Best-effort: capture environment packages for reproducibility
         try:
-            import pkgutil
             import importlib.metadata as ilmd
+
             pkgs = []
-            for dist in sorted(ilmd.distributions(), key=lambda d: d.metadata["Name"].lower() if d.metadata and d.metadata.get("Name") else ""):
+            for dist in sorted(
+                ilmd.distributions(),
+                key=lambda d: d.metadata["Name"].lower() if d.metadata and d.metadata.get("Name") else "",
+            ):
                 try:
                     pkgs.append({"name": dist.metadata["Name"], "version": dist.version})
                 except Exception:
@@ -408,24 +420,21 @@ def main() -> None:
                 rel_to_root = run_dir.resolve().relative_to(PROJECT_ROOT)
                 value = str(rel_to_root)
             except ValueError:
-                # Leave absolute path when run directory lives outside the project root.
                 value = str(run_dir.resolve())
             with open(latest_path, "w") as fh:
                 fh.write(value)
         except Exception:
-            logging.getLogger(__name__).warning("Failed to update LATEST pointer", exc_info=True)
+            logger.warning("Failed to update LATEST pointer", exc_info=True)
     except Exception:
-        logging.getLogger(__name__).warning("Failed to save run metadata.")
+        logger.warning("Failed to save run metadata.")
 
-    # Dry-run: show the plan, paths, and exit early
-    if getattr(cli, "dry_run", False):
-        logging.getLogger(__name__).info(
+    if opts.dry_run:
+        logger.info(
             "Dry run: would evolve %d generations and backtest top %d; outputs → %s",
             evo_cfg.generations,
             bt_cfg.top_to_backtest,
             run_dir,
         )
-        # Write a brief README
         try:
             with open(run_dir / "README.txt", "w") as fh:
                 fh.write(
@@ -437,81 +446,75 @@ def main() -> None:
                 )
         except Exception:
             pass
-        return
+        return run_dir
 
     try:
         pickle_path = _evolve_and_save(evo_cfg, run_dir)
     except DataLoadError as e:
-        logging.getLogger(__name__).exception("Evolution failed due to data loading error: %s", e)
-        sys.exit(1)
+        logger.exception("Evolution failed due to data loading error: %s", e)
+        raise
     except Exception as e:
-        logging.getLogger(__name__).exception("Evolution failed: %s", e)
-        sys.exit(1)
+        logger.exception("Evolution failed: %s", e)
+        raise
 
-    # Persist standardized data alignment metadata (always writes, with or without diagnostics)
     try:
         _write_data_alignment_meta(run_dir, evo_cfg)
     except Exception:
-        logging.getLogger(__name__).warning("Failed to write data alignment metadata.")
+        logger.warning("Failed to write data alignment metadata.")
 
-    # Save per-generation diagnostics if available (centralized hub)
     try:
         from utils import diagnostics as diag
+
         diags = diag.get_all()
         if diags:
             import json
+
             diag_path = run_dir / "diagnostics.json"
             with open(diag_path, "w") as fh:
                 json.dump(diags, fh, indent=2)
-            logging.getLogger(__name__).info(f"Saved diagnostics → {diag_path}")
-            # Persist per-generation HOF snapshots for auditability (optional)
-            if getattr(cli, "persist_hof_per_gen", True):
+            logger.info("Saved diagnostics → %s", diag_path)
+            if opts.persist_hof_per_gen:
                 try:
                     hof_paths = _write_hof_snapshots(run_dir)
                     if hof_paths:
-                        logging.getLogger(__name__).info("Saved %d HOF snapshots under meta/", len(hof_paths))
+                        logger.info("Saved %d HOF snapshots under meta/", len(hof_paths))
                 except Exception:
                     pass
     except Exception:
         pass
 
-    # Optionally generate plots (if matplotlib present)
     try:
         import scripts.diagnostics_plot as diag_plot
-        # Prefer explicit run_dir to avoid relying on LATEST
+
         diag_plot.generate_plots(run_dir)
     except SystemExit:
         pass
     except Exception as e:
-        logging.getLogger(__name__).info("Plotting skipped: %s", e)
+        logger.info("Plotting skipped: %s", e)
 
-    # Back-test programmatically using the new API
-    logger = logging.getLogger(__name__)
     logger.info("\n— Back-testing …")
     try:
         summary_csv_path = bt.run(
             bt_cfg,
             outdir=run_dir / "backtest_portfolio_csvs",
             programs_pickle=pickle_path,
-            debug_prints=getattr(cli, "debug_prints", False),
+            debug_prints=opts.debug_prints,
             annualization_factor_override=None,
             logger=logger,
         )
     except Exception as e:
         logger.exception("Back-testing failed: %s", e)
-        sys.exit(1)
+        raise
 
-    # Compact SUMMARY.json with key artefacts
     try:
         summary_path = _write_summary_json(run_dir, pickle_path, summary_csv_path)
         logger.info("Wrote run summary → %s", summary_path)
     except Exception:
         logger.info("Failed to write SUMMARY.json; continuing.")
 
-    # Attempt to generate per-alpha timeseries plots (works for both crypto and SP500 data)
     try:
         from scripts.backtest_diagnostics_plot import plot_alpha_timeseries
-        import glob
+
         bt_dir = run_dir / "backtest_portfolio_csvs"
         csvs = sorted(bt_dir.glob("alpha_*_timeseries.csv"))
         for c in csvs:
@@ -522,11 +525,46 @@ def main() -> None:
     except Exception as e:
         logger.info("Backtest plots skipped: %s", e)
 
-    if cli.run_baselines:
-        _train_baselines(bt_cfg.data_dir, run_dir,
-                         retrain=getattr(cli, "retrain_baselines", False))
+    if opts.run_baselines:
+        _train_baselines(
+            bt_cfg.data_dir,
+            run_dir,
+            retrain=opts.retrain_baselines,
+        )
 
-    logger.info(f"\n✔  Pipeline finished – artefacts in  {run_dir}")
+    logger.info("\n✔  Pipeline finished – artefacts in  %s", run_dir)
+    return run_dir
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  main
+# ─────────────────────────────────────────────────────────────────────────────
+def main() -> None:
+    evo_cfg, bt_cfg, cli = parse_args()
+
+    # Print merged configuration and exit early (no logging, no side-effects)
+    if getattr(cli, "print_config", False):
+        from dataclasses import asdict
+        payload = {"evolution": asdict(evo_cfg), "backtest": asdict(bt_cfg)}
+        print(_json.dumps(payload, indent=2))
+        return
+    options = PipelineOptions(
+        debug_prints=getattr(cli, "debug_prints", False),
+        run_baselines=getattr(cli, "run_baselines", False),
+        retrain_baselines=getattr(cli, "retrain_baselines", False),
+        log_level=getattr(cli, "log_level", "INFO"),
+        log_file=getattr(cli, "log_file", None),
+        dry_run=getattr(cli, "dry_run", False),
+        output_dir=getattr(cli, "output_dir", None),
+        persist_hof_per_gen=getattr(cli, "persist_hof_per_gen", True),
+        disable_align_cache=getattr(cli, "disable_align_cache", False),
+        align_cache_dir=getattr(cli, "align_cache_dir", None),
+    )
+
+    try:
+        run_pipeline_programmatic(evo_cfg, bt_cfg, options)
+    except Exception:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

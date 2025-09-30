@@ -16,7 +16,7 @@
       @keyframes glowPulse { 0% { box-shadow: 0 0 0 0 rgba(90,180,240,0.45), 0 18px 32px rgba(7,12,18,0.35); } 50% { box-shadow: 0 0 0 6px rgba(90,180,240,0.08), 0 20px 36px rgba(7,12,18,0.5); } 100% { box-shadow: 0 0 0 0 rgba(90,180,240,0.45), 0 18px 32px rgba(7,12,18,0.35); } }
       @keyframes statusPulse { 0% { box-shadow: 0 0 0 0 rgba(53, 151, 255, 0.32); } 60% { box-shadow: 0 0 0 10px rgba(53, 151, 255, 0.0); } 100% { box-shadow: 0 0 0 0 rgba(53, 151, 255, 0.0); } }
       .topbar { position: static; z-index: 50; background: radial-gradient(circle at top, rgba(22,34,46,0.88), rgba(10,15,20,0.96)); border-bottom: 1px solid rgba(38,58,76,0.8); padding: 24px 32px; display:flex; justify-content:center; box-shadow: 0 22px 36px rgba(0,0,0,0.45); backdrop-filter: blur(6px); }
-      .top-actions { position:relative; width:100%; max-width:960px; display:grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 220px) minmax(220px, 1fr); gap:18px; align-items:stretch; overflow:hidden; }
+      .top-actions { position:relative; width:100%; max-width:1024px; display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:18px; align-items:stretch; overflow:hidden; }
       .top-actions::before { content:""; position:absolute; left:0; right:0; top:-12px; height:2px; background: linear-gradient(90deg, rgba(90,180,240,0), rgba(90,180,240,0.65), rgba(90,180,240,0)); filter: blur(0.3px); animation: topbarSweep 4.5s linear infinite; pointer-events:none; }
       .wrap { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); grid-gap: 16px; padding: 12px; align-items:start; }
       .panel { background: #12161a; border: 1px solid #1f242a; border-radius: 8px; padding: 12px; }
@@ -34,6 +34,12 @@
       .btn.primary:hover { background: linear-gradient(135deg, #124f75, #2b8bc0); border-color:#4aa6d6; }
       .btn.black { background: linear-gradient(135deg, #0c1117, #161d26); border-color:#2a333d; box-shadow: 0 12px 24px rgba(4,7,11,0.55); }
       .btn.black:hover { border-color:#3d4a58; }
+      .btn.success { background: linear-gradient(135deg, #1a3f2e, #236b48); border-color:#2d8c5f; color:#e9fff4; }
+      .btn.success:hover { border-color:#36a971; }
+      .btn.warning { background: linear-gradient(135deg, #4a3a12, #7a5c18); border-color:#b4821f; color:#fff6dd; }
+      .btn.warning:hover { border-color:#d8a031; }
+      .btn.danger { background: linear-gradient(135deg, #4a1518, #7a1f26); border-color:#c53d47; color:#ffecec; }
+      .btn.danger:hover { border-color:#e45b65; }
       .muted { color: var(--muted); }
       .row { display:flex; gap:10px; align-items:center; }
       .mb8 { margin-bottom:8px; } .mb12 { margin-bottom:12px; } .mt8 { margin-top:8px; }
@@ -93,10 +99,6 @@
       .graph-surface.active { opacity:1; }
       .graph-placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; letter-spacing:0.3px; text-transform:uppercase; }
       .graph-placeholder.hidden { display:none; }
-      .selfplay-list { display:flex; flex-direction:column; gap:8px; }
-      .selfplay-entry { background:#10161c; border:1px solid #1f242a; border-radius:6px; padding:8px 10px; font-size:13px; }
-      .selfplay-entry .title { font-weight:600; color:var(--fg); }
-      .selfplay-entry .meta { margin-top:4px; color:var(--muted); font-size:12px; }
       .runner-shell { margin-bottom:16px; }
       @media (max-width: 1280px) {
         .wrap { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); }
@@ -113,6 +115,7 @@
       <div class="top-actions">
         <button class="btn big primary" id="startBtn">Start Run</button>
         <button class="btn big black" id="openSettingsBtn">Settings…</button>
+        <button class="btn big black" id="openSelfplayBtn">Self-Play…</button>
         <span id="runStatus" class="status-badge">idle</span>
       </div>
     </div>
@@ -225,12 +228,6 @@
           </div>
         </div>
 
-        <div class="collapsible-card" data-key="selfplayHistory">
-          <div class="card-header" data-target="selfplayHistory" role="button" tabindex="0" aria-expanded="false">Self-Play History</div>
-          <div class="card-body">
-            <div id="selfplayHistoryBox" class="muted-small">No self-play runs logged yet.</div>
-          </div>
-        </div>
       </main>
     </div>
 
@@ -247,6 +244,7 @@
       const ambientCanvas = document.getElementById('ambientCanvas');
       const startBtn = document.getElementById('startBtn');
       const openSettingsBtn = document.getElementById('openSettingsBtn');
+      const openSelfplayBtn = document.getElementById('openSelfplayBtn');
       const statusEl = document.getElementById('runStatus');
       const btBody = document.querySelector('#btTable tbody');
       const programBox = document.getElementById('programBox');
@@ -254,7 +252,6 @@
       const summaryBox = document.getElementById('summaryBox');
       const copySummaryBtn = document.getElementById('copySummaryBtn');
       const settingsCount = document.getElementById('settingsCount');
-      const selfplayHistoryBox = document.getElementById('selfplayHistoryBox');
       const graphTabs = Array.from(document.querySelectorAll('[data-graph]'));
       const graphViews = {
         topk: document.getElementById('topkImg'),
@@ -620,44 +617,6 @@
         }
       }
 
-      async function refreshSelfPlayHistory(limit = 15){
-        if (!selfplayHistoryBox) return;
-        try{
-          const data = await fetchJSON(`/api/selfplay/history?limit=${limit}`);
-          const history = Array.isArray(data?.history) ? data.history : [];
-          if (!history.length){
-            selfplayHistoryBox.innerHTML = '<div class="muted-small">No self-play runs logged yet.</div>';
-            return;
-          }
-          const html = history.map(formatSelfPlayEntry).join('');
-          selfplayHistoryBox.innerHTML = `<div class="selfplay-list">${html}</div>`;
-        }catch(err){
-          selfplayHistoryBox.innerHTML = '<div class="muted-small">Failed to load self-play history.</div>';
-        }
-      }
-
-      function formatSelfPlayEntry(entry){
-        const iteration = entry && entry.iteration !== undefined ? entry.iteration : '?';
-        const dataset = entry?.dataset ? String(entry.dataset) : '';
-        const runLabel = entry?.run_dir ? String(entry.run_dir).split(/[/\\]/).filter(Boolean).pop() : '';
-        const metrics = entry?.metrics || {};
-        const parts = [];
-        if (metrics.Sharpe !== undefined) parts.push(`Sharpe ${fmt(Number(metrics.Sharpe), 2)}`);
-        if (metrics.AnnReturn !== undefined) parts.push(`AnnRet ${formatFieldValue('AnnReturn', Number(metrics.AnnReturn))}`);
-        if (metrics.MaxDD !== undefined) parts.push(`MaxDD ${formatFieldValue('MaxDD', Number(metrics.MaxDD))}`);
-        const overridesLine = entry?.overrides ? formatOverrides(entry.overrides) : '';
-        const headerBits = [`Iteration ${iteration}`];
-        if (dataset) headerBits.push(dataset);
-        if (entry?.timestamp) headerBits.push(entry.timestamp);
-        const header = headerBits.join(' · ');
-        const metaLineParts = [];
-        if (parts.length) metaLineParts.push(parts.join(', '));
-        if (runLabel) metaLineParts.push(runLabel);
-        const metaLine = metaLineParts.join(' · ');
-        const overridesHtml = overridesLine ? `<div class="meta">Overrides: ${overridesLine}</div>` : '';
-        return `<div class="selfplay-entry"><div class="title">${header}</div><div class="meta">${metaLine || 'Metrics pending'}</div>${overridesHtml}</div>`;
-      }
-
       function toggleCard(header, forceState){
         if (!header) return;
         const card = header.closest('.collapsible-card');
@@ -668,8 +627,6 @@
         header.setAttribute('aria-expanded', String(next));
         if (next && target === 'graphsDeck') {
           activateGraphTab(activeGraphKey || 'topk');
-        } else if (next && target === 'selfplayHistory') {
-          refreshSelfPlayHistory();
         }
       }
 
@@ -1117,24 +1074,48 @@
       }
 
       async function startRun(){
-        try{
+        try {
           const dataset = document.getElementById('dataset').value;
           const saved = loadSavedOverrides();
-          startBtn.disabled = true; statusEl.textContent = 'starting…';
-          const r = await fetch('/api/pipeline/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({dataset, overrides: saved}) });
-          if(!r.ok){ startBtn.disabled=false; statusEl.textContent='error'; throw new Error(await r.text()); }
-          const { job_id } = await r.json(); currentJob = job_id; try{ localStorage.setItem('dashboard_current_job', currentJob||''); }catch(e){} statusEl.textContent = 'running…'; startRunAnim();
+          startBtn.disabled = true;
+          statusEl.textContent = 'starting…';
+          const resp = await fetch('/api/pipeline/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataset, overrides: saved }),
+          });
+          if (!resp.ok) {
+            startBtn.disabled = false;
+            statusEl.textContent = 'error';
+            throw new Error(await resp.text());
+          }
+          const { job_id } = await resp.json();
+          currentJob = job_id;
+          jobIsRunning = true;
+          try {
+            localStorage.setItem('dashboard_current_job', currentJob || '');
+          } catch (err) {}
+          statusEl.textContent = 'running…';
+          startRunAnim();
           const es = new EventSource(`/api/events/${job_id}`);
           es.onmessage = (ev)=>{
             try{ const msg = JSON.parse(ev.data); handleEvent(msg); } catch(e){ /* ignore raw */ }
           };
           es.addEventListener('ping', ()=>{});
-        }catch(e){ console.error(e); alert('Failed to start run'); startBtn.disabled=false; statusEl.textContent='idle'; }
-        finally {
+        } catch (err) {
+          console.error(err);
+          alert('Failed to start run');
+          jobIsRunning = false;
+          currentJob = null;
+          startBtn.disabled = false;
+          statusEl.textContent = 'idle';
+          try {
+            localStorage.removeItem('dashboard_current_job');
+          } catch (e) {}
+        } finally {
           if(!currentJob && ambientController){ ambientController.setMode('idle'); }
         }
       }
-
       function handleEvent(m){
         if(m.type === 'status' && m.msg === 'started'){
           statusEl.textContent = 'running…';
@@ -1211,7 +1192,7 @@
           }
         }
         if(jobIsRunning){
-          if(selectedRunDir && selectedRunDir !== activeRunDir){
+          if(currentJobType === 'pipeline' && selectedRunDir && selectedRunDir !== activeRunDir){
             await loadRun(selectedRunDir).catch(()=>{});
           }
           return;
@@ -1371,8 +1352,8 @@
             state.mode = next;
             state.palette = palettes[next] || palettes.idle;
             state.crest = crestColors[next] || crestColors.idle;
-            state.speed = next === 'active' ? 1.4 : 0.7;
-            state.amp = next === 'active' ? 1.3 : 1.0;
+            state.speed = next === 'active' ? 1.6 : 0.8;
+            state.amp = next === 'active' ? 1.4 : 1.0;
             state.label = next === 'active' ? 'RUN' : 'WAVES';
             state.labelColor = next === 'active' ? '#35ff9b' : '#3b4a58';
           };
@@ -1398,11 +1379,11 @@
             if(targetW !== state.w || targetH !== state.h){ init(); }
             const w = state.w, h = state.h;
             ctx.fillStyle = '#0b1014'; ctx.fillRect(0,0,w,h);
-            state.t += 0.02 * state.speed;
+            state.t += 0.03 * state.speed;
             const baseOffsets = [0.58, 0.62, 0.66, 0.70];
             const ampBase = [8, 10, 12, 14];
-            const freqBase = [0.018, 0.016, 0.014, 0.012];
-            const speedBase = [0.6, 0.8, 1.0, 1.2];
+            const freqBase = [0.020, 0.018, 0.016, 0.014];
+            const speedBase = [0.8, 1.0, 1.2, 1.4];
             state.palette.forEach((color, idx)=>{
               const amp = ampBase[idx] * state.amp;
               const yBase = h * baseOffsets[idx];
@@ -1430,6 +1411,13 @@
       // Init
       startBtn.addEventListener('click', startRun);
       openSettingsBtn.addEventListener('click', ()=>{ try{ localStorage.setItem('dashboard_current_run', currentRunDir||''); localStorage.setItem('dashboard_current_job', currentJob||''); }catch(e){} window.location.href = '/ui/settings.html'; });
+      openSelfplayBtn.addEventListener('click', ()=>{
+        try {
+          localStorage.setItem('dashboard_current_run', currentRunDir||'');
+          localStorage.setItem('dashboard_current_job', currentJob||'');
+        } catch (e) {}
+        window.location.href = '/ui/selfplay.html';
+      });
       // no terminal controls in this variant
       copyProgramBtn.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(programBox.textContent); } catch(e){} });
       if (copySummaryBtn) {

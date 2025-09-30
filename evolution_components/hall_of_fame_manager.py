@@ -22,6 +22,7 @@ _hof_programs_data: List[HOFEntry] = []  # Store HOF entries with generation
 _hof_max_size: int = 20
 _hof_fingerprints_set: Set[str] = set() # For quick check of existence
 _keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFIG
+_hof_min_fill: int = 0
 
 # For correlation penalty
 # Store rank-transformed prediction vectors for correlation checks
@@ -32,25 +33,27 @@ _hof_raw_pred_matrix: List[np.ndarray] = []  # store raw flattened predictions f
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 
 
-def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, corr_cutoff: float):
-    global _hof_programs_data, _hof_max_size, _hof_fingerprints_set, _keep_dupes_in_hof_config
+def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, corr_cutoff: float, *, min_fill: int = 0):
+    global _hof_programs_data, _hof_max_size, _hof_fingerprints_set, _keep_dupes_in_hof_config, _hof_min_fill
     global _hof_rank_pred_matrix, _corr_penalty_config, _hof_corr_fingerprints
     
     _hof_programs_data = []
     _hof_max_size = max_size
     _hof_fingerprints_set = set()
     _keep_dupes_in_hof_config = keep_dupes # Though original was hardcoded False
+    _hof_min_fill = max(0, int(min_fill))
     
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _hof_raw_pred_matrix = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
     logging.getLogger(__name__).info(
-        "Hall of Fame initialized: max_size=%s, keep_dupes=%s, corr_penalty_w=%s, corr_cutoff=%s",
+        "Hall of Fame initialized: max_size=%s, keep_dupes=%s, corr_penalty_w=%s, corr_cutoff=%s, min_fill=%s",
         max_size,
         keep_dupes,
         corr_penalty_weight,
         corr_cutoff,
+        _hof_min_fill,
     )
 
 def set_correlation_penalty(weight: float | None = None, cutoff: float | None = None) -> None:
@@ -289,11 +292,16 @@ def add_program_to_hof(
         and processed_preds_matrix.size > 0
     ):
         cand_rank = _rank_vector(processed_preds_matrix.ravel())
+        enforce_cutoff = len(_hof_programs_data) >= _hof_min_fill
         for hof_rank, hof_fp in zip(_hof_rank_pred_matrix, _hof_corr_fingerprints):
             if hof_fp == fp or len(hof_rank) != len(cand_rank):
                 continue
             corr = abs(_safe_corr(cand_rank, hof_rank))
-            if not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
+            if (
+                enforce_cutoff
+                and not np.isnan(corr)
+                and corr > _corr_penalty_config["cutoff"]
+            ):
                 logger.debug(
                     "HOF-reject %s vs %s | corr=%.3f > %.3f",
                     fp[:8],
@@ -302,6 +310,17 @@ def add_program_to_hof(
                     _corr_penalty_config["cutoff"],
                 )
                 return  # Too correlated – do not add to the HOF
+            elif not enforce_cutoff and not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
+                logger.debug(
+                    "HOF relaxed fill %s vs %s | corr=%.3f > %.3f (current=%d < min_fill=%d)",
+                    fp[:8],
+                    hof_fp[:8],
+                    corr,
+                    _corr_penalty_config["cutoff"],
+                    len(_hof_programs_data),
+                    _hof_min_fill,
+                )
+                break
     
     # Logic for adding to _hof_programs_data (main HOF for output)
     inserted = False

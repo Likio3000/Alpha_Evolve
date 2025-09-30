@@ -113,7 +113,8 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         max_size=cfg.hof_size,
         keep_dupes=cfg.keep_dupes_in_hof,
         corr_penalty_weight=cfg.corr_penalty_w,
-        corr_cutoff=cfg.corr_cutoff
+        corr_cutoff=cfg.corr_cutoff,
+        min_fill=cfg.hof_min_fill,
     )
     initialize_evaluation_cache(cfg.eval_cache_size)
 
@@ -691,6 +692,7 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             "ic_std": float(getattr(res, "ic_std", 0.0)),
                             "turnover": float(getattr(res, "turnover_proxy", 0.0)),
                             "drawdown": float(getattr(res, "max_drawdown", 0.0)),
+                            "sharpe": float(getattr(res, "sharpe_proxy", 0.0)),
                             "parsimony": float(res.parsimony_penalty),
                             "corr_pen": float(res.correlation_penalty),
                             "factor_exposure_sum": float(getattr(res, "factor_exposure_sum", 0.0)),
