@@ -53,6 +53,6 @@ HTTP API (dashboard server)
   - `POST /api/run` → start an `auto_improve` job, returns `job_id`.
 - Common:
   - `GET /api/last-run` → latest run_dir + best Sharpe
-  - `GET /api/diagnostics?run_dir=...` → returns `diagnostics.json` (per-generation entries with `factor_exposure_summary`, `horizon_summary`, `feature_coverage`, `regime_summary`, `stress_summary`, `robustness_summary`, `qd_summary`, etc.)
+  - `GET /api/diagnostics?run_dir=...` → returns `diagnostics.json` (per-generation entries with feature coverage, top-K snapshots, quantiles, etc.)
   - `GET /api/backtest-summary?run_dir=...` → returns backtest summary JSON (list of rows)
   - `GET /api/alpha-timeseries?run_dir=...&alpha_id=Alpha_01` → returns per‑alpha timeseries JSON for plotting

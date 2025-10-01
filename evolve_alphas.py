@@ -664,26 +664,8 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     top_summary = []
                     feature_counts = {name: 0 for name in FEATURE_VARS.keys()}
                     population_size = max(1, len(pop))
-                    factor_accum: Dict[str, List[float]] = {}
-                    horizon_accum: Dict[int, Dict[str, List[float]]] = {}
-                    factor_sum_samples: List[float] = []
-                    turnover_samples: List[float] = []
-                    drawdown_samples: List[float] = []
-                    ic_std_samples: List[float] = []
-                    sharpe_samples: List[float] = []
-                    robustness_samples: List[float] = []
-                    stress_accum: Dict[str, List[float]] = {}
-                    regime_exposure_accum: Dict[str, List[float]] = {}
                     for idx_in_pop, res in tmp_sorted[:K]:
                         prog = pop[idx_in_pop]
-                        if res.factor_exposures:
-                            for name, val in res.factor_exposures.items():
-                                factor_accum.setdefault(name, []).append(float(val))
-                        if res.horizon_metrics:
-                            for h, metrics_h in res.horizon_metrics.items():
-                                bucket = horizon_accum.setdefault(int(h), {})
-                                for key, value in metrics_h.items():
-                                    bucket.setdefault(key, []).append(float(value))
                         top_summary.append({
                             "fingerprint": prog.fingerprint,
                             "fitness": float(res.fitness),
@@ -705,76 +687,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             "horizon_metrics": {int(h): {mk: float(mv) for mk, mv in metrics.items()} for h, metrics in res.horizon_metrics.items()},
                             "program": prog.to_string(max_len=180),
                         })
-                        factor_sum_samples.append(float(getattr(res, "factor_exposure_sum", 0.0)))
-                        turnover_samples.append(float(getattr(res, "turnover_proxy", 0.0)))
-                        drawdown_samples.append(float(getattr(res, "max_drawdown", 0.0)))
-                        ic_std_samples.append(float(getattr(res, "ic_std", 0.0)))
-                        sharpe_samples.append(float(getattr(res, "sharpe_proxy", 0.0)))
-                        robustness_samples.append(float(getattr(res, "robustness_penalty", 0.0)))
-                        for key, val in getattr(res, "stress_metrics", {}).items():
-                            stress_accum.setdefault(key, []).append(float(val))
-                        for key, val in getattr(res, "transaction_costs", {}).items():
-                            stress_accum.setdefault(f"tc_{key}", []).append(float(val))
-                        for key, val in getattr(res, "regime_exposures", {}).items():
-                            regime_exposure_accum.setdefault(key, []).append(float(val))
                     for idx_in_pop, _ in eval_results:
                         for feat in _program_feature_usage(pop[idx_in_pop]):
                             if feat in feature_counts:
                                 feature_counts[feat] += 1
-                    factor_summary = {
-                        k: float(np.mean(v))
-                        for k, v in factor_accum.items()
-                        if v
-                    }
-                    if factor_sum_samples:
-                        factor_summary["total_abs"] = float(np.mean(factor_sum_samples))
-                    horizon_summary = {
-                        h: {
-                            key: float(np.mean(vals))
-                            for key, vals in metrics.items()
-                            if vals
-                        }
-                        for h, metrics in horizon_accum.items()
-                    }
-                    stress_summary = {
-                        key: float(np.mean(values))
-                        for key, values in stress_accum.items()
-                        if values
-                    }
-                    robustness_summary: Dict[str, float] = {}
-                    if robustness_samples:
-                        robustness_summary["mean"] = float(np.mean(robustness_samples))
-                        robustness_summary["std"] = float(np.std(robustness_samples))
-                    regime_summary: Dict[str, float | str] = {}
-                    if turnover_samples:
-                        regime_summary["turnover_mean"] = float(np.mean(turnover_samples))
-                        regime_summary["turnover_std"] = float(np.std(turnover_samples))
-                    if drawdown_samples:
-                        dd_mean = float(np.mean(drawdown_samples))
-                        dd_std = float(np.std(drawdown_samples))
-                        regime_summary["drawdown_mean"] = dd_mean
-                        regime_summary["drawdown_std"] = dd_std
-                    if factor_sum_samples:
-                        regime_summary["factor_exposure_mean"] = float(np.mean(factor_sum_samples))
-                    if ic_std_samples:
-                        regime_summary["ic_std_mean"] = float(np.mean(ic_std_samples))
-                    if sharpe_samples:
-                        regime_summary["sharpe_mean"] = float(np.mean(sharpe_samples))
-                    if regime_exposure_accum:
-                        regime_summary["exposures"] = {
-                            name: float(np.mean(vals))
-                            for name, vals in regime_exposure_accum.items()
-                            if vals
-                        }
-                    dd_val = regime_summary.get("drawdown_mean")
-                    if isinstance(dd_val, float):
-                        if dd_val > 0.1:
-                            regime_state = "stress"
-                        elif dd_val > 0.05:
-                            regime_state = "volatile"
-                        else:
-                            regime_state = "calm"
-                        regime_summary["risk_state"] = regime_state
                     diag.record_generation(
                         generation=gen + 1,
                         eval_stats=stats,
@@ -785,11 +701,6 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     diag.enrich_last(
                         pop_quantiles=(q or {}),
                         topK=top_summary,
-                        factor_exposure_summary=factor_summary,
-                        horizon_summary=horizon_summary,
-                        regime_summary=regime_summary,
-                        stress_summary=stress_summary,
-                        robustness_summary=robustness_summary,
                         feature_coverage={
                             name: feature_counts[name] / population_size
                             for name in feature_counts
@@ -862,11 +773,6 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             diag.enrich_last(pop_hist={"edges": edges.tolist(), "counts": counts.astype(int).tolist()})
                     except Exception:
                         pass
-                    if _QD_ENABLED:
-                        try:
-                            diag.enrich_last(qd_summary=qd_archive.get_summary())
-                        except Exception:
-                            pass
                     # Emit a structured per-generation diagnostic line for live dashboards
                     try:
                         import json as _json

@@ -16,7 +16,7 @@
 - [x] Expand feature inputs (volatility spreads, cross-asset signals, on-chain metrics) and surface regime-aware diagnostics.
 - [x] Integrate richer transaction-cost and stress backtests, feeding robustness penalties back into evolution and dashboards.
 - [x] Update dashboard UI to expose new pipeline knobs (`factor_penalty_*`, `evaluation_horizons`, QD archive controls).
-- [x] Extend dashboard views to display generation diagnostics (`factor_exposure_summary`, `horizon_summary`, `feature_coverage`, `qd_summary`).
+- [x] Extend dashboard views to display generation diagnostics (`feature_coverage`).
 - [x] Pin the ambient animation to the bottom-left corner so it stays visible while scrolling.
 - [x] Accelerate and recolor the ambient animation (green, higher amplitude) during active runs.
 - [x] Remove the Runner title/description and adjust the retro animation presentation during jobs.

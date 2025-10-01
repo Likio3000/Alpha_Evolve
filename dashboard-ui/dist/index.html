@@ -192,29 +192,9 @@
         <div class="muted mb8" id="diagMeta">n/a</div>
         <div class="diag-scroll">
           <div class="diag-stack">
-            <div class="collapsible-card open" data-key="factorSummary">
-              <div class="card-header" data-target="factorSummary" role="button" tabindex="0" aria-expanded="true">Factor Exposure</div>
-              <div class="card-body diag-content" id="factorSummary">n/a</div>
-            </div>
-            <div class="collapsible-card open" data-key="horizonSummary">
-              <div class="card-header" data-target="horizonSummary" role="button" tabindex="0" aria-expanded="true">Horizon Metrics</div>
-              <div class="card-body diag-content" id="horizonSummary">n/a</div>
-            </div>
             <div class="collapsible-card" data-key="featureCoverage">
               <div class="card-header" data-target="featureCoverage" role="button" tabindex="0" aria-expanded="false">Feature Coverage</div>
               <div class="card-body diag-content" id="featureCoverage">n/a</div>
-            </div>
-            <div class="collapsible-card" data-key="regimeSummary">
-              <div class="card-header" data-target="regimeSummary" role="button" tabindex="0" aria-expanded="false">Regime Summary</div>
-              <div class="card-body diag-content" id="regimeSummary">n/a</div>
-            </div>
-            <div class="collapsible-card" data-key="stressSummary">
-              <div class="card-header" data-target="stressSummary" role="button" tabindex="0" aria-expanded="false">Stress &amp; Robustness</div>
-              <div class="card-body diag-content" id="stressSummary">n/a</div>
-            </div>
-            <div class="collapsible-card" data-key="qdSummary">
-              <div class="card-header" data-target="qdSummary" role="button" tabindex="0" aria-expanded="false">QD Archive</div>
-              <div class="card-body diag-content" id="qdSummary">n/a</div>
             </div>
           </div>
         </div>
@@ -805,151 +785,29 @@
           }
           rows.push(`<div class="kv-row"><span>${key}</span><span>${formatted}</span></div>`);
         }
-        el.innerHTML = rows.join('') || '<div class="muted-small">n/a</div>';}
+        el.innerHTML = rows.join('') || '<div class="muted-small">n/a</div>';
+      }
 
-      function renderFactorSummary(data) { renderKV('factorSummary', data); }
-
-      function renderFeatureCoverage(data) { renderKV('featureCoverage', data, { percent: true, percentDecimals: 1 }); }
-
-      function renderHorizonSummary(data) {
-        const el = document.getElementById('horizonSummary');
-        if (!el) return;
-        if (!data || Object.keys(data).length === 0) {
-          el.innerHTML = '<div class="muted-small">n/a</div>';
-          return;
-        }
-        const columns = [
-          { key: 'mean_ic', label: 'IC', fmt: v => fmt(v, 3) },
-          { key: 'ic_std', label: 'IC std', fmt: v => fmt(v, 3) },
-          { key: 'mean_pnl', label: 'PNL', fmt: v => `${fmt((+v) * 100, 2)}%` },
-          { key: 'sharpe', label: 'Sharpe', fmt: v => fmt(v, 2) },
-          { key: 'max_drawdown', label: 'MaxDD', fmt: v => `${fmt((+v) * 100, 2)}%` },
-        ];
-        const head = ['H'].concat(columns.map(c => c.label)).map(label => `<th>${label}</th>`).join('');
-        const rows = Object.entries(data).map(([horizon, metrics]) => {
-          const cells = columns.map(col => {
-            const value = metrics && metrics[col.key];
-            if (value === undefined || value === null || Number.isNaN(value)) return '<td></td>';
-            return `<td>${col.fmt(value)}</td>`;
-          }).join('');
-          return `<tr><td>${horizon}</td>${cells}</tr>`;
-        }).join('');
-        el.innerHTML = `<table class="small-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;}
-
-      function renderRegimeSummary(data) {
-        const el = document.getElementById('regimeSummary');
-        if (!el) return;
-        if (!data || Object.keys(data).length === 0) {
-          el.innerHTML = '<div class="muted-small">n/a</div>';
-          return;
-        }
-        const { risk_state, ...rest } = data;
-        let html = '';
-        if (risk_state) {
-          const cls = risk_state === 'stress' ? 'risk-badge stress' : risk_state === 'volatile' ? 'risk-badge volatile' : 'risk-badge calm';
-          html += `<div class="kv-row"><span>Risk State</span><span><span class="${cls}">${risk_state}</span></span></div>`;
-        }
-        for (const [key, value] of Object.entries(rest)) {
-          if (value === null || value === undefined) continue;
-          if (typeof value === 'object' && !Array.isArray(value)) {
-            const entries = Object.entries(value).filter(([, v]) => typeof v === 'number' && isFinite(v));
-            if (entries.length) {
-              html += `<div class="muted-small" style="margin-top:6px;">${key}</div>`;
-              for (const [subKey, subVal] of entries) {
-                html += `<div class="kv-row"><span>${subKey}</span><span>${fmt(subVal, 3)}</span></div>`;
-              }
-            }
-            continue;
-          }
-          if (typeof value !== 'number' || !isFinite(value)) continue;
-          const lower = key.toLowerCase();
-          const formatted = lower.includes('drawdown') ? `${fmt((+value) * 100, 2)}%` : fmt(value, 3);
-          html += `<div class="kv-row"><span>${key}</span><span>${formatted}</span></div>`;
-        }
-        el.innerHTML = html || '<div class="muted-small">n/a</div>'; }
-
-      function renderStressSummary(stress, robust) {
-        const el = document.getElementById('stressSummary');
-        if (!el) return;
-        if ((!stress || Object.keys(stress).length === 0) && (!robust || Object.keys(robust).length === 0)) {
-          el.innerHTML = '<div class="muted-small">n/a</div>';
-          return;
-        }
-        let html = '';
-        if (stress && Object.keys(stress).length) {
-          for (const [key, value] of Object.entries(stress)) {
-            if (value === null || value === undefined) continue;
-            let formatted = value;
-            if (typeof value === 'number') {
-              const lower = key.toLowerCase();
-              if (lower.includes('drawdown') || lower.includes('return') || lower.includes('mean') || lower.includes('cost')) {
-                formatted = `${fmt((+value) * 100, 2)}%`;
-              } else {
-                formatted = fmt(value, 3);
-              }
-            }
-            html += `<div class="kv-row"><span>${key}</span><span>${formatted}</span></div>`;
-          }
-        }
-        if (robust && Object.keys(robust).length) {
-          html += '<div class="muted-small" style="margin-top:6px;">Robustness</div>';
-          for (const [key, value] of Object.entries(robust)) {
-            if (value === null || value === undefined || typeof value !== 'number') continue;
-            html += `<div class="kv-row"><span>${key}</span><span>${fmt(value, 3)}</span></div>`;
-          }
-        }
-        el.innerHTML = html || '<div class="muted-small">n/a</div>'; }
-
-      function renderQDSummary(data) {
-        const el = document.getElementById('qdSummary');
-        if (!el) return;
-        if (!data || Object.keys(data).length === 0) {
-          el.innerHTML = '<div class="muted-small">n/a</div>';
-          return;
-        }
-        let html = '';
-        if (data.cells !== undefined) { html += `<div class="kv-row"><span>Cells</span><span>${data.cells}</span></div>`; }
-        if (Array.isArray(data.turnover_bins)) { html += `<div class="kv-row"><span>Turnover bins</span><span>${data.turnover_bins.join(', ')}</span></div>`; }
-        if (Array.isArray(data.complexity_bins)) { html += `<div class="kv-row"><span>Complexity bins</span><span>${data.complexity_bins.join(', ')}</span></div>`; }
-        if (Array.isArray(data.elites)) {
-          const elites = data.elites.slice(0, 3);
-          if (elites.length) {
-            html += '<div class="muted-small" style="margin-top:6px;">Top elites</div>';
-            for (const elite of elites) {
-              html += `<div class="kv-row"><span>${elite.fingerprint || elite.fp || ''}</span><span>${fmt(elite.fitness ?? 0, 3)}</span></div>`;
-            }
-          }
-        }
-        el.innerHTML = html || '<div class="muted-small">n/a</div>'; }
+      function renderFeatureCoverage(data) {
+        renderKV('featureCoverage', data, { percent: true, percentDecimals: 1 });
+      }
 
       function renderDiagnosticsEntry(entry) {
         currentDiag = entry || null;
         const meta = document.getElementById('diagMeta');
         if (meta) meta.textContent = entry && entry.generation !== undefined ? `Gen ${entry.generation}` : 'n/a';
         if (!entry) {
-          renderFactorSummary(null);
-          renderHorizonSummary(null);
           renderFeatureCoverage(null);
-          renderRegimeSummary(null);
-          renderStressSummary(null, null);
-          renderQDSummary(null);
           return;
         }
-        renderFactorSummary(entry.factor_exposure_summary);
-        renderHorizonSummary(entry.horizon_summary);
         renderFeatureCoverage(entry.feature_coverage);
-        renderRegimeSummary(entry.regime_summary);
-        renderStressSummary(entry.stress_summary, entry.robustness_summary);
-        renderQDSummary(entry.qd_summary); }
+      }
 
       function clearDiagnostics() {
         currentDiag = null;
         const meta = document.getElementById('diagMeta');
         if (meta) meta.textContent = 'n/a';
-        ['factorSummary', 'horizonSummary', 'featureCoverage', 'regimeSummary', 'stressSummary', 'qdSummary'].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) el.innerHTML = '<div class="muted-small">n/a</div>';
-        });
+        renderFeatureCoverage(null);
       }
 
       function clearRunSelection(){
