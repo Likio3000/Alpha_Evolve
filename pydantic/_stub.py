@@ -7,6 +7,7 @@ __all__ = ["BaseModel", "Field", "ConfigDict", "ValidationError"]
 
 
 _UNSET = object()
+_RESERVED_FIELD_NAMES = {"model_config", "__fields__"}
 
 
 def _is_mapping(value: Any) -> bool:
@@ -66,6 +67,8 @@ class _BaseModelMeta(type):
 
         fields: Dict[str, FieldInfo] = {}
         for attr, _ in annotations.items():
+            if attr in _RESERVED_FIELD_NAMES:
+                continue
             raw_default = namespace.get(attr, getattr(bases[-1], attr, _UNSET)) if bases else namespace.get(attr, _UNSET)
             if isinstance(raw_default, FieldInfo):
                 info = raw_default
@@ -116,6 +119,8 @@ class BaseModel(metaclass=_BaseModelMeta):
                 values.update(provided)
 
         for name, value in list(values.items()):
+            if name not in self.__fields__:
+                continue
             err = self._validate_value(name, value)
             if err is not None:
                 errors.append(err)
