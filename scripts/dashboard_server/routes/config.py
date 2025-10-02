@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from django.http import HttpRequest
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_POST
 
 from ..helpers import ROOT
+from ..http import json_error, json_response
 
 try:  # Python 3.11+
     import tomllib as _toml
@@ -13,37 +17,32 @@ except Exception:  # pragma: no cover
     _toml = None  # type: ignore
 
 
-router = APIRouter()
-
-
 def _configs_dir() -> Path:
     return ROOT / "configs"
 
 
 def _safe_config_path(name: str) -> Path:
-    # Normalize to filename only, enforce .toml
     base = Path(name).name
     if not base.endswith(".toml"):
         base += ".toml"
     p = _configs_dir() / base
-    # Ensure path is within configs dir
     try:
         p.resolve().relative_to(_configs_dir().resolve())
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid filename")
+    except Exception as exc:  # pragma: no cover - guardrail
+        raise ValueError("Invalid filename") from exc
     return p
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
     if _toml is None:
-        raise HTTPException(status_code=500, detail="TOML parser not available")
+        raise RuntimeError("TOML parser not available")
     try:
         with path.open("rb") as fh:
             return _toml.load(fh)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Config not found: {path}")
-    except Exception as e:  # pragma: no cover
-        raise HTTPException(status_code=400, detail=f"Failed to parse TOML: {e}")
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Config not found: {path}") from exc
+    except Exception as exc:  # pragma: no cover - passthrough parsing errors
+        raise ValueError(f"Failed to parse TOML: {exc}") from exc
 
 
 def _to_toml(obj: Dict[str, Dict[str, Any]]) -> str:
@@ -68,36 +67,34 @@ def _to_toml(obj: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-@router.get("/api/config/defaults")
-def get_defaults() -> Dict[str, Any]:
-    """Return default parameter values and known choice lists.
-
-    Defaults are read from configs/all_params.toml if present.
-    """
+@require_GET
+def get_defaults(request: HttpRequest):
     cfg = _configs_dir() / "all_params.toml"
     evo: Dict[str, Any] = {}
     bt: Dict[str, Any] = {}
     if cfg.exists():
-        data = _load_toml(cfg)
+        try:
+            data = _load_toml(cfg)
+        except (FileNotFoundError, ValueError, RuntimeError):  # pragma: no cover - unexpected
+            data = {}
         evo = dict(data.get("evolution", {}))
         bt = dict(data.get("backtest", {}))
     choices = {
-        # Shared/select-type choices
         "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
         "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
         "split_weighting": ["equal", "by_points"],
         "scale": ["zscore", "rank", "sign", "madz", "winsor"],
         "hof_corr_mode": ["flat", "per_bar"],
     }
-    return {"evolution": evo, "backtest": bt, "choices": choices}
+    return json_response({"evolution": evo, "backtest": bt, "choices": choices})
 
 
-@router.get("/api/config/list")
-def list_configs() -> Dict[str, Any]:
+@require_GET
+def list_configs(request: HttpRequest):
     items = []
     for p in sorted(_configs_dir().glob("*.toml")):
         items.append({"name": p.name, "path": str(p.relative_to(ROOT))})
-    return {"items": items}
+    return json_response({"items": items})
 
 
 def _preset_map() -> Dict[str, str]:
@@ -113,50 +110,63 @@ def _preset_map() -> Dict[str, str]:
     return presets
 
 
-@router.get("/api/config/presets")
-def get_presets() -> Dict[str, Any]:
-    return {"presets": _preset_map()}
+@require_GET
+def get_presets(request: HttpRequest):
+    return json_response({"presets": _preset_map()})
 
 
-@router.get("/api/config/preset-values")
-def get_preset_values(dataset: Optional[str] = Query(default=None), path: Optional[str] = Query(default=None)) -> Dict[str, Any]:
-    if not dataset and not path:
-        raise HTTPException(status_code=400, detail="Provide dataset or path")
+@require_GET
+def get_preset_values(request: HttpRequest):
+    dataset = request.GET.get("dataset")
+    path_param = request.GET.get("path")
+    if not dataset and not path_param:
+        return json_error("Provide dataset or path", 400)
     target: Optional[Path] = None
     if dataset:
         rel = _preset_map().get(dataset.strip().lower())
         if not rel:
-            raise HTTPException(status_code=404, detail="Unknown dataset preset")
+            return json_error("Unknown dataset preset", 404)
         target = ROOT / rel
-    elif path:
-        # Normalize and ensure under ROOT/configs
-        p = Path(path)
+    elif path_param:
+        p = Path(path_param)
         if p.is_absolute():
-            raise HTTPException(status_code=400, detail="Path must be relative")
+            return json_error("Path must be relative", 400)
         cand = (ROOT / p).resolve()
         try:
             cand.relative_to(_configs_dir().resolve())
         except Exception:
-            raise HTTPException(status_code=400, detail="Path must be under configs/")
+            return json_error("Path must be under configs/", 400)
         target = cand
     if target is None:
-        raise HTTPException(status_code=400, detail="Unable to resolve preset path")
-    data = _load_toml(target)
-    return {"evolution": data.get("evolution", {}), "backtest": data.get("backtest", {})}
+        return json_error("Unable to resolve preset path", 400)
+    try:
+        data = _load_toml(target)
+    except FileNotFoundError as exc:
+        return json_error(str(exc), 404)
+    except (ValueError, RuntimeError) as exc:
+        return json_error(str(exc), 400)
+    return json_response({"evolution": data.get("evolution", {}), "backtest": data.get("backtest", {})})
 
 
-@router.post("/api/config/save")
-def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+@csrf_exempt
+@require_POST
+def save_config(request: HttpRequest):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return json_error("Invalid JSON body", 400)
     name = str(payload.get("name") or "").strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Missing name")
+        return json_error("Missing name", 400)
     evo = payload.get("evolution") or {}
     bt = payload.get("backtest") or {}
     if not isinstance(evo, dict) or not isinstance(bt, dict):
-        raise HTTPException(status_code=400, detail="Invalid evolution/backtest")
-    out_path = _safe_config_path(name)
+        return json_error("Invalid evolution/backtest", 400)
+    try:
+        out_path = _safe_config_path(name)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     txt = _to_toml({"evolution": evo, "backtest": bt})
     out_path.write_text(txt, encoding="utf-8")
-    return {"saved": str(out_path.relative_to(ROOT))}
-
+    return json_response({"saved": str(out_path.relative_to(ROOT))})

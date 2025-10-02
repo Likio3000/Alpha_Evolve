@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 import re
-import asyncio
+import json
+import time
+from queue import Empty
 
-from fastapi import Request
-from sse_starlette.sse import EventSourceResponse
+from django.http import StreamingHttpResponse
 
 
 # Resolve project root relative to this file (under scripts/dashboard_server)
@@ -123,16 +124,17 @@ RE_DIAG = re.compile(r"DIAG\s+(\{.*\})$")
 RE_PROGRESS = re.compile(r"PROGRESS\s+(\{.*\})$")
 
 
-def make_sse_response(request: Request, queue, keepalive_seconds: float = 10.0) -> EventSourceResponse:
-    async def event_generator():
+def make_sse_response(queue, keepalive_seconds: float = 10.0) -> StreamingHttpResponse:
+    def _event_stream():
         while True:
-            if await request.is_disconnected():
-                break
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=keepalive_seconds)
-                yield {"event": "message", "data": item}
-            except asyncio.TimeoutError:
-                yield {"event": "ping", "data": __import__("json").dumps({"t": __import__("time").time()})}
-                continue
+                item = queue.get(timeout=keepalive_seconds)
+                yield f"data: {item}\n\n"
+            except Empty:
+                payload = json.dumps({"t": time.time()})
+                yield f"event: ping\ndata: {payload}\n\n"
 
-    return EventSourceResponse(event_generator())
+    response = StreamingHttpResponse(_event_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    return response

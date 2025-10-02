@@ -9,14 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from django.http import HttpRequest, HttpResponseNotAllowed
+from django.views.decorators.csrf import csrf_exempt
+
+from pydantic import ValidationError
 
 from ..helpers import PIPELINE_DIR, ROOT
+from ..http import json_error, json_response
 from ..jobs import STATE
 from ..models import SelfplayApprovalRequest, SelfplayRunRequest
-
-
-router = APIRouter()
 
 
 SELFPLAY_ROOT = PIPELINE_DIR / "self_evolution"
@@ -35,8 +36,8 @@ def _load_history() -> List[Dict[str, Any]]:
         if isinstance(data, list):
             return data
     except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"Failed to read self-play history: {exc}")
-    raise HTTPException(status_code=500, detail="Invalid self-play history format; expected a list")
+        raise RuntimeError(f"Failed to read self-play history: {exc}")
+    raise RuntimeError("Invalid self-play history format; expected a list")
 
 
 def _list_session_dirs() -> List[Path]:
@@ -54,16 +55,16 @@ def _resolve_session(session: Optional[str]) -> Optional[Path]:
             try:
                 raw.relative_to(SELFPLAY_ROOT)
             except ValueError:
-                raise HTTPException(status_code=400, detail="Session path must live under self_evolution directory")
+                raise ValueError("Session path must live under self_evolution directory")
             candidate = raw
         else:
             candidate = (SELFPLAY_ROOT / raw).resolve()
         if not candidate.exists() or not candidate.is_dir():
-            raise HTTPException(status_code=404, detail="Requested session not found")
+            raise FileNotFoundError("Requested session not found")
         try:
             candidate.relative_to(SELFPLAY_ROOT)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session path")
+            raise ValueError("Invalid session path")
         return candidate
     dirs = _list_session_dirs()
     return dirs[-1] if dirs else None
@@ -78,7 +79,7 @@ def _load_json(path: Path) -> Optional[Dict[str, Any]]:
         if isinstance(data, dict):
             return data
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read {path.name}: {exc}")
+        raise RuntimeError(f"Failed to read {path.name}: {exc}")
     return None
 
 
@@ -88,7 +89,7 @@ def _load_jsonl(path: Path, limit: int) -> List[Dict[str, Any]]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read {path.name}: {exc}")
+        raise RuntimeError(f"Failed to read {path.name}: {exc}")
     entries: List[Dict[str, Any]] = []
     for line in lines[-limit:]:
         if not line.strip():
@@ -110,13 +111,24 @@ def _relative_to_pipeline(path: Path) -> str:
         return str(path)
 
 
-@router.post("/api/selfplay/run")
-async def start_selfplay_run(payload: SelfplayRunRequest) -> Dict[str, Any]:
+@csrf_exempt
+async def start_selfplay_run(request: HttpRequest) -> Any:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return json_error("Invalid JSON body", 400)
+    try:
+        payload = SelfplayRunRequest.model_validate(data)
+    except ValidationError as exc:
+        return json_response({"detail": exc.errors()}, status=422)
+
     search_path = Path(payload.search_space).expanduser()
     if not search_path.is_absolute():
         search_path = (ROOT / search_path).resolve()
     if not search_path.exists():
-        raise HTTPException(status_code=404, detail=f"Search-space file not found: {search_path}")
+        return json_error(f"Search-space file not found: {search_path}", 404)
 
     config_path: Optional[Path] = None
     if payload.config:
@@ -124,7 +136,7 @@ async def start_selfplay_run(payload: SelfplayRunRequest) -> Dict[str, Any]:
         if not candidate.is_absolute():
             candidate = (ROOT / candidate).resolve()
         if not candidate.exists():
-            raise HTTPException(status_code=404, detail=f"Config not found: {candidate}")
+            return json_error(f"Config not found: {candidate}", 404)
         config_path = candidate
 
     job_id = str(uuid.uuid4())
@@ -212,70 +224,112 @@ async def start_selfplay_run(payload: SelfplayRunRequest) -> Dict[str, Any]:
         await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
-    return {"job_id": job_id}
+    return json_response({"job_id": job_id})
 
 
-@router.get("/api/selfplay/history")
-def get_selfplay_history(limit: int = Query(default=25, ge=1, le=200)) -> Dict[str, Any]:
-    entries = _load_history()
+def get_selfplay_history(request: HttpRequest):
+    limit_param = request.GET.get("limit", "25")
+    try:
+        limit = max(1, min(200, int(limit_param)))
+    except Exception:
+        return json_error("limit must be an integer", 400)
+    try:
+        entries = _load_history()
+    except RuntimeError as exc:
+        return json_error(str(exc), 500)
     if not entries:
-        return {"history": []}
+        return json_response({"history": []})
     entries_sorted = sorted(entries, key=lambda item: (item.get("timestamp"), item.get("iteration", -1)))
-    return {"history": entries_sorted[-limit:][::-1]}
+    return json_response({"history": entries_sorted[-limit:][::-1]})
 
 
-@router.get("/api/selfplay/history/latest")
-def get_latest_selfplay() -> Dict[str, Any]:
-    entries = _load_history()
+def get_latest_selfplay(request: HttpRequest):
+    try:
+        entries = _load_history()
+    except RuntimeError as exc:
+        return json_error(str(exc), 500)
     if not entries:
-        return {"entry": None}
+        return json_response({"entry": None})
     latest = max(entries, key=lambda item: (item.get("timestamp"), item.get("iteration", -1)))
-    return {"entry": latest}
+    return json_response({"entry": latest})
 
 
-@router.get("/api/selfplay/status")
-def get_selfplay_status(
-    session: Optional[str] = Query(default=None, description="Session directory (relative or absolute)"),
-    limit: int = Query(default=5, ge=1, le=50),
-) -> Dict[str, Any]:
-    session_dir = _resolve_session(session)
+def get_selfplay_status(request: HttpRequest):
+    session = request.GET.get("session")
+    limit_param = request.GET.get("limit", "5")
+    try:
+        limit = max(1, min(50, int(limit_param)))
+    except Exception:
+        return json_error("limit must be an integer", 400)
+    try:
+        session_dir = _resolve_session(session)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+    except FileNotFoundError:
+        return json_error("Requested session not found", 404)
+
     if session_dir is None:
-        return {
+        return json_response({
             "session_dir": None,
             "session_name": None,
             "pending_action": None,
             "briefings": [],
             "summary": None,
+        })
+
+    try:
+        summary = _load_json(session_dir / "session_summary.json")
+        pending = _load_json(session_dir / "pending_action.json")
+        briefings = _load_jsonl(session_dir / "agent_briefings.jsonl", limit)
+    except RuntimeError as exc:
+        return json_error(str(exc), 500)
+
+    return json_response(
+        {
+            "session_dir": str(session_dir),
+            "session_name": session_dir.name,
+            "session_path": _relative_to_pipeline(session_dir),
+            "pending_action": pending,
+            "briefings": briefings,
+            "summary": summary,
         }
-
-    summary = _load_json(session_dir / "session_summary.json")
-    pending = _load_json(session_dir / "pending_action.json")
-    briefings = _load_jsonl(session_dir / "agent_briefings.jsonl", limit)
-
-    return {
-        "session_dir": str(session_dir),
-        "session_name": session_dir.name,
-        "session_path": _relative_to_pipeline(session_dir),
-        "pending_action": pending,
-        "briefings": briefings,
-        "summary": summary,
-    }
+    )
 
 
-@router.post("/api/selfplay/approval")
-def post_selfplay_approval(payload: SelfplayApprovalRequest) -> Dict[str, Any]:
-    session_dir = _resolve_session(payload.session)
+@csrf_exempt
+async def post_selfplay_approval(request: HttpRequest):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return json_error("Invalid JSON body", 400)
+    try:
+        payload = SelfplayApprovalRequest.model_validate(data)
+    except ValidationError as exc:
+        return json_response({"detail": exc.errors()}, status=422)
+
+    try:
+        session_dir = _resolve_session(payload.session)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+    except FileNotFoundError:
+        return json_error("No self-play session found", 404)
+
     if session_dir is None:
-        raise HTTPException(status_code=404, detail="No self-play session found")
+        return json_error("No self-play session found", 404)
 
     pending_path = session_dir / "pending_action.json"
-    data = _load_json(pending_path)
+    try:
+        data = _load_json(pending_path)
+    except RuntimeError as exc:
+        return json_error(str(exc), 500)
     if data is None:
-        raise HTTPException(status_code=404, detail="pending_action.json not found for session")
+        return json_error("pending_action.json not found for session", 404)
 
     status = payload.status.strip().lower()
     if not status:
-        raise HTTPException(status_code=400, detail="Status must be non-empty")
+        return json_error("Status must be non-empty", 400)
 
     data["status"] = status
     if payload.notes is not None:
@@ -289,9 +343,9 @@ def post_selfplay_approval(payload: SelfplayApprovalRequest) -> Dict[str, Any]:
     try:
         pending_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to update pending action: {exc}")
+        return json_error(f"Failed to update pending action: {exc}", 500)
 
-    return {
+    return json_response({
         "session_dir": str(session_dir),
         "pending_action": data,
-    }
+    })

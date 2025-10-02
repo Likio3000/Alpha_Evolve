@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
-
-router = APIRouter()
+from django.http import JsonResponse
 
 
-@router.get("/health")
-def health():
-    return {"ok": True}
-
+def health(request):
+    return JsonResponse({"ok": True})

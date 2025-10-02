@@ -9,7 +9,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+from django.http import HttpRequest, HttpResponseNotAllowed
+from django.views.decorators.csrf import csrf_exempt
+
+from pydantic import ValidationError
 
 from ..jobs import STATE
 from ..helpers import (
@@ -21,14 +24,24 @@ from ..helpers import (
     RE_PROGRESS,
     make_sse_response,
 )
+from ..http import json_error, json_response
 from ..models import AutoImproveRequest
 
 
-router = APIRouter()
+@csrf_exempt
+async def start_run(request: HttpRequest):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
 
+    try:
+        payload_data = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return json_error("Invalid JSON body", 400)
+    try:
+        payload = AutoImproveRequest.model_validate(payload_data)
+    except ValidationError as exc:
+        return json_response({"detail": exc.errors()}, status=422)
 
-@router.post("/api/run")
-async def start_run(payload: AutoImproveRequest):
     job_id = str(uuid.uuid4())
     q = STATE.new_queue(job_id)
 
@@ -190,11 +203,17 @@ async def start_run(payload: AutoImproveRequest):
         await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
-    return {"job_id": job_id}
+    return json_response({"job_id": job_id})
 
 
-@router.post("/api/simple/run")
-async def simple_run(payload: Dict[str, Any]):
+@csrf_exempt
+async def simple_run(request: HttpRequest):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except Exception:
+        return json_error("Invalid JSON body", 400)
     job_id = str(uuid.uuid4())
     q = STATE.new_queue(job_id)
     gens = int(payload.get("generations", 8))
@@ -204,7 +223,7 @@ async def simple_run(payload: Dict[str, Any]):
     elif ds in ("sp500", "s&p500", "snp500"):
         cfg_path = str(ROOT / "configs" / "sp500.toml")
     else:
-        raise HTTPException(status_code=400, detail="dataset must be 'crypto' or 'sp500'")
+        return json_error("dataset must be 'crypto' or 'sp500'", 400)
     args: list[str] = ["uv", "run", "run_pipeline.py", str(gens), "--config", cfg_path]
     if payload.get("data_dir"):
         args += ["--data_dir", str(payload["data_dir"])]
@@ -256,20 +275,21 @@ async def simple_run(payload: Dict[str, Any]):
         await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
-    return {"job_id": job_id}
+    return json_response({"job_id": job_id})
 
 
-@router.get("/api/events/{job_id}")
-async def sse_events(request: Request, job_id: str):
+def sse_events(request: HttpRequest, job_id: str):
     q = STATE.get_queue(job_id)
     if q is None:
-        raise HTTPException(status_code=404, detail="Unknown job id")
-    return make_sse_response(request, q)
+        return json_error("Unknown job id", 404)
+    return make_sse_response(q)
 
 
-@router.post("/api/stop/{job_id}")
-async def stop(job_id: str):
+@csrf_exempt
+async def stop(request: HttpRequest, job_id: str):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
     ok = STATE.stop(job_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Unknown job id or already stopped")
-    return {"stopped": True}
+        return json_error("Unknown job id or already stopped", 404)
+    return json_response({"stopped": True})

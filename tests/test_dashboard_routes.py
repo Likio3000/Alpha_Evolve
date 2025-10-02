@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 from types import SimpleNamespace
 import threading
-import time
 from pathlib import Path
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
 
+
+pytestmark = pytest.mark.asyncio
 
 def _write_backtest_files(run_dir: Path) -> None:
     bt_dir = run_dir / "backtest_portfolio_csvs"
@@ -27,8 +30,8 @@ def _write_backtest_files(run_dir: Path) -> None:
     )
 
 
-@pytest.fixture()
-def dashboard_env(tmp_path, monkeypatch):
+@pytest_asyncio.fixture()
+async def dashboard_env(tmp_path, monkeypatch):
     pipeline_dir = tmp_path / "pipeline_runs_cs"
     pipeline_dir.mkdir()
     run_dir = pipeline_dir / "run_demo"
@@ -43,69 +46,68 @@ def dashboard_env(tmp_path, monkeypatch):
     selfplay_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.routes.selfplay"))
     app_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.app"))
 
-    client = TestClient(app_mod.create_app())
+    transport = httpx.ASGITransport(app=app_mod.create_app(), lifespan="auto")
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        try:
+            yield SimpleNamespace(
+                client=client,
+                helpers=helpers_mod,
+                pipeline_dir=pipeline_dir,
+                run_dir=run_dir,
+            )
+        finally:
+            # Reload modules so subsequent tests see default environment-derived paths
+            importlib.reload(helpers_mod)
+            importlib.reload(runs_mod)
+            importlib.reload(selfplay_mod)
+            importlib.reload(app_mod)
 
-    try:
-        yield SimpleNamespace(
-            client=client,
-            helpers=helpers_mod,
-            pipeline_dir=pipeline_dir,
-            run_dir=run_dir,
-        )
-    finally:
-        client.close()
-        # Reload modules so subsequent tests see default environment-derived paths
-        importlib.reload(helpers_mod)
-        importlib.reload(runs_mod)
-        importlib.reload(selfplay_mod)
-        importlib.reload(app_mod)
 
-
-def test_resolve_latest_run_dir_reads_relative_pointer(dashboard_env):
+async def test_resolve_latest_run_dir_reads_relative_pointer(dashboard_env):
     assert dashboard_env.helpers.resolve_latest_run_dir() == dashboard_env.run_dir.resolve()
 
 
-def test_resolve_latest_run_dir_handles_absolute_pointer(dashboard_env):
+async def test_resolve_latest_run_dir_handles_absolute_pointer(dashboard_env):
     latest = dashboard_env.pipeline_dir / "LATEST"
     latest.write_text(str(dashboard_env.run_dir.resolve()), encoding="utf-8")
     assert dashboard_env.helpers.resolve_latest_run_dir() == dashboard_env.run_dir.resolve()
 
 
-def test_last_run_endpoint_returns_expected_payload(dashboard_env):
-    resp = dashboard_env.client.get("/api/last-run")
+async def test_last_run_endpoint_returns_expected_payload(dashboard_env):
+    resp = await dashboard_env.client.get("/api/last-run")
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["run_dir"] == "run_demo"
     assert payload["sharpe_best"] == pytest.approx(1.25)
 
 
-def test_runs_endpoint_lists_runs(dashboard_env):
-    resp = dashboard_env.client.get("/api/runs")
+async def test_runs_endpoint_lists_runs(dashboard_env):
+    resp = await dashboard_env.client.get("/api/runs")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
     assert data[0]["path"] == "run_demo"
 
 
-def test_backtest_summary_requires_valid_run_dir(dashboard_env):
-    ok_resp = dashboard_env.client.get("/api/backtest-summary", params={"run_dir": "run_demo"})
+async def test_backtest_summary_requires_valid_run_dir(dashboard_env):
+    ok_resp = await dashboard_env.client.get("/api/backtest-summary", params={"run_dir": "run_demo"})
     assert ok_resp.status_code == 200
     rows = ok_resp.json()
     assert rows and rows[0]["AlphaID"] == "Alpha_01"
 
-    bad_resp = dashboard_env.client.get("/api/backtest-summary", params={"run_dir": "../../etc"})
+    bad_resp = await dashboard_env.client.get("/api/backtest-summary", params={"run_dir": "../../etc"})
     assert bad_resp.status_code == 400
 
 
-def test_alpha_timeseries_endpoint(dashboard_env):
-    ok_resp = dashboard_env.client.get("/api/alpha-timeseries", params={"run_dir": "run_demo", "alpha_id": "Alpha_01"})
+async def test_alpha_timeseries_endpoint(dashboard_env):
+    ok_resp = await dashboard_env.client.get("/api/alpha-timeseries", params={"run_dir": "run_demo", "alpha_id": "Alpha_01"})
     assert ok_resp.status_code == 200
     payload = ok_resp.json()
     assert payload["date"]
     assert len(payload["equity"]) == len(payload["date"])
 
 
-def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
+async def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
     release = threading.Event()
     iter_started = threading.Event()
     lines = ["DIAG {\"foo\": 1}\n"]
@@ -151,13 +153,13 @@ def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
         fake_popen,
     )
 
-    resp = dashboard_env.client.post("/api/pipeline/run", json={"generations": 1})
+    resp = await dashboard_env.client.post("/api/pipeline/run", json={"generations": 1})
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
     assert iter_started.wait(timeout=1.0)
 
     try:
-        health_resp = dashboard_env.client.get("/health", timeout=1.0)
+        health_resp = await dashboard_env.client.get("/health", timeout=1.0)
     finally:
         release.set()
 
@@ -166,11 +168,11 @@ def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
 
     # Ensure the background job plumbing settles before the fixture teardown
     for _ in range(20):
-        status_resp = dashboard_env.client.get(f"/api/job-status/{job_id}")
+        status_resp = await dashboard_env.client.get(f"/api/job-status/{job_id}")
         payload = status_resp.json()
         if not payload.get("running"):
             break
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
 
 
 def _write_selfplay_session(root: Path) -> Path:
@@ -217,10 +219,10 @@ def _write_selfplay_session(root: Path) -> Path:
     return session_dir
 
 
-def test_selfplay_status_endpoint_returns_latest_session(dashboard_env):
+async def test_selfplay_status_endpoint_returns_latest_session(dashboard_env):
     session_dir = _write_selfplay_session(dashboard_env.pipeline_dir)
 
-    resp = dashboard_env.client.get("/api/selfplay/status")
+    resp = await dashboard_env.client.get("/api/selfplay/status")
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["session_name"] == session_dir.name
@@ -228,10 +230,10 @@ def test_selfplay_status_endpoint_returns_latest_session(dashboard_env):
     assert len(payload["briefings"]) == 2
 
 
-def test_selfplay_approval_endpoint_updates_file(dashboard_env):
+async def test_selfplay_approval_endpoint_updates_file(dashboard_env):
     session_dir = _write_selfplay_session(dashboard_env.pipeline_dir)
 
-    resp = dashboard_env.client.post(
+    resp = await dashboard_env.client.post(
         "/api/selfplay/approval",
         json={"status": "approved"},
     )
@@ -243,7 +245,7 @@ def test_selfplay_approval_endpoint_updates_file(dashboard_env):
     assert updated["status"] == "approved"
 
 
-def test_selfplay_run_endpoint_starts_job(dashboard_env, monkeypatch):
+async def test_selfplay_run_endpoint_starts_job(dashboard_env, monkeypatch):
     search_space = dashboard_env.helpers.ROOT / "configs" / "self_evolution" / "sample_crypto_space.json"
 
     class DummyPopen:
@@ -269,7 +271,7 @@ def test_selfplay_run_endpoint_starts_job(dashboard_env, monkeypatch):
         lambda *a, **kw: DummyPopen(),
     )
 
-    resp = dashboard_env.client.post(
+    resp = await dashboard_env.client.post(
         "/api/selfplay/run",
         json={
             "search_space": str(search_space),
@@ -282,10 +284,12 @@ def test_selfplay_run_endpoint_starts_job(dashboard_env, monkeypatch):
     assert job_id
 
     for _ in range(20):
-        status = dashboard_env.client.get(f"/api/job-status/{job_id}").json()
+        status_resp = await dashboard_env.client.get(f"/api/job-status/{job_id}")
+        status = status_resp.json()
         if not status.get("running"):
             break
-        time.sleep(0.01)
+        await asyncio.sleep(0.01)
 
-    log_payload = dashboard_env.client.get(f"/api/job-log/{job_id}").json()
+    log_resp = await dashboard_env.client.get(f"/api/job-log/{job_id}")
+    log_payload = log_resp.json()
     assert "log" in log_payload

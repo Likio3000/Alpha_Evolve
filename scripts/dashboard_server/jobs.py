@@ -3,21 +3,20 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, Dict
 import subprocess
+from queue import Queue
 
 
 class JobState:
     """Lightweight process + log manager for the dashboard server."""
 
     def __init__(self) -> None:
-        self.queues: Dict[str, object] = {}
+        self.queues: Dict[str, Queue] = {}
         self.procs: Dict[str, subprocess.Popen] = {}
         self.logs: Dict[str, deque[str]] = {}
         self.meta: Dict[str, Any] = {}
 
     def new_queue(self, job_id: str):
-        import asyncio
-
-        q: asyncio.Queue = asyncio.Queue()
+        q: Queue[str] = Queue()
         self.queues[job_id] = q
         # Keep up to ~10k lines per job in memory
         self.logs[job_id] = deque(maxlen=10000)

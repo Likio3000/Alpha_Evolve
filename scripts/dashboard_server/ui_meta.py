@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 from typing import Any, Dict
-from fastapi import APIRouter
+from django.http import JsonResponse
 
 
-router = APIRouter()
-
-
-@router.get("/ui-meta/evolution-params")
-def get_evolution_params_ui_meta() -> Dict[str, Any]:
-    return {
+def get_evolution_params_ui_meta(request) -> JsonResponse:
+    return JsonResponse({
         "schema_version": 1,
         "groups": [
             {
@@ -31,12 +27,11 @@ def get_evolution_params_ui_meta() -> Dict[str, Any]:
                 ],
             },
         ],
-    }
+    })
 
 
-@router.get("/ui-meta/pipeline-params")
-def get_pipeline_params_ui_meta() -> Dict[str, Any]:
-    return {
+def get_pipeline_params_ui_meta(request) -> JsonResponse:
+    return JsonResponse({
         "schema_version": 1,
         "groups": [
             {
@@ -151,4 +146,4 @@ def get_pipeline_params_ui_meta() -> Dict[str, Any]:
                 ],
             },
         ],
-    }
+    })

@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from django.http import FileResponse, HttpRequest, HttpResponseNotAllowed
+from django.views.decorators.csrf import csrf_exempt
 
 from ..helpers import (
     ROOT,
@@ -14,10 +14,8 @@ from ..helpers import (
     read_best_sharpe_from_run,
     resolve_latest_run_dir,
 )
+from ..http import json_error, json_response
 from ..jobs import STATE
-
-
-router = APIRouter()
 
 
 def _labels_path() -> Path:
@@ -36,10 +34,7 @@ def _load_labels() -> Dict[str, str]:
 
 def _save_labels(lbl: Dict[str, str]) -> None:
     p = _labels_path()
-    try:
-        p.write_text(json.dumps(lbl, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to save labels")
+    p.write_text(json.dumps(lbl, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def _find_runs() -> List[Path]:
@@ -73,11 +68,15 @@ def _resolve_run_dir(run_dir: str) -> Path:
             continue
         if resolved.exists():
             return resolved
-    raise HTTPException(status_code=400, detail="run_dir must resolve under pipeline_runs_cs/")
+    raise ValueError("run_dir must resolve under pipeline_runs_cs/")
 
 
-@router.get("/api/runs")
-def list_runs(limit: int = Query(default=50, ge=1, le=1000)) -> List[Dict[str, Any]]:
+def list_runs(request: HttpRequest):
+    limit_param = request.GET.get("limit", "50")
+    try:
+        limit = max(1, min(1000, int(limit_param)))
+    except Exception:
+        return json_error("limit must be an integer", 400)
     labels = _load_labels()
     items: List[Dict[str, Any]] = []
     for p in _find_runs()[:limit]:
@@ -91,16 +90,15 @@ def list_runs(limit: int = Query(default=50, ge=1, le=1000)) -> List[Dict[str, A
             "label": label,
             "sharpe_best": None if sharpe is None else float(sharpe),
         })
-    return items
+    return json_response(items)
 
 
-@router.get("/api/last-run")
-def get_last_run() -> Dict[str, Any]:
+def get_last_run(request: HttpRequest):
     p = resolve_latest_run_dir()
     if p is None:
-        return {"run_dir": None, "sharpe_best": None}
+        return json_response({"run_dir": None, "sharpe_best": None})
     sharpe = read_best_sharpe_from_run(p)
-    return {"run_dir": _format_path_for_ui(p), "sharpe_best": None if sharpe is None else float(sharpe)}
+    return json_response({"run_dir": _format_path_for_ui(p), "sharpe_best": None if sharpe is None else float(sharpe)})
 
 
 def _summary_csv(run_dir: Path) -> Optional[Path]:
@@ -113,18 +111,22 @@ def _summary_csv(run_dir: Path) -> Optional[Path]:
     return cand[-1]
 
 
-@router.get("/api/backtest-summary")
-def backtest_summary(run_dir: str) -> List[Dict[str, Any]]:
-    p = _resolve_run_dir(run_dir)
+def backtest_summary(request: HttpRequest):
+    run_dir = request.GET.get("run_dir")
+    if not run_dir:
+        return json_error("run_dir is required", 400)
+    try:
+        p = _resolve_run_dir(run_dir)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
     csv_path = _summary_csv(p)
     if csv_path is None:
-        return []
+        return json_response([])
     rows: List[Dict[str, Any]] = []
     try:
         with csv_path.open(newline="", encoding="utf-8") as fh:
             rdr = csv.DictReader(fh)
             for r in rdr:
-                # Best effort type normalization
                 def _f(k: str) -> Optional[float]:
                     try:
                         return float(r.get(k, ""))
@@ -145,15 +147,14 @@ def backtest_summary(run_dir: str) -> List[Dict[str, Any]]:
                     "Program": r.get("Program") or r.get("PROGRAM"),
                 })
     except FileNotFoundError:
-        return []
-    return rows
+        return json_response([])
+    return json_response(rows)
 
 
 def _resolve_ts_file(run_dir: Path, file: Optional[str], alpha_id: Optional[str]) -> Path:
     bt_dir = run_dir / "backtest_portfolio_csvs"
     if file:
         return bt_dir / Path(file).name
-    # Need to map by alpha id via summary
     summary = _summary_csv(run_dir)
     if summary and alpha_id:
         try:
@@ -167,16 +168,25 @@ def _resolve_ts_file(run_dir: Path, file: Optional[str], alpha_id: Optional[str]
                             return bt_dir / Path(ts).name
         except Exception:
             pass
-    # Fallback: not found
-    raise HTTPException(status_code=404, detail="Timeseries not found")
+    raise FileNotFoundError("Timeseries not found")
 
 
-@router.get("/api/alpha-timeseries")
-def alpha_timeseries(run_dir: str, file: Optional[str] = None, alpha_id: Optional[str] = None) -> Dict[str, Any]:
-    p = _resolve_run_dir(run_dir)
-    ts_path = _resolve_ts_file(p, file, alpha_id)
+def alpha_timeseries(request: HttpRequest):
+    run_dir = request.GET.get("run_dir")
+    file = request.GET.get("file")
+    alpha_id = request.GET.get("alpha_id")
+    if not run_dir:
+        return json_error("run_dir is required", 400)
+    try:
+        p = _resolve_run_dir(run_dir)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+    try:
+        ts_path = _resolve_ts_file(p, file, alpha_id)
+    except FileNotFoundError:
+        return json_error("Timeseries CSV not found", 404)
     if not ts_path.exists():
-        raise HTTPException(status_code=404, detail="Timeseries CSV not found")
+        return json_error("Timeseries CSV not found", 404)
     dates: List[str] = []
     equity: List[float] = []
     ret_net: List[float] = []
@@ -194,79 +204,82 @@ def alpha_timeseries(run_dir: str, file: Optional[str] = None, alpha_id: Optiona
                 except Exception:
                     ret_net.append(float("nan"))
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to read timeseries")
-    return {"date": dates, "equity": equity, "ret_net": ret_net}
+        return json_error("Failed to read timeseries", 500)
+    return json_response({"date": dates, "equity": equity, "ret_net": ret_net})
 
 
-@router.get("/api/job-log/{job_id}")
-def job_log(job_id: str) -> Dict[str, Any]:
+def job_log(request: HttpRequest, job_id: str):
     text = STATE.get_log_text(job_id)
-    return {"log": text}
+    return json_response({"log": text})
 
 
-@router.get("/api/job-status/{job_id}")
-def job_status(job_id: str) -> Dict[str, Any]:
+def job_status(request: HttpRequest, job_id: str):
     p = STATE.get_proc(job_id)
     if p is None:
-        return {"exists": False, "running": False}
+        return json_response({"exists": False, "running": False})
     try:
         running = p.poll() is None
     except Exception:
         running = False
-    return {"exists": True, "running": bool(running)}
+    return json_response({"exists": True, "running": bool(running)})
 
 
-@router.post("/api/run-label")
-def set_run_label(payload: Dict[str, Any]) -> Dict[str, Any]:
+@csrf_exempt
+def set_run_label(request: HttpRequest):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return json_error("Invalid JSON body", 400)
     path = str(payload.get("path") or "").strip()
     label = str(payload.get("label") or "").strip()
     if not path:
-        raise HTTPException(status_code=400, detail="Missing path")
-    # Expect relative path under ROOT
+        return json_error("Missing path", 400)
     p = (ROOT / path).resolve()
     try:
         p.relative_to(PIPELINE_DIR.resolve())
     except Exception:
-        raise HTTPException(status_code=400, detail="Path must be under pipeline_runs_cs/")
+        return json_error("Path must be under pipeline_runs_cs/", 400)
     if not p.exists():
-        raise HTTPException(status_code=404, detail="Run path not found")
+        return json_error("Run path not found", 404)
     labels = _load_labels()
     if label:
         labels[p.name] = label
     else:
         labels.pop(p.name, None)
-    _save_labels(labels)
-    return {"ok": True}
+    try:
+        _save_labels(labels)
+    except Exception:
+        return json_error("Failed to save labels", 500)
+    return json_response({"ok": True})
 
 
-@router.get("/api/run-asset")
-def run_asset(run_dir: str, file: str, sub: Optional[str] = None) -> FileResponse:
-    """Serve a file from a run directory safely (e.g., plots/topk_fitness_vs_ops.png).
-
-    - run_dir: relative path under pipeline_runs_cs/
-    - file: relative path within the run directory (e.g., 'plots/topk_fitness_vs_ops.png')
-    - sub: optional subdirectory to join before file (ignored if file already has a directory component)
-    """
-    # Resolve and ensure run_dir under PIPELINE_DIR
+def run_asset(request: HttpRequest):
+    run_dir = request.GET.get("run_dir")
+    file = request.GET.get("file")
+    sub = request.GET.get("sub")
+    if not run_dir or not file:
+        return json_error("run_dir and file are required", 400)
     run_path = (ROOT / run_dir).resolve()
     try:
         run_path.relative_to(PIPELINE_DIR.resolve())
     except Exception:
-        raise HTTPException(status_code=400, detail="run_dir must be under pipeline_runs_cs/")
+        return json_error("run_dir must be under pipeline_runs_cs/", 400)
 
-    # Build candidate path
     fpath = Path(file)
     if fpath.is_absolute():
-        raise HTTPException(status_code=400, detail="file must be relative")
+        return json_error("file must be relative", 400)
     if sub and fpath.parent == Path('.'):
         fpath = Path(sub) / fpath
     full = (run_path / fpath).resolve()
     try:
         full.relative_to(run_path)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid file path")
+        return json_error("Invalid file path", 400)
     if not full.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    # Infer media type
+        return json_error("File not found", 404)
     media = "image/png" if full.suffix.lower() in (".png",) else None
-    return FileResponse(str(full), media_type=media)
+    response = FileResponse(open(full, "rb"), content_type=media)
+    response["Content-Disposition"] = f'inline; filename="{full.name}"'
+    return response

@@ -6,10 +6,13 @@ import os
 import re
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
-from pathlib import Path
+from django.http import HttpRequest, HttpResponseNotAllowed
+from django.views.decorators.csrf import csrf_exempt
+
+from pydantic import ValidationError
 
 from ..jobs import STATE
 from ..helpers import (
@@ -21,26 +24,34 @@ from ..helpers import (
     RE_DIAG,
     RE_PROGRESS,
 )
+from ..http import json_error, json_response
 from ..models import PipelineRunRequest
 
 
-router = APIRouter()
+@csrf_exempt
+async def start_pipeline_run(request: HttpRequest):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
 
+    try:
+        payload_data = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return json_error("Invalid JSON body", 400)
+    try:
+        payload = PipelineRunRequest.model_validate(payload_data)
+    except ValidationError as exc:
+        return json_response({"detail": exc.errors()}, status=422)
 
-@router.post("/api/pipeline/run")
-async def start_pipeline_run(payload: PipelineRunRequest):
-    # Early validation for clearer API errors
     pd = payload.model_dump()
     ds = (pd.get("dataset") or "").strip().lower()
     cfg_path = pd.get("config")
     if cfg_path:
         p = Path(str(cfg_path))
         if not p.exists():
-            raise HTTPException(status_code=404, detail=f"Config not found: {p}")
+            return json_error(f"Config not found: {p}", 404)
     elif ds and ds not in ("crypto", "crypto_4h", "crypto4h", "sp500", "s&p500", "snp500"):
-        raise HTTPException(status_code=400, detail="Unknown dataset; provide dataset=crypto|sp500 or a config path")
-    job_id = STATE.__class__.__name__ + ":"  # keep a prefix, but uniqueness is from uuid in caller
-    # Create queue and actual id here to align with legacy behavior
+        return json_error("Unknown dataset; provide dataset=crypto|sp500 or a config path", 400)
+
     import uuid as _uuid
 
     job_id = str(_uuid.uuid4())
@@ -193,4 +204,4 @@ async def start_pipeline_run(payload: PipelineRunRequest):
         await asyncio.to_thread(_stream_output)
 
     asyncio.create_task(_pump())
-    return {"job_id": job_id}
+    return json_response({"job_id": job_id})
