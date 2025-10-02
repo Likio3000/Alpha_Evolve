@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import threading
 from pathlib import Path
 
+import inspect
+
 import httpx
 import pytest
 import pytest_asyncio
@@ -46,7 +48,10 @@ async def dashboard_env(tmp_path, monkeypatch):
     selfplay_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.routes.selfplay"))
     app_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.app"))
 
-    transport = httpx.ASGITransport(app=app_mod.create_app(), lifespan="auto")
+    transport_kwargs = {"app": app_mod.create_app()}
+    if "lifespan" in inspect.signature(httpx.ASGITransport).parameters:
+        transport_kwargs["lifespan"] = "auto"
+    transport = httpx.ASGITransport(**transport_kwargs)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         try:
             yield SimpleNamespace(
