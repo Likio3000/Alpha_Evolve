@@ -12,6 +12,7 @@ from alpha_framework.program_logic_generation import (
 
 
 def test_random_program_final_op_vector():
+    """Generate random programs and ensure the final predict op produces the designated vector."""
     # Default feature set plus two helpful scalar constants
     feature_vars = AlphaProgram._get_default_feature_vars()
     feature_vars.update({"const_1": "scalar", "const_neg_1": "scalar"})
@@ -32,6 +33,7 @@ def test_random_program_final_op_vector():
 
 
 def test_random_program_respects_block_limits():
+    """Confirm random program generation obeys setup/predict/update block size limits."""
     feature_vars = AlphaProgram._get_default_feature_vars()
     feature_vars.update({"const_1": "scalar", "const_neg_1": "scalar"})
     state_vars = {"dummy": "scalar"}

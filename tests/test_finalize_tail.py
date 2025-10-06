@@ -13,6 +13,7 @@ def _feature_vars_with_scalars() -> dict[str, str]:
 
 
 def test_finalize_tail_renames_vector_last_op():
+    """Verify vector-producing final ops are renamed to the canonical prediction output."""
     rng = np.random.default_rng(0)
     fv = _feature_vars_with_scalars()
     sv: dict[str, str] = {}
@@ -26,6 +27,7 @@ def test_finalize_tail_renames_vector_last_op():
 
 
 def test_finalize_tail_appends_assign_for_scalar_last_op():
+    """Ensure scalar last ops receive an extra assign step pointing to a valid vector feature."""
     rng = np.random.default_rng(1)
     fv = _feature_vars_with_scalars()
     sv: dict[str, str] = {}
@@ -39,4 +41,3 @@ def test_finalize_tail_appends_assign_for_scalar_last_op():
     assert prog.predict_ops[-1].opcode == "assign_vector"
     # Input should be a known vector feature
     assert prog.predict_ops[-1].inputs[0] in fv and fv[prog.predict_ops[-1].inputs[0]] == "vector"
-

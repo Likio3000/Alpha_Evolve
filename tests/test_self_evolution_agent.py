@@ -10,6 +10,7 @@ from self_evolution.agent import AgentConfig, ParameterSpec, ParameterSpace, Sel
 
 
 def test_parameter_spec_float_range_sampling():
+    """Sample a float-range parameter and ensure values stay within bounds."""
     spec = ParameterSpec(
         key="evolution.parsimony_penalty",
         kind="float_range",
@@ -25,6 +26,7 @@ def test_parameter_spec_float_range_sampling():
 
 
 def test_parameter_space_forces_update():
+    """Check choice specs force updates even when the base value matches options."""
     spec = ParameterSpec(
         key="evolution.pop_size",
         kind="choice",
@@ -37,6 +39,7 @@ def test_parameter_space_forces_update():
 
 
 def test_self_evolution_agent_runs(tmp_path: Path):
+    """Run the self-evolution agent for two iterations and verify artefacts and best record."""
     def stub_pipeline_runner(evo_cfg: EvolutionConfig, bt_cfg: BacktestConfig, options: PipelineOptions) -> Path:
         idx = stub_pipeline_runner.counter
         run_dir = tmp_path / f"run_{idx}"

@@ -43,6 +43,7 @@ def make_feature_vars():
 
 
 def test_mutate_and_crossover_eval():
+    """Exercise mutation and crossover flows to ensure resulting programs evaluate correctly."""
     n = 4
     features = make_feature_dict(n)
     feature_vars = make_feature_vars()

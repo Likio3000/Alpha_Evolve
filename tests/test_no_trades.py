@@ -10,6 +10,7 @@ from backtesting_components.core_logic import backtest_cross_sectional_alpha
 
 
 def test_constant_signal_no_trades():
+    """Backtest a flat signal and confirm the engine reports the no-trades condition."""
     aligned, index, symbols = load_and_align_data_for_backtest(
         "tests/data/good", "common_1200", 4
     )

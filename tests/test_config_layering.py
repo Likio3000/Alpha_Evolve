@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 
 def test_backtest_config_layering_precedence(monkeypatch, tmp_path):
+    """Validate precedence order file < env < CLI when resolving backtest configuration."""
     # Build a file config
     cfg_path = tmp_path / "bt.toml"
     cfg_path.write_text(
@@ -42,6 +43,7 @@ def test_backtest_config_layering_precedence(monkeypatch, tmp_path):
 
 
 def test_pipeline_config_layering_precedence(monkeypatch, tmp_path):
+    """Confirm pipeline config layering respects CLI overrides and shared env defaults."""
     cfg_path = tmp_path / "pipe.toml"
     cfg_path.write_text(
         """
@@ -76,4 +78,3 @@ def test_pipeline_config_layering_precedence(monkeypatch, tmp_path):
     assert evo_cfg.seed == 123
     # backtest hold remains from file when no override
     assert bt_cfg.hold == 2
-

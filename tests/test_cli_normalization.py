@@ -4,6 +4,7 @@ from backtest_evolved_alphas import parse_args
 
 
 def test_backtest_cli_rejects_aliases(monkeypatch):
+    """Ensure legacy CLI flag aliases raise SystemExit so help text stays canonical."""
     argv_alias = [
         "backtest_evolved_alphas.py",
         "--data", "tests/data/good",

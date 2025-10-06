@@ -22,6 +22,7 @@ def _make_price_series(n: int = 120, seed: int = 0) -> pd.DataFrame:
 
 
 def test_compute_basic_features_includes_extended_columns():
+    """Ensure feature engineering emits all extended technical columns with finite values."""
     raw = _make_price_series()
     out = compute_basic_features(raw)
     expected_cols = {
@@ -37,6 +38,7 @@ def test_compute_basic_features_includes_extended_columns():
 
 
 def test_get_features_at_time_emits_new_vectors():
+    """Confirm runtime feature extraction provides sector-aware vectors for new derived metrics."""
     raw_a = _make_price_series(seed=1)
     raw_b = _make_price_series(seed=2)
     feat_a = compute_basic_features(raw_a)

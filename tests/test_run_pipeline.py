@@ -4,6 +4,7 @@ from run_pipeline import parse_args
 
 
 def test_parse_args_defaults(monkeypatch):
+    """Verify pipeline default arguments populate evolution/backtest configs sensibly."""
     argv = ["run_pipeline.py", "5"]
     monkeypatch.setattr(sys, "argv", argv)
     evo_cfg, bt_cfg, ns = parse_args()
@@ -17,6 +18,7 @@ def test_parse_args_defaults(monkeypatch):
 
 
 def test_parse_args_debug_flag(monkeypatch):
+    """Ensure --debug_prints flips the appropriate namespace flags without side-effects."""
     argv = ["run_pipeline.py", "3", "--debug_prints"]
     monkeypatch.setattr(sys, "argv", argv)
     _, _, ns = parse_args()
@@ -25,6 +27,7 @@ def test_parse_args_debug_flag(monkeypatch):
 
 
 def test_parse_args_run_baselines(monkeypatch):
+    """Check --run_baselines enables baseline training in the parsed namespace."""
     argv = ["run_pipeline.py", "3", "--run_baselines"]
     monkeypatch.setattr(sys, "argv", argv)
     _, _, ns = parse_args()
@@ -32,6 +35,7 @@ def test_parse_args_run_baselines(monkeypatch):
 
 
 def test_train_baselines_logs(tmp_path, caplog):
+    """Run baseline training helper and assert both baseline names are logged."""
     from run_pipeline import _train_baselines
 
     caplog.set_level(logging.INFO)

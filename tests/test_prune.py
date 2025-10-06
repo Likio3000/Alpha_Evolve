@@ -28,6 +28,7 @@ def make_feature_vars():
 
 
 def test_prune_removes_unreachable_and_changes_fingerprint():
+    """Ensure pruning excises dead ops and alters the program fingerprint."""
     prog = build_prog_with_dead_ops()
     fp_before = prog.fingerprint
     prog.prune()
@@ -38,6 +39,7 @@ def test_prune_removes_unreachable_and_changes_fingerprint():
 
 
 def test_mutate_calls_prune_and_changes_fingerprint():
+    """Confirm mutations trigger pruning so fingerprints reflect simplified logic."""
     prog = build_prog_with_dead_ops()
     fp_before = prog.fingerprint
 
@@ -61,6 +63,7 @@ def test_mutate_calls_prune_and_changes_fingerprint():
 
 
 def test_crossover_calls_prune_and_changes_fingerprint():
+    """Validate crossover pruning drops unused outputs in the resulting child."""
     prog_a = build_prog_with_dead_ops()
     prog_b = build_prog_with_dead_ops()
 
@@ -72,4 +75,3 @@ def test_crossover_calls_prune_and_changes_fingerprint():
     outputs = [op.out for op in child.predict_ops]
     assert "unused" not in outputs
     assert child.fingerprint != fp_before
-

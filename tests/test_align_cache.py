@@ -10,6 +10,7 @@ import pandas as pd
 
 
 def test_compute_key_and_roundtrip(tmp_path):
+    """Ensure alignment cache keys are stable and serialized bundles reload unchanged."""
     # Use tests/data/good directory for inputs
     data_dir = "tests/data/good"
     key = compute_align_cache_key(
@@ -38,4 +39,3 @@ def test_compute_key_and_roundtrip(tmp_path):
     loaded = load_aligned_bundle_from_cache(key)
     assert loaded is not None
     assert list(loaded.symbols) == ["AAA"]
-

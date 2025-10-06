@@ -13,6 +13,7 @@ def build_simple_program():
 
 
 def test_eval_returns_correct_vector():
+    """Evaluate a simple program to confirm vector math matches the hand calculation."""
     n_stocks = 5
     features = {
         "opens_t": np.arange(1, n_stocks + 1, dtype=float),
@@ -48,12 +49,14 @@ def test_scalar_vector_handling():
 
 
 def test_heaviside_op():
+    """Check the Heaviside operator outputs 0/1 thresholds on vector inputs."""
     buf = {"s": np.array([-1.0, 0.5, 0.0])}
     Op("out", "heaviside", ("s",)).execute(buf, n_stocks=3)
     assert np.allclose(buf["out"], np.array([0.0, 1.0, 0.0]))
 
 
 def test_relation_ops():
+    """Validate relation rank/demean operate group-wise over repeated cohorts."""
     v = np.array([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
     groups = np.array([0, 0, 0, 1, 1, 1])
     buf = {"v": v, "g": groups}
@@ -66,6 +69,7 @@ def test_relation_ops():
 
 
 def test_relation_ops_realistic_groups():
+    """Ensure relation operators handle uneven group sizes with correct scaling."""
     v = np.array([10.0, 20.0, 30.0, 100.0, 80.0, 5.0, 15.0, 25.0])
     groups = np.array([1, 1, 1, 2, 2, 3, 3, 3])
     buf = {"v": v, "g": groups}
@@ -78,6 +82,7 @@ def test_relation_ops_realistic_groups():
 
 
 def test_norm_op():
+    """Confirm the norm operator matches numpy's Frobenius norm for matrices."""
     m = np.array([[3.0, 4.0], [0.0, 0.0]])
     buf = {"m": m}
     Op("n", "norm", ("m",)).execute(buf, n_stocks=2)

@@ -67,6 +67,7 @@ def manual_backtest(signals, rets, long_short_n):
 
 
 def test_long_short_n_trades_only_requested_symbols():
+    """Ensure the long-short backtest only trades top/bottom ranked symbols each step."""
     index = pd.date_range("2020-01-01", periods=5)
     rets = np.array([
         [0.01, -0.02, 0.03],
@@ -111,6 +112,7 @@ def test_long_short_n_trades_only_requested_symbols():
 
 
 def test_backtest_reports_extended_stress_metrics():
+    """Verify cross-sectional backtest emits stress scenarios and transaction cost diagnostics."""
     index = pd.date_range("2021-01-01", periods=6)
     rets = np.array([
         [0.01, -0.02, 0.03],

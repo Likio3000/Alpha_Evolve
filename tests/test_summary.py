@@ -5,6 +5,7 @@ from run_pipeline import _write_summary_json
 
 
 def test_write_summary_json(tmp_path: Path):
+    """Generate SUMMARY.json and verify it references key artefacts for the run."""
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "meta").mkdir()
@@ -32,4 +33,3 @@ def test_write_summary_json(tmp_path: Path):
     assert data["backtest_summary_json"].endswith("backtest_summary_top1.json")
     assert data.get("data_alignment", "").endswith("data_alignment.json")
     assert data.get("backtested_alphas") == 1
-

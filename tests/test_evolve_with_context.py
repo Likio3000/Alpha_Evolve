@@ -4,6 +4,7 @@ import evolve_alphas as ea
 
 
 def test_evolve_with_explicit_context(monkeypatch):
+    """Evolve using a pre-built evaluation context to confirm API parity with global mode."""
     cfg = EvolutionConfig(
         data_dir="tests/data/good",
         max_lookback_data_option="common_1200",
@@ -25,4 +26,3 @@ def test_evolve_with_explicit_context(monkeypatch):
 
     res = ea.evolve_with_context(cfg, ctx)
     assert isinstance(res, list)
-

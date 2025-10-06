@@ -3,6 +3,7 @@ import json
 
 
 def test_write_hof_snapshots(monkeypatch, tmp_path: Path):
+    """Confirm hall-of-fame diagnostics are persisted per generation with non-empty entries."""
     from run_pipeline import _write_hof_snapshots
 
     # Fake diagnostics with hof snapshots for two generations
@@ -20,4 +21,3 @@ def test_write_hof_snapshots(monkeypatch, tmp_path: Path):
         data = json.loads(p.read_text())
         assert isinstance(data, list)
         assert data[0]["fp"] in {"aaaa", "bbbb"}
-

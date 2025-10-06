@@ -9,6 +9,7 @@ from config import EvolutionConfig
 
 
 def test_write_data_alignment_meta(monkeypatch, tmp_path: Path):
+    """Persist alignment metadata alongside a run and verify serialized fields match config."""
     run_dir = tmp_path / "run"
     meta_dir = run_dir / "meta"
     meta_dir.mkdir(parents=True)
@@ -51,4 +52,3 @@ def test_write_data_alignment_meta(monkeypatch, tmp_path: Path):
     assert payload["n_symbols_after"] == 2
     assert payload["dropped_symbols"] == ["CCC"]
     assert payload["overlap_len"] == 4
-

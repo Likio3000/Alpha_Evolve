@@ -91,6 +91,7 @@ def _configure(factor_weight: float, factors: str) -> None:
 
 
 def test_factor_penalty_reduces_fitness(monkeypatch):
+    """Verify enabling factor penalties subtracts the configured weight from fitness."""
     monkeypatch.setattr(el, "_uses_feature_vector_check", lambda prog: True)
 
     ret1d = np.array(

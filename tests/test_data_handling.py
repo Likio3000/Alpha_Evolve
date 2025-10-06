@@ -18,6 +18,7 @@ BAD_OVERLAP_DIR = "tests/data/bad_overlap"
 
 
 def test_load_and_align_internal_success():
+    """Load aligned training data internally and confirm indicators and alignment exist."""
     aligned, common_idx, symbols = _load_and_align_data_internal(
         DATA_DIR, "common_1200", 3, 1
     )
@@ -30,6 +31,7 @@ def test_load_and_align_internal_success():
 
 
 def test_load_and_align_for_backtest_success():
+    """Exercise backtest loader to ensure it mirrors the core alignment output."""
     aligned, common_idx, symbols = load_and_align_data_for_backtest(
         DATA_DIR, "common_1200", 4
     )
@@ -42,26 +44,31 @@ def test_load_and_align_for_backtest_success():
 
 
 def test_internal_missing_columns_raises():
+    """Expect a DataLoadError when source data lacks mandatory OHLC columns."""
     with pytest.raises(DataLoadError):
         _load_and_align_data_internal(MISSING_DIR, "full_overlap", 3, 1)
 
 
 def test_internal_insufficient_overlap_raises():
+    """Raise DataLoadError if symbol histories fail to meet the requested overlap window."""
     with pytest.raises(DataLoadError):
         _load_and_align_data_internal(BAD_OVERLAP_DIR, "common_1200", 3, 1)
 
 
 def test_backtest_missing_columns_raises():
+    """Ensure the backtest loader rejects datasets missing required fields."""
     with pytest.raises(DataLoadError):
         load_and_align_data_for_backtest(MISSING_DIR, "full_overlap", 3)
 
 
 def test_backtest_insufficient_overlap_raises():
+    """Verify the backtest loader enforces overlap requirements and errors otherwise."""
     with pytest.raises(DataLoadError):
         load_and_align_data_for_backtest(BAD_OVERLAP_DIR, "common_1200", 4)
 
 
 def test_get_data_splits_returns_expected_lengths():
+    """Initialize data and check train/val/test splits respect lag and overlap boundaries."""
     initialize_data(DATA_DIR, "common_1200", 3, 1)
     train, val, test = get_data_splits(1, 1, 1)
 
@@ -74,6 +81,7 @@ def test_get_data_splits_returns_expected_lengths():
 
 
 def test_get_sector_groups_example_symbols():
+    """Map a handful of symbols to their configured sector groups for sanity."""
     symbols = [
         "BINANCE_BTCUSDT, 240",
         "BINANCE_ETHUSDT, 240",
@@ -93,6 +101,7 @@ def test_get_sector_groups_example_symbols():
     [[], ["open"], ["high"], ["low"], ["close"]],
 )
 def test_compute_basic_features(missing_cols):
+    """Confirm feature engineering adds returns when inputs are complete and errors when not."""
     base_df = pd.DataFrame(
         {
             "open": [1.0, 2.0],

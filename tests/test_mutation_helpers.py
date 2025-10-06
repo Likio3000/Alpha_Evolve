@@ -27,6 +27,7 @@ def _feature_vars_with_scalars() -> dict[str, str]:
 
 
 def test_add_op_mutation_increases_setup_len():
+    """Ensure adding an op to the setup section actually appends a new instruction."""
     rng = np.random.default_rng(0)
     prog = _base_prog()
     fv = _feature_vars_with_scalars()
@@ -39,6 +40,7 @@ def test_add_op_mutation_increases_setup_len():
 
 
 def test_remove_op_mutation_decreases_predict_len_when_possible():
+    """Verify removing a predict op shortens the list when more than one exists."""
     rng = np.random.default_rng(1)
     prog = _base_prog()
     before = len(prog.predict_ops)
@@ -49,6 +51,7 @@ def test_remove_op_mutation_decreases_predict_len_when_possible():
 
 
 def test_change_op_mutation_changes_opcode():
+    """Confirm opcode mutation swaps at least one operation variant."""
     rng = np.random.default_rng(2)
     prog = _base_prog()
     before_opcodes = [op.opcode for op in prog.predict_ops]
@@ -59,6 +62,7 @@ def test_change_op_mutation_changes_opcode():
 
 
 def test_change_inputs_mutation_changes_one_input():
+    """Check input mutation rewires operands for eligible operations."""
     rng = np.random.default_rng(3)
     # Create a setup op with scalar inputs so eligible candidates exist
     setup_ops = [Op("sout", "add", ("const_1", "const_1"))]
@@ -70,4 +74,3 @@ def test_change_inputs_mutation_changes_one_input():
     change_inputs_mutation(prog, "setup", rng, fv, sv)
     after_inputs = prog.setup[0].inputs
     assert before_inputs != after_inputs
-

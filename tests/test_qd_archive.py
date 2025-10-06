@@ -32,6 +32,7 @@ def _eval_result(fitness: float, turnover: float) -> EvalResult:
 
 
 def test_qd_archive_keeps_best_per_cell():
+    """Ensure the QD archive retains only the top candidate per discretized cell."""
     qd_archive.initialize_archive(turnover_bins=(0.1, 0.3), complexity_bins=(0.5,), max_entries=10)
 
     prog_a = _dummy_program(size=10, fingerprint="A")

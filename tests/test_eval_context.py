@@ -15,6 +15,7 @@ def _simple_prog() -> AlphaProgram:
 
 
 def test_eval_context_matches_globals():
+    """Verify evaluation via explicit context mirrors evaluation through module globals."""
     # Initialize globals
     dh.initialize_data("tests/data/good", "common_1200", 3, 1)
     ctx = make_eval_context_from_globals(dh)
@@ -30,4 +31,3 @@ def test_eval_context_matches_globals():
 
     assert metrics_global.fitness == metrics_ctx.fitness
     assert metrics_global.mean_ic == metrics_ctx.mean_ic
-

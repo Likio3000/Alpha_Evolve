@@ -13,7 +13,6 @@ from scripts.dashboard_server.routes import (
     run_auto_improve,
     run_pipeline,
     runs,
-    selfplay,
 )
 from scripts.dashboard_server.helpers import ROOT
 
@@ -23,8 +22,17 @@ UI_DIST = ROOT / "dashboard-ui" / "dist"
 def _serve_ui(request, path: str = "index.html"):
     if not UI_DIST.exists():
         raise Http404("UI bundle not found")
-    target = path or "index.html"
-    return static_serve(request, target, document_root=str(UI_DIST))
+
+    target = (path or "index.html").lstrip("/")
+
+    try:
+        return static_serve(request, target, document_root=str(UI_DIST))
+    except Http404:
+        accepts_html = "text/html" in request.headers.get("Accept", "")
+        looks_like_asset = "." in Path(target).name
+        if request.method in {"GET", "HEAD"} and accepts_html and not looks_like_asset:
+            return static_serve(request, "index.html", document_root=str(UI_DIST))
+        raise
 
 
 urlpatterns = [
@@ -50,11 +58,6 @@ urlpatterns = [
     path("api/job-status/<str:job_id>", runs.job_status),
     path("api/run-label", runs.set_run_label),
     path("api/run-asset", runs.run_asset),
-    path("api/selfplay/run", selfplay.start_selfplay_run),
-    path("api/selfplay/history", selfplay.get_selfplay_history),
-    path("api/selfplay/history/latest", selfplay.get_latest_selfplay),
-    path("api/selfplay/status", selfplay.get_selfplay_status),
-    path("api/selfplay/approval", selfplay.post_selfplay_approval),
 ]
 
 if UI_DIST.exists():

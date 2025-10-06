@@ -12,16 +12,19 @@ def _check_metrics(metrics):
 
 
 def test_ga_tree():
+    """Train the GA tree baseline and confirm it returns finite evaluation metrics."""
     metrics = train_ga_tree(DATA_DIR)
     _check_metrics(metrics)
 
 
 def test_rank_lstm():
+    """Run the rank LSTM baseline to ensure training completes with finite metrics."""
     metrics = train_rank_lstm(DATA_DIR, seq_lens=(2,), lambdas=(0.1,))
     _check_metrics(metrics)
 
 
 def test_backtest_helpers():
+    """Backtest both GA tree and rank LSTM helpers and match their expected Sharpe outputs."""
     ga_metrics = backtest_ga_tree(DATA_DIR)
     rl_metrics = backtest_rank_lstm(DATA_DIR, seq_len=1, lmbd=0.1)
     assert ga_metrics["Sharpe"] == pytest.approx(-3.0341598716)
@@ -29,5 +32,6 @@ def test_backtest_helpers():
 
 
 def test_rsr():
+    """Train the RSR baseline and verify it produces finite diagnostic metrics."""
     metrics = train_rsr(DATA_DIR, seq_lens=(2,), lambdas=(0.1,))
     _check_metrics(metrics)

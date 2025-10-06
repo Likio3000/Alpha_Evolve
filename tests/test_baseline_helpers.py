@@ -10,6 +10,7 @@ from baselines.rsr import _prepare_graph_features
 # rank_lstm helpers
 # -------------------------------------------------------------------
 def test_prepare_sequences_shapes():
+    """Ensure LSTM sequence prep returns the expected window count and targets."""
     df = pd.DataFrame({"close": [1, 2, 3, 4, 5]})
     X, y = _prepare_sequences(df, seq_len=2)
     assert X.shape == (2, 2)
@@ -17,6 +18,7 @@ def test_prepare_sequences_shapes():
 
 
 def test_train_and_predict_linear():
+    """Verify closed-form linear regression learns slope/intercept and reproduces labels."""
     X = np.array([[1.0], [2.0], [3.0], [4.0]])
     y = np.array([3.0, 5.0, 7.0, 9.0])
     w = _train_linear(X, y, l2=0.0)
@@ -29,6 +31,7 @@ def test_train_and_predict_linear():
 # rsr helpers
 # -------------------------------------------------------------------
 def test_prepare_graph_features():
+    """Confirm graph feature prep yields normalized slope/gradient windows for RSR."""
     df = pd.DataFrame({"close": [1, 2, 4, 7]})
     X = _prepare_graph_features(df, seq_len=2)
     expected = np.array([[-0.5, 0.5], [-1.0, 1.0]])

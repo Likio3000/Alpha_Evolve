@@ -15,6 +15,7 @@ def _fixed_program():
 
 
 def test_evolve_process(monkeypatch):
+    """Run a deterministic one-generation evolution cycle and ensure outputs respect config limits."""
     cfg = EvolutionConfig(
         data_dir="tests/data/good",
         max_lookback_data_option="common_1200",

@@ -3,6 +3,7 @@ import json
 
 
 def test_pipeline_print_config(monkeypatch, tmp_path, capsys):
+    """Invoke --print-config to ensure the emitted JSON reflects layered overrides."""
     cfg_path = tmp_path / "pipe.toml"
     cfg_path.write_text(
         """
@@ -29,4 +30,3 @@ def test_pipeline_print_config(monkeypatch, tmp_path, capsys):
     assert data["evolution"]["generations"] == 5  # positional wins
     assert data["evolution"]["data_dir"] == "file_data"
     assert data["backtest"]["top_to_backtest"] == 2
-

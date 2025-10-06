@@ -6,6 +6,7 @@ from run_pipeline import parse_args as parse_pipeline
 
 
 def test_backtest_cli_golden_mapping(monkeypatch):
+    """Verify backtest CLI arguments map onto the expected dataclass fields."""
     argv = [
         "backtest_evolved_alphas.py",
         "--data_dir", "data_dir",
@@ -43,6 +44,7 @@ def test_backtest_cli_golden_mapping(monkeypatch):
 
 
 def test_pipeline_cli_golden_mapping(monkeypatch):
+    """Check pipeline CLI parsing wires positional generations and optional args correctly."""
     argv = [
         "run_pipeline.py", "5",
         "--data_dir", "data_dir",
@@ -68,4 +70,3 @@ def test_pipeline_cli_golden_mapping(monkeypatch):
     assert bt_cfg.hold == 3
     assert bt_cfg.scale == "zscore"
     assert bt_cfg.long_short_n == 0
-

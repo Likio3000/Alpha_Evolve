@@ -21,6 +21,7 @@ def make_result(*, fitness: float, mean_ic: float, sharpe: float, turnover: floa
 
 
 def test_default_objectives_negate_penalties():
+    """Ensure default MOEA objective vector keeps rewards positive and penalties negated."""
     res = make_result(
         fitness=0.4,
         mean_ic=0.05,
@@ -42,6 +43,7 @@ def test_default_objectives_negate_penalties():
 
 
 def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure():
+    """Check Pareto analysis ranks penalized candidates lower while retaining balanced trade-offs."""
     dominant = make_result(
         fitness=0.6,
         mean_ic=0.05,

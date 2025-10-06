@@ -7,6 +7,7 @@ from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 
 
 def test_end_to_end_small(tmp_path: Path):
+    """Run a miniature end-to-end backtest to ensure outputs and file names align."""
     # Build a trivial program and pickle it to simulate an evolved alpha
     prog = AlphaProgram(
         predict_ops=[

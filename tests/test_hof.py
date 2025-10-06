@@ -12,6 +12,7 @@ def make_prog(unique: str) -> AlphaProgram:
 
 
 def test_high_corr_program_rejected_from_hof():
+    """Reject programs whose predictions are too correlated with existing hall-of-fame entries."""
     hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.25, corr_cutoff=0.5)
 
     prog_a = make_prog("const_1")
@@ -38,6 +39,7 @@ def test_high_corr_program_rejected_from_hof():
 
 
 def test_rank_matrix_updates_and_penalty():
+    """Track correlation rank matrix updates and confirm penalty magnitude reflects weight."""
     hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0)
     prog = make_prog("c")
     preds = np.array([[1.0, 2.0], [2.0, 3.0]])

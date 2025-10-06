@@ -100,6 +100,7 @@ def _configure(horizons):
 
 
 def test_multi_horizon_metrics(monkeypatch):
+    """Evaluate a constant program across horizons and ensure metrics per horizon are exposed."""
     close_matrix = np.array(
         [
             [1.0, 1.0],

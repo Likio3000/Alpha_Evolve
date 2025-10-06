@@ -34,12 +34,14 @@ def build_zero_program() -> AlphaProgram:
 
 
 def test_safe_corr_eval_normal():
+    """Return perfect correlation when both vectors match and contain no invalid values."""
     a = np.array([1.0, 2.0, 3.0])
     b = np.array([1.0, 2.0, 3.0])
     assert _safe_corr_eval(a, b) == pytest.approx(1.0)
 
 
 def test_safe_corr_eval_nan_and_inf():
+    """Drop NaN/inf entries and default to zero correlation when data is unusable."""
     a = np.array([1.0, np.nan, 2.0])
     b = np.array([1.0, 2.0, 3.0])
     assert _safe_corr_eval(a, b) == 0.0
@@ -48,12 +50,14 @@ def test_safe_corr_eval_nan_and_inf():
 
 
 def test_safe_corr_eval_constant():
+    """Treat constant inputs as zero correlation to avoid divide-by-zero artifacts."""
     a = np.array([1.0, 1.0, 1.0])
     b = np.array([2.0, 2.0, 2.0])
     assert _safe_corr_eval(a, b) == 0.0
 
 
 def test_evaluate_program_basic(monkeypatch):
+    """Run evaluation on a toy program ensuring processed predictions are sized and penalties applied."""
     prog = build_simple_program()
 
     class DummyDH:
@@ -178,6 +182,7 @@ class DummyHOF:
 
 
 def test_eval_cache_hit():
+    """Reuse cached evaluation results to avoid re-fetching aligned data for identical programs."""
     prog = build_simple_program("a")
     dh = CountingDH()
     hof = DummyHOF()
@@ -192,6 +197,7 @@ def test_eval_cache_hit():
 
 
 def test_eval_cache_eviction():
+    """Evict least-recently-used programs once the evaluation cache exceeds its capacity."""
     prog1 = build_simple_program("a")
     prog2 = build_simple_program("b")
     prog3 = build_simple_program("c")
@@ -362,6 +368,7 @@ class ProcessedFlatDH:
 
 
 def test_early_abort_triggered():
+    """Abort evaluation when predictions stay flat beyond the configured early-abort thresholds."""
     prog = build_simple_program("ea")
     dh = FlatDH()
     hof = DummyHOF()
@@ -383,6 +390,7 @@ def test_early_abort_triggered():
 
 
 def test_early_abort_flat_bar_fraction():
+    """Stop evaluation if too many bars are flat relative to the configured fraction limit."""
     prog = build_simple_program("fb")
     dh = PartialFlatBarsDH()
     hof = DummyHOF()
@@ -404,6 +412,7 @@ def test_early_abort_flat_bar_fraction():
 
 
 def test_flatness_guard_cross_sectional():
+    """Apply cross-sectional flatness guard, producing -inf fitness when variation disappears."""
     prog = build_simple_program("xs")
     dh = XSCrossFlatDH()
     hof = DummyHOF()
@@ -425,6 +434,7 @@ def test_flatness_guard_cross_sectional():
 
 
 def test_flatness_guard_temporal():
+    """Apply temporal flatness guard so programs with static predictions are penalized."""
     prog = build_simple_program("tmp")
     dh = TemporalFlatDH()
     hof = DummyHOF()
@@ -446,6 +456,7 @@ def test_flatness_guard_temporal():
 
 
 def test_processed_predictions_flatness_guard():
+    """Penalize programs whose processed predictions collapse to a constant even if raw signals vary."""
     prog = AlphaProgram(predict_ops=[
         Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("opens_t",))
     ])
@@ -469,6 +480,7 @@ def test_processed_predictions_flatness_guard():
 
 
 def test_all_zero_predictions_rejected():
+    """Reject programs that output zero vectors everywhere by forcing negative infinite fitness."""
     prog = build_zero_program()
     dh = CountingDH()
     hof = DummyHOF()
@@ -489,6 +501,7 @@ def test_all_zero_predictions_rejected():
 
 
 def test_correlation_penalty_applied():
+    """Reduce fitness when predictions overlap with the hall-of-fame correlation buffer."""
     prog = build_simple_program("corr")
     dh = CountingDH()
     hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0)
@@ -515,6 +528,7 @@ def test_correlation_penalty_applied():
 
 
 def test_sector_vector_available():
+    """Make sure sector_id_vector inputs exist and can drive meaningful processed predictions."""
     class SectorDH(CountingDH):
         def get_sector_groups(self, symbols=None, mapping=None, cfg=None):
             return np.array([0, 1])
@@ -544,6 +558,7 @@ def test_sector_vector_available():
 
 
 def test_feature_vector_check_failure():
+    """Fail fast when a required feature vector is missing from the provided evaluation state."""
     prog = AlphaProgram(predict_ops=[
         Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("state_vec",))
     ])
@@ -586,6 +601,7 @@ class SharpeDH:
 
 
 def test_sharpe_proxy_weight_alters_fitness():
+    """Confirm enabling the Sharpe proxy augments base fitness by the computed proxy value."""
     prog = build_simple_program("sp")
     dh = SharpeDH()
     hof = DummyHOF()
@@ -622,6 +638,7 @@ def test_sharpe_proxy_weight_alters_fitness():
     assert res1.fitness == pytest.approx(res0.fitness + res1.sharpe_proxy)
 
 def test_evaluate_program_stress_and_regime(monkeypatch):
+    """Run evaluation with stress tests and regime diagnostics to ensure ancillary outputs populate."""
     prog = build_simple_program("stress")
 
     class DummyDH:
