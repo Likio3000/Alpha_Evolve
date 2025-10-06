@@ -10,7 +10,6 @@ from django.views.static import serve as static_serve
 from scripts.dashboard_server import health, ui_meta
 from scripts.dashboard_server.routes import (
     config,
-    run_auto_improve,
     run_pipeline,
     runs,
 )
@@ -46,10 +45,6 @@ urlpatterns = [
     path("api/config/preset-values", config.get_preset_values),
     path("api/config/save", config.save_config),
     path("api/pipeline/run", run_pipeline.start_pipeline_run),
-    path("api/simple/run", run_auto_improve.simple_run),
-    path("api/run", run_auto_improve.start_run),
-    path("api/events/<str:job_id>", run_auto_improve.sse_events),
-    path("api/stop/<str:job_id>", run_auto_improve.stop),
     path("api/runs", runs.list_runs),
     path("api/last-run", runs.get_last_run),
     path("api/backtest-summary", runs.backtest_summary),

@@ -1,5 +1,4 @@
 import pickle
-import sys
 
 import pytest
 
@@ -10,28 +9,25 @@ from utils.errors import BacktestError
 # -------------------------------------------------------------------
 # parse_args
 # -------------------------------------------------------------------
-def test_parse_args_defaults(monkeypatch):
-    """Assert CLI defaults supply sensible filenames and backtest parameters when no args given."""
-    monkeypatch.setattr(sys, "argv", ["backtest_evolved_alphas.py"])
-    cfg, ns = parse_args()
+def test_parse_args_defaults():
+    """Assert defaults supply sensible filenames and backtest parameters when no args given."""
+    cfg, ns = parse_args([])
     assert cfg.top_to_backtest == 10
     assert cfg.long_short_n == 0
     assert ns.input == "evolved_top_alphas.pkl"
     assert ns.outdir == "evolved_bt_cs_results"
 
 
-def test_parse_args_overrides(monkeypatch):
-    """Check explicit CLI overrides correctly propagate into the parsed backtest config."""
+def test_parse_args_overrides():
+    """Check explicit overrides correctly propagate into the parsed backtest config."""
     argv = [
-        "backtest_evolved_alphas.py",
         "--top_to_backtest", "3",
         "--fee", "0.5",
         "--scale", "rank",
         "--data_dir", "data_dir",
         "--long_short_n", "2",
     ]
-    monkeypatch.setattr(sys, "argv", argv)
-    cfg, _ = parse_args()
+    cfg, _ = parse_args(argv)
     assert cfg.top_to_backtest == 3
     assert cfg.fee == 0.5
     assert cfg.scale == "rank"

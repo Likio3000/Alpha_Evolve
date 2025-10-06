@@ -3,6 +3,9 @@
 This mini-tour shows the quickest way to evolve a set of alphas, inspect the
 results, and keep the workspace tidy.
 
+> ⚠️ Legacy note: the CLI commands below are kept for archival reference. In
+> current builds use the dashboard UI or `/api/pipeline/run` instead.
+
 ## 1. Environment setup
 
 ```bash

@@ -1,13 +1,10 @@
-import sys
 import logging
 from run_pipeline import parse_args
 
 
-def test_parse_args_defaults(monkeypatch):
+def test_parse_args_defaults():
     """Verify pipeline default arguments populate evolution/backtest configs sensibly."""
-    argv = ["run_pipeline.py", "5"]
-    monkeypatch.setattr(sys, "argv", argv)
-    evo_cfg, bt_cfg, ns = parse_args()
+    evo_cfg, bt_cfg, ns = parse_args(["5"])
     assert evo_cfg.generations == 5
     # check a couple defaults
     assert evo_cfg.seed == 42
@@ -17,20 +14,16 @@ def test_parse_args_defaults(monkeypatch):
     assert ns.run_baselines is False
 
 
-def test_parse_args_debug_flag(monkeypatch):
+def test_parse_args_debug_flag():
     """Ensure --debug_prints flips the appropriate namespace flags without side-effects."""
-    argv = ["run_pipeline.py", "3", "--debug_prints"]
-    monkeypatch.setattr(sys, "argv", argv)
-    _, _, ns = parse_args()
+    _, _, ns = parse_args(["3", "--debug_prints"])
     assert ns.debug_prints is True
     assert ns.run_baselines is False
 
 
-def test_parse_args_run_baselines(monkeypatch):
+def test_parse_args_run_baselines():
     """Check --run_baselines enables baseline training in the parsed namespace."""
-    argv = ["run_pipeline.py", "3", "--run_baselines"]
-    monkeypatch.setattr(sys, "argv", argv)
-    _, _, ns = parse_args()
+    _, _, ns = parse_args(["3", "--run_baselines"])
     assert ns.run_baselines is True
 
 

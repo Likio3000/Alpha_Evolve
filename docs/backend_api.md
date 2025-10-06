@@ -17,25 +17,12 @@ Programmatic helpers (Python)
   - `read_summary(run_dir) -> Optional[dict]`
   - `load_backtest_table(run_dir) -> List[dict]`
 
-CLI entry points (uv/pip)
-- Evolve + backtest (all‑in‑one):
-  - `uv run run_pipeline.py <generations> [flags...]`
-  - `--config <toml>` and `--data_dir <dir>` are the most important flags.
-
-Recommended config for crypto 4h (fast preset)
-- `configs/crypto_4h_fast.toml`: tuned defaults suitable for 4h crypto data.
-
-Improvement loop
-- `scripts/auto_improve.py` supports uv, passthrough flags, and a capacity sweep:
-  - `--sweep-capacity` to grid‑sweep `fresh_rate`, `pop_size`, `hof_per_gen`.
-  - `--seeds 42,7,99` to evaluate across multiple seeds.
-  - Summary CSV is written under `pipeline_runs_cs/sweeps/`.
-
 Minimal UI flow
-1) Start a run via CLI (spawn `uv run run_pipeline.py ...`), or optionally call a thin Python wrapper.
+Minimal UI flow
+1) Trigger a run through the HTTP API (`POST /api/pipeline/run`).
 2) Poll for the presence of `run_dir/SUMMARY.json` and `backtest_portfolio_csvs/backtest_summary_topN.csv`.
 3) Render the top rows (Sharpe, AnnReturn, MaxDD, Turnover, Ops, AlphaID) and link to the timeseries PNGs.
-4) Offer a “rerun with tweaks” panel that maps directly to CLI flags (UI → CLI).
+4) Offer a “rerun with tweaks” panel that maps directly to the request payload (UI → API overrides).
 
 Notes
 - `SUMMARY.json` now includes `schema_version` and a `best_metrics` block for the top‑Sharpe alpha.
@@ -49,8 +36,6 @@ HTTP API (dashboard server)
   - `POST /api/stop/{job_id}` → stop a running job.
   - `GET /api/config/presets` → included config presets (`crypto`, `sp500`).
   - `GET /api/config/defaults` → dataclass defaults and choice maps for UI forms.
-- Legacy improver flow:
-  - `POST /api/run` → start an `auto_improve` job, returns `job_id`.
 - Common:
   - `GET /api/last-run` → latest run_dir + best Sharpe
   - `GET /api/diagnostics?run_dir=...` → returns `diagnostics.json` (per-generation entries with feature coverage, top-K snapshots, quantiles, etc.)

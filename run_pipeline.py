@@ -23,6 +23,7 @@ import sys
 import time
 from pathlib import Path
 from dataclasses import dataclass, fields as dc_fields
+from typing import Sequence
 
 from config import EvolutionConfig, BacktestConfig
 from utils.data_loading_common import DataLoadError
@@ -72,7 +73,7 @@ def _resolve_output_dir(cli_arg: str | None) -> Path:
 #  CLI → two dataclass configs (auto-generated from dataclasses)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
+def parse_args(argv: Sequence[str] | None = None) -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p = argparse.ArgumentParser(description="Evolve and back-test alphas (one-stop shop)")
 
     # Positional generations
@@ -119,7 +120,7 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
     p.add_argument("--config", default=None,
                    help="Optional TOML/YAML config file (file < env < CLI)")
 
-    ns = p.parse_args()
+    ns = p.parse_args(argv)
     d = vars(ns)
 
     # Collect full field-name sets including inherited dataclass fields.
@@ -163,6 +164,21 @@ def parse_args() -> tuple[EvolutionConfig, BacktestConfig, argparse.Namespace]:
         bt_cfg.scale = ns.bt_scale
 
     return evo_cfg, bt_cfg, ns
+
+
+def options_from_namespace(ns: argparse.Namespace) -> PipelineOptions:
+    return PipelineOptions(
+        debug_prints=getattr(ns, "debug_prints", False),
+        run_baselines=getattr(ns, "run_baselines", False),
+        retrain_baselines=getattr(ns, "retrain_baselines", False),
+        log_level=getattr(ns, "log_level", "INFO"),
+        log_file=getattr(ns, "log_file", None),
+        dry_run=getattr(ns, "dry_run", False),
+        output_dir=getattr(ns, "output_dir", None),
+        persist_hof_per_gen=getattr(ns, "persist_hof_per_gen", True),
+        disable_align_cache=getattr(ns, "disable_align_cache", False),
+        align_cache_dir=getattr(ns, "align_cache_dir", None),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -535,37 +551,3 @@ def run_pipeline_programmatic(
     logger.info("\n✔  Pipeline finished – artefacts in  %s", run_dir)
     return run_dir
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  main
-# ─────────────────────────────────────────────────────────────────────────────
-def main() -> None:
-    evo_cfg, bt_cfg, cli = parse_args()
-
-    # Print merged configuration and exit early (no logging, no side-effects)
-    if getattr(cli, "print_config", False):
-        from dataclasses import asdict
-        payload = {"evolution": asdict(evo_cfg), "backtest": asdict(bt_cfg)}
-        print(_json.dumps(payload, indent=2))
-        return
-    options = PipelineOptions(
-        debug_prints=getattr(cli, "debug_prints", False),
-        run_baselines=getattr(cli, "run_baselines", False),
-        retrain_baselines=getattr(cli, "retrain_baselines", False),
-        log_level=getattr(cli, "log_level", "INFO"),
-        log_file=getattr(cli, "log_file", None),
-        dry_run=getattr(cli, "dry_run", False),
-        output_dir=getattr(cli, "output_dir", None),
-        persist_hof_per_gen=getattr(cli, "persist_hof_per_gen", True),
-        disable_align_cache=getattr(cli, "disable_align_cache", False),
-        align_cache_dir=getattr(cli, "align_cache_dir", None),
-    )
-
-    try:
-        run_pipeline_programmatic(evo_cfg, bt_cfg, options)
-    except Exception:
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

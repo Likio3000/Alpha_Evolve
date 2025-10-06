@@ -25,8 +25,6 @@ dependencies = [
 ]
 
 [project.scripts]
-alpha-evolve-pipeline = "run_pipeline:main"
-alpha-evolve-backtest = "backtest_evolved_alphas:main"
 
 [tool.mypy]
 python_version = "3.12"

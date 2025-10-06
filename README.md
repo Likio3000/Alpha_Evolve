@@ -4,6 +4,12 @@
 
 Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
+> ⚠️ **CLI entrypoints removed:** As of this version the project is driven entirely
+> via the dashboard UI/REST API. Legacy commands such as
+> `uv run run_pipeline.py …` or `alpha-evolve-pipeline` are no longer available
+> as executable scripts. Existing code modules remain importable for
+> programmatic use inside the server.
+
 ## Requirements
 
 - Python 3.12 or higher
@@ -75,6 +81,7 @@ destination (e.g. a larger external volume) with either the `--output-dir`
 flag or the `AE_PIPELINE_DIR` environment variable:
 
 ```bash
+# Legacy CLI example (commands no longer available)
 uv run run_pipeline.py 10 --config configs/crypto.toml --output-dir ~/.alpha-evolve/runs
 
 # Match the dashboard server with the same directory
@@ -144,10 +151,8 @@ Boolean flags accept a convenient `--no-<flag>` negation when their default is
 `True` in the dataclass. For example, to disable sector neutralization during
 evolution: `--no-sector_neutralize`.
 
-Console entry points are available when installed:
-
-- `alpha-evolve-pipeline` → `run_pipeline.py`
-- `alpha-evolve-backtest` → `backtest_evolved_alphas.py`
+Console entry points previously installed via `pip`/`uv` have been removed in
+favour of the UI workflows.
 
 ### Alignment cache controls
 
@@ -233,6 +238,7 @@ pre-commit install
 Run the full pipeline for five generations:
 
 ```bash
+# Legacy CLI example (use the dashboard UI instead)
 uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
 ```
 
@@ -240,9 +246,11 @@ Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
 Baseline metrics are cached next to the data and reused on subsequent runs.
 Pass `--retrain_baselines` to force a fresh training.
 
-Call `run_pipeline.py` directly for quick experiments or when overriding just a
-few options.  Any parameter not supplied on the command line falls back to the
-defaults defined in [`config.py`](config.py).
+For automation you can still import and call
+`run_pipeline.run_pipeline_programmatic(...)`; day-to-day usage should happen
+through the dashboard UI or the `/api/pipeline/run` endpoint. Any parameter not
+explicitly supplied falls back to the defaults defined in
+[`config.py`](config.py).
 
 For a longer run using the parameters described in the paper, create a TOML
 config (see `configs/crypto.toml` and `configs/sp500.toml`) and run:
@@ -269,6 +277,7 @@ During evolution you can let the selection switch from ramped fitness to
 fixed‑weight fitness automatically after the ramp period:
 
 ```bash
+# Legacy CLI example (use the dashboard UI instead)
 uv run run_pipeline.py 50 --selection_metric auto --ramp_fraction 0.33 --ramp_min_gens 5
 ```
 This keeps correlation/variance penalties light early (exploration) and then
@@ -338,6 +347,7 @@ Fetch 20y of split/dividend‑adjusted OHLC from Yahoo and run a short pipeline:
 
 ```bash
 python scripts/fetch_sp500_data.py --out data_sp500 --years 20
+# Legacy CLI example (use the dashboard UI instead)
 uv run run_pipeline.py 5 --config configs/sp500.toml --selection_metric auto \
   --disable-align-cache --debug_prints
 ```

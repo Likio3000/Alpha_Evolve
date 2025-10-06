@@ -214,13 +214,10 @@ def job_log(request: HttpRequest, job_id: str):
 
 
 def job_status(request: HttpRequest, job_id: str):
-    p = STATE.get_proc(job_id)
-    if p is None:
+    handle = STATE.get_handle(job_id)
+    if handle is None:
         return json_response({"exists": False, "running": False})
-    try:
-        running = p.poll() is None
-    except Exception:
-        running = False
+    running = handle.is_running()
     return json_response({"exists": True, "running": bool(running)})
 
 

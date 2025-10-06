@@ -9,7 +9,7 @@ This guide orients new contributors (including automated code-generation models)
 
 ## How We Pursue the Objective
 - **Evolutionary pipeline (`run_pipeline.py` & companions):** Runs generation-based searches, backtests candidates, and writes structured artefacts under `pipeline_runs_cs/` for inspection.
-- **Auto-improve (`scripts/auto_improve.py`):** Targets focused fine-tuning sweeps when a promising alpha or configuration needs polishing.
+- **UI-driven tuning loops:** The dashboard orchestrates reruns and overrides directly via the pipeline API; legacy auto-improve scripts have been retired.
 - **Experiment artefacts:** JSON summaries, CSV backtest outputs, and meta snapshots capture each run’s configuration and outcomes for reproducibility.
 
 ## Operator-Facing Dashboard (New Django Stack)
@@ -20,7 +20,7 @@ This guide orients new contributors (including automated code-generation models)
 
 ## Environment & Tooling Expectations
 - **Python 3.12+, `uv` workflow:** Dependencies pinned in `pyproject.toml`/`requirements.txt`; prefer `uv run` or the project-provided virtualenv.
-- **Data layout assumptions:** `pipeline_runs_cs/`, `configs/`, and `self_evolution/` contain canonical artefacts used by APIs and tests.
+- **Data layout assumptions:** `pipeline_runs_cs/` and `configs/` contain canonical artefacts used by APIs and tests (legacy self-play runs may still live under `self_evolution/`).
 - **Logging:** Background jobs emit structured progress lines (DIAG/PROGRESS) consumed by the dashboard for live updates.
 
 ## Contribution Tips for New Models

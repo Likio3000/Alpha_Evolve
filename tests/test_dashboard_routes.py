@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import queue
 from types import SimpleNamespace
 import threading
 from pathlib import Path
@@ -117,47 +118,49 @@ async def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatc
     """Simulate a long pipeline run and ensure the health endpoint remains responsive."""
     release = threading.Event()
     iter_started = threading.Event()
-    lines = ["DIAG {\"foo\": 1}\n"]
 
-    class BlockingStdout:
-        def __iter__(self):
-            return self
-
-        def __next__(self):
-            iter_started.set()
+    def fake_worker(cli_args, root_dir, event_queue):
+        iter_started.set()
+        try:
             if not release.wait(timeout=3.0):
-                raise RuntimeError("test release event was not set")
-            if lines:
-                return lines.pop(0)
-            raise StopIteration
+                event_queue.put({"type": "error", "code": 1, "detail": "timeout"})
+                event_queue.put({"type": "status", "msg": "exit", "code": 1})
+                return
+        finally:
+            release.set()
+        event_queue.put({"type": "status", "msg": "exit", "code": 0})
+        event_queue.put({"type": "__complete__"})
 
-    class DummyPopen:
-        def __init__(self):
-            self.stdout = BlockingStdout()
-            self._returncode = None
+    class DummyProcess:
+        def __init__(self, target, args, daemon=True):
+            self._thread: threading.Thread | None = None
+            self._target = target
+            self._args = args
 
-        def wait(self):
-            if self._returncode is None:
-                self._returncode = 0
-            return self._returncode
+        def start(self):
+            self._thread = threading.Thread(target=self._target, args=self._args, daemon=True)
+            self._thread.start()
 
-        def poll(self):
-            return self._returncode
+        def is_alive(self):
+            return self._thread is not None and self._thread.is_alive()
 
         def terminate(self):
             release.set()
-            self._returncode = -15
 
-        def kill(self):
-            release.set()
-            self._returncode = -9
+    class DummyContext:
+        def Queue(self):
+            return queue.Queue()
 
-    def fake_popen(*args, **kwargs):
-        return DummyPopen()
+        def Process(self, target, args, daemon=True):
+            return DummyProcess(lambda: fake_worker(*args), (), daemon=daemon)
 
     monkeypatch.setattr(
-        "scripts.dashboard_server.routes.run_pipeline.subprocess.Popen",
-        fake_popen,
+        "scripts.dashboard_server.routes.run_pipeline.mp.get_context",
+        lambda *_a, **_k: DummyContext(),
+    )
+    monkeypatch.setattr(
+        "scripts.dashboard_server.routes.run_pipeline._pipeline_worker",
+        fake_worker,
     )
 
     resp = await dashboard_env.client.post("/api/pipeline/run", json={"generations": 1})

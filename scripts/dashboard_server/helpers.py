@@ -76,10 +76,19 @@ def resolve_latest_run_dir() -> Optional[Path]:
     return None
 
 
-def build_pipeline_args(payload: Dict[str, Any]) -> list[str]:
-    """Map JSON payload to a run_pipeline invocation args list."""
+def build_pipeline_args(payload: Dict[str, Any], include_runner: bool = True) -> list[str]:
+    """Map JSON payload to a run_pipeline invocation args list.
+
+    When ``include_runner`` is ``True`` (default) the returned list is suitable for
+    spawning via ``uv run run_pipeline.py``. When ``False`` the leading launcher
+    tokens are omitted, making the list suitable for direct argument parsing
+    (e.g., programmatic consumption).
+    """
     gens = int(payload.get("generations", 5))
-    args: list[str] = ["uv", "run", "run_pipeline.py", str(gens)]
+    args: list[str] = []
+    if include_runner:
+        args.extend(["uv", "run", "run_pipeline.py"])
+    args.append(str(gens))
     dataset = str(payload.get("dataset", "")).strip().lower()
     cfg_path = payload.get("config")
     if not cfg_path and dataset:

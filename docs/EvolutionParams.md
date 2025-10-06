@@ -5,6 +5,9 @@ AlphaProgram exposes optional heuristics to bias random generation and mutation
 without changing the core operator set. These are grouped into a small
 dataclass that you can pass into `random_program`, `mutate`, and `crossover`.
 
+> ⚠️ Legacy note: any CLI snippets referenced here are for historical
+> documentation only. Drive the pipeline via the dashboard UI or the HTTP API.
+
 Fields
 - vector_ops_bias: Probability to require vector‑producing ops when sampling.
 - relation_ops_weight: Weight multiplier for `relation_*` ops.
@@ -47,4 +50,3 @@ ops_split_jitter = 0.0
 ```bash
 uv run run_pipeline.py 5 --vector_ops_bias 0.3 --ops_split_base_predict 0.6
 ```
-

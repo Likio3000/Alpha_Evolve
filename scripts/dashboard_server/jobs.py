@@ -1,9 +1,49 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Dict
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
 import subprocess
 from queue import Queue
+import asyncio
+
+
+@dataclass
+class JobHandle:
+    """Track how a background job can be monitored or stopped."""
+
+    proc: Optional[subprocess.Popen] = None
+    task: Optional[asyncio.Task] = None
+    stop_cb: Optional[Callable[[], None]] = None
+
+    def is_running(self) -> bool:
+        if self.proc is not None:
+            try:
+                return self.proc.poll() is None
+            except Exception:
+                return False
+        if self.task is not None:
+            return not self.task.done()
+        return False
+
+    def stop(self) -> bool:
+        try:
+            if self.stop_cb is not None:
+                self.stop_cb()
+                return True
+            if self.proc is not None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=5)
+                except Exception:
+                    self.proc.kill()
+                return True
+            if self.task is not None:
+                self.task.cancel()
+                return True
+        except Exception:
+            return False
+        return False
 
 
 class JobState:
@@ -11,7 +51,7 @@ class JobState:
 
     def __init__(self) -> None:
         self.queues: Dict[str, Queue] = {}
-        self.procs: Dict[str, subprocess.Popen] = {}
+        self.handles: Dict[str, JobHandle] = {}
         self.logs: Dict[str, deque[str]] = {}
         self.meta: Dict[str, Any] = {}
 
@@ -26,10 +66,20 @@ class JobState:
         return self.queues.get(job_id)
 
     def set_proc(self, job_id: str, proc: subprocess.Popen) -> None:
-        self.procs[job_id] = proc
+        self.handles[job_id] = JobHandle(proc=proc)
+
+    def set_task(self, job_id: str, task: asyncio.Task, stop_cb: Callable[[], None] | None = None) -> None:
+        self.handles[job_id] = JobHandle(task=task, stop_cb=stop_cb)
+
+    def set_handle(self, job_id: str, handle: JobHandle) -> None:
+        self.handles[job_id] = handle
 
     def get_proc(self, job_id: str) -> subprocess.Popen | None:
-        return self.procs.get(job_id)
+        handle = self.handles.get(job_id)
+        return handle.proc if handle else None
+
+    def get_handle(self, job_id: str) -> JobHandle | None:
+        return self.handles.get(job_id)
 
     def add_log(self, job_id: str, line: str) -> None:
         if job_id not in self.logs:
@@ -49,18 +99,13 @@ class JobState:
         return self.meta.pop(job_id, None)
 
     def stop(self, job_id: str) -> bool:
-        p = self.procs.get(job_id)
-        if p is None:
+        handle = self.handles.get(job_id)
+        if handle is None:
             return False
-        try:
-            p.terminate()
-            try:
-                p.wait(timeout=5)
-            except Exception:
-                p.kill()
-            return True
-        except Exception:
-            return False
+        return handle.stop()
+
+    def clear_handle(self, job_id: str) -> None:
+        self.handles.pop(job_id, None)
 
 
 # Global job state singleton for ease of wiring across routers
