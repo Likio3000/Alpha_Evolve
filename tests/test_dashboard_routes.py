@@ -45,7 +45,8 @@ async def dashboard_env(tmp_path, monkeypatch):
     runs_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.routes.runs"))
     app_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.app"))
 
-    # httpx>=0.28 automatically issues lifespan events; no extra flag required.
+
+    # httpx 0.28 automatically issues lifespan events; default construction works.
     transport = httpx.ASGITransport(app=app_mod.create_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         try:
