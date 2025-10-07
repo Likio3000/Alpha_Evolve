@@ -118,7 +118,7 @@ Alternatively, plain `pytest` also works:
 pytest -q
 ```
 
-Tip: see `docs/running_tests_instructions.md` and the helper `scripts/test`.
+Tip: see `docs/howtos/testing.md` and the helper `scripts/test`.
 
 For a quick end-to-end sanity check, run:
 
@@ -133,7 +133,7 @@ sh scripts/smoke_run.sh
 - The handshake file also embeds the proposed config; tweak it before setting `status: approved` if you want to adjust parameters manually.
 - Artefacts (run dirs, briefing log, pending action, generated configs) live in `pipeline_runs_cs/self_evolution/self_evo_session_*`. The CLI exposes `--auto-approve` for unattended loops.
 - Open the dashboard’s Self-Play page (via the top-bar Self-Play button) to see the same information, launch sessions, and send approve/request/stop actions without editing JSON manually. Notes entered there are persisted to `pending_action.json`.
-- See `docs/self_evolution.md` for full details on the approval workflow and available configuration knobs.
+- See `docs/guides/self-evolution.md` for full details on the approval workflow and available configuration knobs.
 
 ## Configuration layering (TOML/YAML, env, CLI)
 
@@ -301,11 +301,11 @@ The UI can:
 - List recent runs and render simple evolution charts from `diagnostics.json`
 - Show the backtest summary and per-alpha timeseries charts
 
-Need the richer front-end? See `docs/dashboard_ui_build.md` for rebuilding the
+Need the richer front-end? See `docs/guides/dashboard-ui.md` for rebuilding the
 advanced UI bundle and hooking it up to the FastAPI backend.
 
 For a full end-to-end tour (data prep → pipeline run → dashboard → cleanup),
-check `docs/first_run_walkthrough.md`.
+check `docs/guides/getting-started.md`.
 
 ### Adapting new data
 
