@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchAlphaTimeseries,
   fetchBacktestSummary,
@@ -32,7 +32,10 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-function extractSharpeFromLog(log: string): number | null {
+function extractSharpeFromLog(log: string | null | undefined): number | null {
+  if (!log) {
+    return null;
+  }
   const matches = [...log.matchAll(/Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)/g)];
   if (!matches.length) {
     return null;
@@ -62,6 +65,8 @@ export function App(): React.ReactElement {
   const [job, setJob] = useState<PipelineJobState | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "settings">("overview");
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventJobIdRef = useRef<string | null>(null);
 
   const selectedRun = useMemo(() => {
     if (!selectedRunPath) {
@@ -75,6 +80,13 @@ export function App(): React.ReactElement {
     return selectedRow.TimeseriesFile || selectedRow.AlphaID || null;
   }, [selectedRow]);
 
+const closeEventStream = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    eventJobIdRef.current = null;
+  }, []);
   const refreshRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
@@ -124,6 +136,138 @@ export function App(): React.ReactElement {
       setSelectedRunPath(fallback);
     }
   }, [runs, selectedRunPath, lastRunPath]);
+
+  useEffect(() => () => closeEventStream(), [closeEventStream]);
+
+  const openEventStream = useCallback((jobId: string) => {
+    if (!jobId) {
+      return;
+    }
+    if (eventSourceRef.current && eventJobIdRef.current === jobId) {
+      return;
+    }
+    closeEventStream();
+
+    const source = new EventSource(`/api/pipeline/events/${encodeURIComponent(jobId)}`);
+    eventSourceRef.current = source;
+    eventJobIdRef.current = jobId;
+
+    const appendLog = (line: string) => {
+      if (typeof line !== "string") {
+        return;
+      }
+      const normalized = line.replace(/\r?\n$/, "");
+      const cleaned = normalized.replace(/\r/g, "");
+      if (!cleaned) {
+        return;
+      }
+      setJob((current) => {
+        if (!current || current.jobId !== jobId) {
+          return current;
+        }
+        const nextLog = current.log ? `${current.log}\n${cleaned}` : cleaned;
+        return {
+          ...current,
+          log: nextLog,
+          lastMessage: cleaned.trim() || current.lastMessage || "Pipeline running…",
+          lastUpdated: Date.now(),
+        };
+      });
+    };
+
+    const updateSharpe = (value: unknown) => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return;
+      }
+      setJob((current) => {
+        if (!current || current.jobId !== jobId) {
+          return current;
+        }
+        return {
+          ...current,
+          sharpeBest: value,
+          lastUpdated: Date.now(),
+        };
+      });
+    };
+
+    const updateStatus = (status: PipelineJobState["status"], message?: string) => {
+      setJob((current) => {
+        if (!current || current.jobId !== jobId) {
+          return current;
+        }
+        return {
+          ...current,
+          status,
+          lastMessage: message ?? current.lastMessage,
+          lastUpdated: Date.now(),
+        };
+      });
+    };
+
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+        const { type } = payload as { type?: string };
+        if (!type) {
+          return;
+        }
+        const raw = typeof payload.raw === "string" ? payload.raw : null;
+        if (raw) {
+          appendLog(raw);
+        }
+        switch (type) {
+          case "score":
+            updateSharpe((payload as { sharpe_best?: number }).sharpe_best);
+            break;
+          case "status": {
+            const msg = String((payload as { msg?: string }).msg ?? "");
+            if (msg === "exit") {
+              const code = Number((payload as { code?: number }).code ?? 1);
+              const success = Number.isFinite(code) && code === 0;
+              updateStatus(success ? "complete" : "error", success ? "Pipeline finished." : "Pipeline stopped.");
+              closeEventStream();
+              void refreshRuns();
+            } else if (msg) {
+              const mapped = msg === "started" ? "Pipeline started." : msg;
+              updateStatus("running", mapped);
+            }
+            break;
+          }
+          case "error": {
+            const detail = (payload as { detail?: unknown }).detail;
+            if (typeof detail === "string" && detail.trim()) {
+              appendLog(detail);
+              updateStatus("error", detail);
+            } else {
+              updateStatus("error", "Pipeline error.");
+            }
+            closeEventStream();
+            void refreshRuns();
+            break;
+          }
+          case "final":
+            updateSharpe((payload as { sharpe_best?: number }).sharpe_best);
+            updateStatus("complete", "Pipeline finished.");
+            closeEventStream();
+            void refreshRuns();
+            break;
+          default:
+            break;
+        }
+      } catch {
+        closeEventStream();
+      }
+    };
+
+    source.onerror = () => {
+      // Allow polling to reconnect
+      closeEventStream();
+    };
+  }, [closeEventStream, refreshRuns]);
 
   useEffect(() => {
     if (!selectedRunPath) {
@@ -208,6 +352,7 @@ export function App(): React.ReactElement {
 
   const handleStartPipeline = useCallback(
     async (payload: PipelineRunRequest) => {
+      closeEventStream();
       const response = await startPipelineRun(payload);
       setJob({
         jobId: response.job_id,
@@ -216,49 +361,62 @@ export function App(): React.ReactElement {
         lastUpdated: Date.now(),
         log: "",
       });
+      openEventStream(response.job_id);
       setBanner("Pipeline run launched.");
     },
-    [],
+    [closeEventStream, openEventStream],
   );
 
   const refreshJob = useCallback(async () => {
-    setJob((current) => {
-      if (!current) return current;
-      return { ...current, lastUpdated: Date.now() };
-    });
-    if (!job) return;
-
+    if (!job) {
+      return;
+    }
     try {
-      const [status, logResponse] = await Promise.all([fetchJobStatus(job.jobId), fetchJobLog(job.jobId)]);
-
+      const status = await fetchJobStatus(job.jobId);
+      let logResponse: { log: string | null } | null = null;
+      if (!eventSourceRef.current || !status.running) {
+        try {
+          logResponse = await fetchJobLog(job.jobId);
+        } catch (err) {
+          // Ignore log fetch errors; the SSE stream (when connected) continues to append logs.
+          logResponse = null;
+        }
+      }
       setJob((current) => {
-        if (!current || current.jobId !== job.jobId) return current;
+        if (!current || current.jobId !== job.jobId) {
+          return current;
+        }
         const next: PipelineJobState = {
           ...current,
-          log: logResponse.log ?? "",
           lastUpdated: Date.now(),
         };
-
-        const sharpe = extractSharpeFromLog(logResponse.log ?? "");
-        if (sharpe !== null) {
-          next.sharpeBest = sharpe;
+        if (logResponse && typeof logResponse.log === "string") {
+          next.log = logResponse.log;
+          const sharpe = extractSharpeFromLog(logResponse.log);
+          if (sharpe !== null) {
+            next.sharpeBest = sharpe;
+          }
         }
-
         if (!status.exists) {
           next.status = "error";
           next.lastMessage = "Job no longer exists.";
         } else if (status.running) {
           next.status = "running";
-          next.lastMessage = "Pipeline running…";
-        } else {
+          if (!next.lastMessage) {
+            next.lastMessage = "Pipeline running…";
+          }
+        } else if (current.status === "running") {
           next.status = "complete";
-          next.lastMessage = "Pipeline finished.";
+          next.lastMessage = next.lastMessage ?? "Pipeline finished.";
         }
         return next;
       });
 
-      if (!status.running) {
+      if (!status.exists || !status.running) {
+        closeEventStream();
         void refreshRuns();
+      } else if (!eventSourceRef.current || eventJobIdRef.current !== job.jobId) {
+        openEventStream(job.jobId);
       }
     } catch (error) {
       setJob((current) => {
@@ -270,7 +428,7 @@ export function App(): React.ReactElement {
         };
       });
     }
-  }, [job, refreshRuns]);
+  }, [job, closeEventStream, openEventStream, refreshRuns]);
 
   usePolling(() => {
     void refreshJob();
@@ -361,6 +519,17 @@ export function App(): React.ReactElement {
                   <div className="selected-run-meta">
                     <h2>{selectedRun.label || selectedRun.name}</h2>
                     <span className="muted">{selectedRun.path}</span>
+                    {selectedRow ? (
+                      <div className="selected-alpha-chip">
+                        <span className="selected-alpha-chip__label">Selected alpha</span>
+                        <span className="selected-alpha-chip__name">
+                          {selectedRow.AlphaID || selectedRow.TimeseriesFile || "n/a"}
+                        </span>
+                        {selectedRow.TimeseriesFile ? (
+                          <span className="selected-alpha-chip__file">{selectedRow.TimeseriesFile}</span>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <h2>Select a run to inspect its backtest results</h2>
@@ -388,7 +557,7 @@ export function App(): React.ReactElement {
             </div>
           </>
         ) : (
-          <div className="app-layout">
+          <div className="app-layout app-layout--full">
             <SettingsPanel onNotify={(msg) => setBanner(msg)} />
           </div>
         )}

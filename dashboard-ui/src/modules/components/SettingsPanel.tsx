@@ -25,6 +25,10 @@ interface TableProps {
   active: Record<string, Scalar> | null;
   filterText: string;
   showChangedOnly: boolean;
+  choices?: Record<string, string[]>;
+  disabled?: boolean;
+  onChange: (key: string, value: Scalar) => void;
+  onReset: (key: string) => void;
 }
 
 function formatValue(value: Scalar | undefined): string {
@@ -40,7 +44,17 @@ function formatValue(value: Scalar | undefined): string {
   return value;
 }
 
-function ConfigTable({ title, defaults, active, filterText, showChangedOnly }: TableProps): React.ReactElement {
+function ConfigTable({
+  title,
+  defaults,
+  active,
+  filterText,
+  showChangedOnly,
+  choices,
+  disabled,
+  onChange,
+  onReset,
+}: TableProps): React.ReactElement {
   const filter = filterText.trim().toLowerCase();
 
   const entries = useMemo(() => {
@@ -56,25 +70,29 @@ function ConfigTable({ title, defaults, active, filterText, showChangedOnly }: T
       .map((key) => {
         const baseValue = defaults ? defaults[key] : undefined;
         const currentValue = active ? active[key] : undefined;
-        const changed =
-          currentValue !== undefined &&
-          baseValue !== undefined &&
-          String(currentValue) !== String(baseValue);
+        const resolvedValue = currentValue !== undefined ? currentValue : baseValue;
+        const changed = currentValue !== undefined
+          ? baseValue === undefined || currentValue !== baseValue
+          : false;
         return {
           key,
           baseValue,
           currentValue,
+          resolvedValue,
           changed,
         };
       })
       .filter((entry) => {
+        if (!defaults) {
+          return false;
+        }
         if (showChangedOnly && !entry.changed) {
           return false;
         }
         if (!filter) {
           return true;
         }
-        const haystack = `${entry.key} ${formatValue(entry.currentValue ?? entry.baseValue ?? "n/a")}`.toLowerCase();
+        const haystack = `${entry.key} ${formatValue(entry.resolvedValue ?? entry.baseValue ?? "n/a")}`.toLowerCase();
         return haystack.includes(filter);
       });
   }, [active, defaults, filter, showChangedOnly]);
@@ -86,15 +104,105 @@ function ConfigTable({ title, defaults, active, filterText, showChangedOnly }: T
         <span className="settings-table__count">{entries.length} {entries.length === 1 ? "field" : "fields"}</span>
       </div>
       <div className="settings-table__body">
-        {entries.map(({ key, baseValue, currentValue, changed }) => {
-          const display = currentValue ?? baseValue;
+        {entries.map(({ key, baseValue, resolvedValue, changed }) => {
+          if (baseValue === undefined && resolvedValue === undefined) {
+            return null;
+          }
+          const valueForType = resolvedValue ?? baseValue;
+          const valueType = typeof valueForType;
+          const choiceList = choices?.[key];
+          const isBoolean = valueType === "boolean";
+          const isNumber = valueType === "number" && !choiceList;
+          const isString = valueType === "string" || choiceList;
+
+          const handleNumberChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+            if (event.target.value === "") {
+              onReset(key);
+              return;
+            }
+            const next = event.target.valueAsNumber;
+            if (Number.isNaN(next)) {
+              return;
+            }
+            onChange(key, next);
+          };
+
+          const handleTextChange = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+            onChange(key, event.target.value);
+          };
+
+          const handleBooleanChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+            onChange(key, event.target.checked);
+          };
+
           return (
             <div key={key} className={changed ? "settings-card settings-card--changed" : "settings-card"}>
               <div className="settings-card__top">
                 <div className="settings-card__key">{key}</div>
-                {changed ? <span className="settings-card__badge">Changed</span> : null}
+                <div className="settings-card__actions">
+                  {changed ? <span className="settings-card__badge">Changed</span> : null}
+                  <button
+                    type="button"
+                    className="settings-card__reset"
+                    onClick={() => onReset(key)}
+                    disabled={disabled || baseValue === undefined || !changed}
+                    aria-label={`Reset ${key} to default`}
+                  >
+                    Reset
+                  </button>
+                </div>
               </div>
-              <div className="settings-card__value">{formatValue(display)}</div>
+              <div className="settings-card__value">
+                {isBoolean ? (
+                  <label className="settings-card__checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(valueForType)}
+                      onChange={handleBooleanChange}
+                      disabled={disabled}
+                    />
+                    <span>{valueForType ? "Enabled" : "Disabled"}</span>
+                  </label>
+                ) : null}
+                {isNumber ? (
+                  <input
+                    type="number"
+                    className="settings-card__input"
+                    value={valueForType === undefined ? "" : Number(valueForType)}
+                    onChange={handleNumberChange}
+                    step={Number.isInteger(valueForType) ? 1 : "any"}
+                    disabled={disabled}
+                  />
+                ) : null}
+                {isString && !isBoolean && !isNumber ? (
+                  choiceList ? (
+                    (() => {
+                      const current = String(valueForType ?? "");
+                      const uniqueOptions = Array.from(new Set([current, ...choiceList]));
+                      return (
+                        <select
+                          className="settings-card__select"
+                          value={current}
+                          onChange={handleTextChange}
+                          disabled={disabled}
+                        >
+                          {uniqueOptions.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      );
+                    })()
+                  ) : (
+                    <input
+                      type="text"
+                      className="settings-card__input"
+                      value={valueForType === undefined ? "" : String(valueForType)}
+                      onChange={handleTextChange}
+                      disabled={disabled}
+                    />
+                  )
+                ) : null}
+              </div>
               {baseValue !== undefined ? (
                 <div className={changed ? "settings-card__meta" : "settings-card__meta settings-card__meta--muted"}>
                   Default: {formatValue(baseValue)}
@@ -230,8 +338,55 @@ export function SettingsPanel({ onNotify }: SettingsPanelProps): React.ReactElem
       .catch((err) => notify(err instanceof Error ? err.message : String(err)));
   }, [activeValues, defaults, notify]);
 
+  const updateParam = useCallback((scope: "evolution" | "backtest", key: string, value: Scalar) => {
+    if (!defaults) {
+      return;
+    }
+    setActivePreset((prev) => (prev ? null : prev));
+    setActiveValues((prev) => {
+      const baseEvolution = prev?.evolution ?? defaults.evolution;
+      const baseBacktest = prev?.backtest ?? defaults.backtest;
+      const nextEvolution = { ...baseEvolution };
+      const nextBacktest = { ...baseBacktest };
+
+      if (scope === "evolution") {
+        nextEvolution[key] = value;
+      } else {
+        nextBacktest[key] = value;
+      }
+
+      const matchesDefaults =
+        Object.keys(nextEvolution).length === Object.keys(defaults.evolution).length
+        && Object.entries(defaults.evolution).every(([k, v]) => nextEvolution[k] === v)
+        && Object.keys(nextBacktest).length === Object.keys(defaults.backtest).length
+        && Object.entries(defaults.backtest).every(([k, v]) => nextBacktest[k] === v);
+
+      if (matchesDefaults) {
+        return null;
+      }
+
+      return {
+        evolution: nextEvolution,
+        backtest: nextBacktest,
+      };
+    });
+  }, [defaults]);
+
+  const resetParam = useCallback((scope: "evolution" | "backtest", key: string) => {
+    if (!defaults) {
+      return;
+    }
+    const baseline = scope === "evolution" ? defaults.evolution : defaults.backtest;
+    if (!(key in baseline)) {
+      return;
+    }
+    updateParam(scope, key, baseline[key]);
+  }, [defaults, updateParam]);
+
   const activeEvolution = activeValues?.evolution ?? defaults?.evolution ?? null;
   const activeBacktest = activeValues?.backtest ?? defaults?.backtest ?? null;
+  const choiceMap = defaults?.choices ?? {};
+  const editingDisabled = loading || presetLoading || saving;
 
   return (
     <section className="panel settings-panel">
@@ -320,6 +475,10 @@ export function SettingsPanel({ onNotify }: SettingsPanelProps): React.ReactElem
             active={activeEvolution}
             filterText={searchText}
             showChangedOnly={showChangedOnly}
+            choices={choiceMap}
+            disabled={editingDisabled}
+            onChange={(key, value) => updateParam("evolution", key, value)}
+            onReset={(key) => resetParam("evolution", key)}
           />
           <ConfigTable
             title="Backtest"
@@ -327,6 +486,10 @@ export function SettingsPanel({ onNotify }: SettingsPanelProps): React.ReactElem
             active={activeBacktest}
             filterText={searchText}
             showChangedOnly={showChangedOnly}
+            choices={choiceMap}
+            disabled={editingDisabled}
+            onChange={(key, value) => updateParam("backtest", key, value)}
+            onReset={(key) => resetParam("backtest", key)}
           />
 
           <div className="settings-save">

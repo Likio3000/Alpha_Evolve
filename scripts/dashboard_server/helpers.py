@@ -7,6 +7,7 @@ import re
 import json
 import time
 from queue import Empty
+import asyncio
 
 from django.http import StreamingHttpResponse
 
@@ -131,17 +132,38 @@ RE_DIAG = re.compile(r"DIAG\s+(\{.*\})$")
 RE_PROGRESS = re.compile(r"PROGRESS\s+(\{.*\})$")
 
 
-def make_sse_response(queue, keepalive_seconds: float = 10.0) -> StreamingHttpResponse:
-    def _event_stream():
+class _SSEStream:
+    def __init__(self, q, keepalive: float, *, prefer_async: bool = True) -> None:
+        self._queue = q
+        self._keepalive = keepalive
+        self._prefer_async = prefer_async
+
+    @staticmethod
+    def _ping() -> str:
+        payload = json.dumps({"t": time.time()})
+        return f"event: ping\ndata: {payload}\n\n"
+
+    def __iter__(self):
+        if self._prefer_async:
+            raise TypeError("Prefer asynchronous iteration for SSE stream")
         while True:
             try:
-                item = queue.get(timeout=keepalive_seconds)
+                item = self._queue.get(timeout=self._keepalive)
                 yield f"data: {item}\n\n"
             except Empty:
-                payload = json.dumps({"t": time.time()})
-                yield f"event: ping\ndata: {payload}\n\n"
+                yield self._ping()
 
-    response = StreamingHttpResponse(_event_stream(), content_type="text/event-stream")
+    async def __aiter__(self):
+        while True:
+            try:
+                item = await asyncio.to_thread(self._queue.get, True, self._keepalive)
+                yield f"data: {item}\n\n"
+            except Empty:
+                yield self._ping()
+
+
+def make_sse_response(queue, keepalive_seconds: float = 10.0) -> StreamingHttpResponse:
+    response = StreamingHttpResponse(_SSEStream(queue, keepalive_seconds), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response

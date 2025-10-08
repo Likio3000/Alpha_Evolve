@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields as dc_fields
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -10,11 +11,27 @@ from django.views.decorators.http import require_GET, require_POST
 
 from ..helpers import ROOT
 from ..http import json_error, json_response
+from config import BacktestConfig, EvolutionConfig
 
 try:  # Python 3.11+
     import tomllib as _toml
 except Exception:  # pragma: no cover
     _toml = None  # type: ignore
+
+SCALAR_TYPES = (int, float, str, bool)
+
+
+def _scalar_defaults(dc_type):
+    instance = dc_type()
+    defaults: Dict[str, Any] = {}
+    for field in dc_fields(dc_type):
+        if field.type in SCALAR_TYPES:
+            defaults[field.name] = getattr(instance, field.name)
+    return defaults
+
+
+BASE_EVOLUTION_DEFAULTS = _scalar_defaults(EvolutionConfig)
+BASE_BACKTEST_DEFAULTS = _scalar_defaults(BacktestConfig)
 
 
 def _configs_dir() -> Path:
@@ -70,21 +87,31 @@ def _to_toml(obj: Dict[str, Dict[str, Any]]) -> str:
 @require_GET
 def get_defaults(request: HttpRequest):
     cfg = _configs_dir() / "all_params.toml"
-    evo: Dict[str, Any] = {}
-    bt: Dict[str, Any] = {}
+    evo: Dict[str, Any] = dict(BASE_EVOLUTION_DEFAULTS)
+    bt: Dict[str, Any] = dict(BASE_BACKTEST_DEFAULTS)
+
+    def _merge(target: Dict[str, Any], updates: Dict[str, Any] | None) -> None:
+        if not updates:
+            return
+        for key, value in updates.items():
+            if isinstance(value, SCALAR_TYPES):
+                target[key] = value
+
     if cfg.exists():
         try:
             data = _load_toml(cfg)
         except (FileNotFoundError, ValueError, RuntimeError):  # pragma: no cover - unexpected
             data = {}
-        evo = dict(data.get("evolution", {}))
-        bt = dict(data.get("backtest", {}))
+        _merge(evo, data.get("evolution"))
+        _merge(bt, data.get("backtest"))
+
     choices = {
         "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
         "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
         "split_weighting": ["equal", "by_points"],
         "scale": ["zscore", "rank", "sign", "madz", "winsor"],
         "hof_corr_mode": ["flat", "per_bar"],
+        "ensemble_weighting": ["equal", "risk_parity"],
     }
     return json_response({"evolution": evo, "backtest": bt, "choices": choices})
 

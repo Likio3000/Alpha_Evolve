@@ -1,17 +1,51 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    OrderedDict as OrderedDictType,
+    Tuple,
+)
+
 import numpy as np
 import pandas as pd  # For DataFrame rolling in hold period
-from typing import TYPE_CHECKING, Dict, List, Any, Optional, OrderedDict as OrderedDictType
 
-from evolution_components.data_handling import get_sector_groups, get_features_at_time
+from evolution_components.data_handling import DERIVED_VECTOR_FEATURES, get_sector_groups
 from .performance_metrics import compute_max_drawdown
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from alpha_framework import AlphaProgram # Use the actual class from the framework
+    from alpha_framework import AlphaProgram  # Use the actual class from the framework
+
+
+_FEATURE_BUNDLE_CACHE: Dict[
+    Tuple[int, Tuple[Tuple[str, int], ...], Tuple[str, ...]],
+    "FeatureBundle",
+] = {}
+
+_DERIVED_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    "market_rel_close_t": ("closes",),
+    "market_rel_ret1d_t": ("ret1d",),
+    "market_zclose_t": ("closes",),
+    "btc_ratio_proxy_t": ("closes",),
+    "regime_volatility_t": ("vol20",),
+    "regime_momentum_t": ("trend_5_20",),
+    "cross_btc_momentum_t": ("trend_5_20",),
+    "sector_momentum_diff_t": ("trend_5_20",),
+    "market_dispersion_t": ("closes",),
+}
+
+
+@dataclass(slots=True)
+class FeatureBundle:
+    time_index: pd.DatetimeIndex
+    features_per_time: List[Dict[str, Any]]
 
 # Constants that might be needed from alpha_framework if not passed explicitly
 # For now, assume SCALAR_FEATURE_NAMES and CROSS_SECTIONAL_FEATURE_VECTOR_NAMES are passed or globally available
@@ -84,6 +118,230 @@ def _max_drawdown(equity_curve: np.ndarray) -> float:
     """Backward-compatible wrapper around the shared helper."""
 
     return compute_max_drawdown(equity_curve)
+
+
+def _build_feature_bundle(
+    aligned_dfs: OrderedDictType[str, pd.DataFrame],
+    stock_symbols: List[str],
+    common_time_index: pd.DatetimeIndex,
+    scalar_feature_names: List[str],
+    cross_sectional_feature_vector_names: List[str],
+    sector_groups_vec: np.ndarray,
+) -> FeatureBundle:
+    time_index = common_time_index[:-1]
+    n_bars = len(time_index)
+    n_stocks = len(stock_symbols)
+    if n_bars == 0 or n_stocks == 0:
+        return FeatureBundle(time_index=time_index, features_per_time=[])
+
+    cross_feat_set = set(cross_sectional_feature_vector_names)
+    base_columns: set[str] = set()
+    for feat_name in cross_sectional_feature_vector_names:
+        if feat_name == "sector_id_vector":
+            continue
+        if feat_name in DERIVED_VECTOR_FEATURES:
+            deps = _DERIVED_DEPENDENCIES.get(feat_name, ())
+            base_columns.update(deps)
+        base_col = feat_name[:-2] if feat_name.endswith("_t") else feat_name
+        base_columns.add(base_col)
+
+    reindexed_frames: Dict[str, pd.DataFrame] = {
+        sym: aligned_dfs[sym].reindex(time_index) for sym in stock_symbols
+    }
+
+    base_matrices: Dict[str, np.ndarray] = {}
+    for col in base_columns:
+        mat = np.zeros((n_bars, n_stocks), dtype=float)
+        for sym_idx, sym in enumerate(stock_symbols):
+            df_sym = reindexed_frames[sym]
+            if col in df_sym.columns:
+                values = df_sym[col].to_numpy(dtype=float, copy=False)
+                mat[:, sym_idx] = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+        base_matrices[col] = mat
+
+    eps = 1e-9
+    derived_matrices: Dict[str, np.ndarray] = {}
+
+    closes_mat = base_matrices.get("closes")
+    if closes_mat is None:
+        closes_mat = np.zeros((n_bars, n_stocks), dtype=float)
+
+    if "market_rel_close_t" in cross_feat_set:
+        mean_close = np.mean(closes_mat, axis=1, keepdims=True)
+        rel_close = np.divide(
+            closes_mat,
+            mean_close,
+            out=np.zeros_like(closes_mat),
+            where=np.abs(mean_close) > eps,
+        ) - 1.0
+        derived_matrices["market_rel_close_t"] = np.nan_to_num(
+            rel_close, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    if "market_zclose_t" in cross_feat_set:
+        mean_close = np.mean(closes_mat, axis=1, keepdims=True)
+        std_close = np.std(closes_mat, axis=1, ddof=0, keepdims=True)
+        zclose = np.divide(
+            closes_mat - mean_close,
+            std_close,
+            out=np.zeros_like(closes_mat),
+            where=std_close > eps,
+        )
+        derived_matrices["market_zclose_t"] = np.nan_to_num(
+            zclose, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    if "btc_ratio_proxy_t" in cross_feat_set:
+        reference_idx = 0
+        for idx, sym in enumerate(stock_symbols):
+            sym_upper = sym.upper()
+            if "BTC" in sym_upper or "SPY" in sym_upper or "^GSPC" in sym_upper:
+                reference_idx = idx
+                break
+        ref_close = closes_mat[:, [reference_idx]]
+        btc_ratio = np.divide(
+            closes_mat,
+            ref_close,
+            out=np.zeros_like(closes_mat),
+            where=np.abs(ref_close) > eps,
+        ) - 1.0
+        derived_matrices["btc_ratio_proxy_t"] = np.nan_to_num(
+            btc_ratio, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    if "market_dispersion_t" in cross_feat_set:
+        median_close = np.median(closes_mat, axis=1, keepdims=True)
+        dispersion = closes_mat - median_close
+        derived_matrices["market_dispersion_t"] = np.nan_to_num(
+            dispersion, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    ret1d_mat = base_matrices.get("ret1d")
+    if ret1d_mat is None:
+        ret1d_mat = np.zeros((n_bars, n_stocks), dtype=float)
+
+    if "market_rel_ret1d_t" in cross_feat_set:
+        mean_ret = np.mean(ret1d_mat, axis=1, keepdims=True)
+        rel_ret = ret1d_mat - mean_ret
+        derived_matrices["market_rel_ret1d_t"] = np.nan_to_num(
+            rel_ret, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    vol20_mat = base_matrices.get("vol20")
+    if vol20_mat is None:
+        vol20_mat = np.zeros((n_bars, n_stocks), dtype=float)
+
+    if "regime_volatility_t" in cross_feat_set:
+        mean_vol20 = np.mean(vol20_mat, axis=1, keepdims=True)
+        rel_vol = np.divide(
+            vol20_mat,
+            mean_vol20,
+            out=np.zeros_like(vol20_mat),
+            where=np.abs(mean_vol20) > eps,
+        ) - 1.0
+        derived_matrices["regime_volatility_t"] = np.nan_to_num(
+            rel_vol, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    trend_mat = base_matrices.get("trend_5_20")
+    if trend_mat is None:
+        trend_mat = np.zeros((n_bars, n_stocks), dtype=float)
+
+    if "regime_momentum_t" in cross_feat_set:
+        mean_trend = np.mean(trend_mat, axis=1, keepdims=True)
+        regime_mom = trend_mat - mean_trend
+        derived_matrices["regime_momentum_t"] = np.nan_to_num(
+            regime_mom, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    if "cross_btc_momentum_t" in cross_feat_set or "sector_momentum_diff_t" in cross_feat_set:
+        reference_idx = 0
+        for idx, sym in enumerate(stock_symbols):
+            sym_upper = sym.upper()
+            if "BTC" in sym_upper or "SPY" in sym_upper or "^GSPC" in sym_upper:
+                reference_idx = idx
+                break
+
+    if "cross_btc_momentum_t" in cross_feat_set:
+        ref_trend = trend_mat[:, [reference_idx]]
+        cross_btc = trend_mat - ref_trend
+        derived_matrices["cross_btc_momentum_t"] = np.nan_to_num(
+            cross_btc, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    if "sector_momentum_diff_t" in cross_feat_set:
+        sector_diff = np.zeros_like(trend_mat)
+        for sector_id in np.unique(sector_groups_vec):
+            mask = sector_groups_vec == sector_id
+            if not np.any(mask):
+                continue
+            sector_mean = np.mean(trend_mat[:, mask], axis=1, keepdims=True)
+            sector_diff[:, mask] = trend_mat[:, mask] - sector_mean
+        derived_matrices["sector_momentum_diff_t"] = np.nan_to_num(
+            sector_diff, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    sector_vec = sector_groups_vec.astype(float, copy=False)
+    scalar_defaults: Dict[str, float] = {}
+    for sc_name in scalar_feature_names:
+        if sc_name == "const_1":
+            scalar_defaults[sc_name] = 1.0
+        elif sc_name == "const_neg_1":
+            scalar_defaults[sc_name] = -1.0
+        else:
+            scalar_defaults[sc_name] = 0.0
+
+    features_per_time: List[Dict[str, Any]] = []
+    zero_template = np.zeros(n_stocks, dtype=float)
+
+    for t in range(n_bars):
+        feat_dict: Dict[str, Any] = dict(scalar_defaults)
+        for feat_name in cross_sectional_feature_vector_names:
+            if feat_name == "sector_id_vector":
+                feat_dict[feat_name] = sector_vec
+                continue
+            if feat_name in derived_matrices:
+                feat_dict[feat_name] = derived_matrices[feat_name][t]
+                continue
+            base_col = feat_name[:-2] if feat_name.endswith("_t") else feat_name
+            base_mat = base_matrices.get(base_col)
+            if base_mat is None:
+                feat_dict[feat_name] = zero_template.copy()
+            else:
+                feat_dict[feat_name] = base_mat[t]
+        features_per_time.append(feat_dict)
+
+    return FeatureBundle(time_index=time_index, features_per_time=features_per_time)
+
+
+def _get_feature_bundle_cached(
+    aligned_dfs: OrderedDictType[str, pd.DataFrame],
+    stock_symbols: List[str],
+    common_time_index: pd.DatetimeIndex,
+    scalar_feature_names: List[str],
+    cross_sectional_feature_vector_names: List[str],
+    sector_groups_vec: np.ndarray,
+) -> FeatureBundle:
+    cache_key = (
+        id(common_time_index),
+        tuple((sym, id(aligned_dfs[sym])) for sym in stock_symbols),
+        tuple(cross_sectional_feature_vector_names),
+        tuple(scalar_feature_names),
+    )
+    cached = _FEATURE_BUNDLE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    bundle = _build_feature_bundle(
+        aligned_dfs,
+        stock_symbols,
+        common_time_index,
+        scalar_feature_names,
+        cross_sectional_feature_vector_names,
+        sector_groups_vec,
+    )
+    _FEATURE_BUNDLE_CACHE[cache_key] = bundle
+    return bundle
 
 # Main backtesting function
 def backtest_cross_sectional_alpha(
@@ -220,24 +478,42 @@ def backtest_cross_sectional_alpha(
     if np.all(sector_groups_vec == 0):
         raise RuntimeError("sector_id_vector is all zeros – check data handling")
 
+    sector_bucket_masks: Optional[List[np.ndarray]] = None
+    if sector_neutralize_positions:
+        masks: List[np.ndarray] = []
+        for gid in np.unique(sector_groups_vec_int):
+            mask = sector_groups_vec_int == gid
+            if np.any(mask):
+                masks.append(mask)
+        if len(masks) > 1 and not any(np.all(mask) for mask in masks):
+            sector_bucket_masks = masks
+
+    feature_bundle = _get_feature_bundle_cached(
+        aligned_dfs,
+        stock_symbols,
+        common_time_index,
+        scalar_feature_names,
+        cross_sectional_feature_vector_names,
+        sector_groups_vec,
+    )
+    eval_time_index = feature_bundle.time_index
+    features_sequence = feature_bundle.features_per_time
+    if len(features_sequence) != len(eval_time_index):
+        raise RuntimeError("Feature bundle mismatch between features and time index")
+
     # For reproducibility of AlphaProgram.eval if it has stochastic elements (unlikely for these ops)
     # np.random.seed(current_seed) # Seed is usually handled at a higher level (main script)
 
-    for t_idx, timestamp in enumerate(common_time_index):
-        if t_idx == len(common_time_index) - 1:
-            break
-
-        features_at_t = get_features_at_time(
-            timestamp, aligned_dfs, stock_symbols, sector_groups_vec
-        )
-        
+    for timestamp, features_at_t in zip(eval_time_index, features_sequence):
         try:
             signal_vector_t = prog.eval(features_at_t, program_state, n_stocks)
-            signal_vector_t = np.nan_to_num(signal_vector_t, nan=0.0, posinf=0.0, neginf=0.0) 
+            signal_vector_t = np.nan_to_num(
+                signal_vector_t, nan=0.0, posinf=0.0, neginf=0.0
+            )
             raw_signals_over_time.append(signal_vector_t)
         except Exception:
             raw_signals_over_time.append(np.zeros(n_stocks))
-    
+
     if not raw_signals_over_time:
         return {"Sharpe": 0.0, "AnnReturn": 0.0, "AnnVol": 0.0, "MaxDD": 0.0, "Turnover": 0.0, "Bars": 0, "Error": "No signals generated"}
 
@@ -270,12 +546,10 @@ def backtest_cross_sectional_alpha(
         # Center cross-section and optionally sector-neutralize
         centered_signal_t = scaled_signal_t - np.mean(scaled_signal_t)
         neutralized_signal_t = centered_signal_t
-        if sector_neutralize_positions:
+        if sector_bucket_masks:
             # Demean within sector buckets using precomputed groups
-            for gid in np.unique(sector_groups_vec_int):
-                mask = sector_groups_vec_int == gid
-                if np.any(mask):
-                    neutralized_signal_t[mask] -= np.mean(neutralized_signal_t[mask])
+            for mask in sector_bucket_masks:
+                neutralized_signal_t[mask] -= np.mean(neutralized_signal_t[mask])
         # Final L1 neutralization
         sum_abs_centered_signal = np.sum(np.abs(neutralized_signal_t))
         if sum_abs_centered_signal > 1e-9:
@@ -310,7 +584,7 @@ def backtest_cross_sectional_alpha(
     close_t_matrix = np.zeros_like(signal_matrix)
     next_high_matrix = np.zeros_like(signal_matrix)
     next_low_matrix = np.zeros_like(signal_matrix)
-    idx_for_returns = common_time_index[:signal_matrix.shape[0]]
+    idx_for_returns = eval_time_index[: signal_matrix.shape[0]]
     for i, sym in enumerate(stock_symbols):
         ret_fwd_values = aligned_dfs[sym]["ret_fwd"].loc[idx_for_returns].values
         ret_fwd_matrix[:, i] = np.nan_to_num(ret_fwd_values, nan=0.0, posinf=0.0, neginf=0.0)

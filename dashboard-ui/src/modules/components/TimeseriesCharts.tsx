@@ -115,11 +115,12 @@ export function TimeseriesCharts({ data, label }: TimeseriesChartsProps): React.
     data: data.ret_net,
     color: "#f6c560",
   };
+  const descriptor = label ? ` — ${label}` : "";
 
   return (
     <div className="chart-row">
-      <LineChart series={[equitySeries]} title="Equity Curve" />
-      <LineChart series={[retSeries]} title="Returns per Bar" />
+      <LineChart series={[equitySeries]} title={`Equity Curve${descriptor}`} />
+      <LineChart series={[retSeries]} title={`Returns per Bar${descriptor}`} />
     </div>
   );
 }

@@ -63,6 +63,17 @@ def _safe_read_json(path: Path) -> Optional[Any]:
         return None
 
 
+def _read_codename(run_dir: Path) -> Optional[str]:
+    meta = _safe_read_json(run_dir / "meta" / "run_metadata.json")
+    if isinstance(meta, dict):
+        codename = meta.get("codename")
+        if isinstance(codename, str):
+            codename = codename.strip()
+            if codename:
+                return codename
+    return None
+
+
 def _resolve_run_dir(run_dir: str) -> Path:
     candidate = Path(run_dir)
     base_candidates = []
@@ -91,12 +102,13 @@ def list_runs(request: HttpRequest):
     items: List[Dict[str, Any]] = []
     for p in _find_runs()[:limit]:
         rel = _format_path_for_ui(p)
-        name = p.name
-        label = labels.get(name)
+        dir_name = p.name
+        display_name = _read_codename(p) or dir_name
+        label = labels.get(dir_name)
         sharpe = read_best_sharpe_from_run(p)
         items.append({
             "path": rel,
-            "name": name,
+            "name": display_name,
             "label": label,
             "sharpe_best": None if sharpe is None else float(sharpe),
         })
@@ -305,7 +317,7 @@ def run_details(request: HttpRequest):
     labels = _load_labels()
     payload: Dict[str, Any] = {
         "path": _format_path_for_ui(resolved),
-        "name": resolved.name,
+        "name": _read_codename(resolved) or resolved.name,
         "label": labels.get(resolved.name),
         "sharpe_best": None if sharpe is None else float(sharpe),
     }

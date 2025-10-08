@@ -1,6 +1,6 @@
 # Run Artefacts
 
-Each pipeline execution creates `pipeline_runs_cs/run_<timestamp>/` (or inside the directory specified by `AE_PIPELINE_DIR`). The dashboard and scripts rely on the following structure.
+Each pipeline execution creates `pipeline_runs_cs/run_<codename>_g<generations>_seed<seed>_<lookback>_<timestamp>/` (or inside the directory specified by `AE_PIPELINE_DIR`). Codenames are human-friendly composites of Spanish, English, Polish, and French names to make runs easier to recall. The dashboard and scripts rely on the following structure.
 
 ## Top-Level Files
 - `SUMMARY.json` – machine-readable snapshot with `schema_version`, top Sharpe metrics, and relative paths to key files.
@@ -15,7 +15,7 @@ Each pipeline execution creates `pipeline_runs_cs/run_<timestamp>/` (or inside t
 ## Meta Information (`meta/`)
 - `evolution_config.json` – resolved `EvolutionConfig` used for the run.
 - `backtest_config.json` – resolved `BacktestConfig` for the run.
-- `run_metadata.json` – provenance (seed, git SHA, data alignment summary, start/end times).
+- `run_metadata.json` – provenance (codename, seed, git SHA, data alignment summary, start/end times).
 - `hof_gen_*.json` – hall-of-fame snapshots per generation (present when `persist_hof_per_gen` is enabled).
 - `ui_context.json` – JSON payload captured by the dashboard when a run starts (job metadata, submitted overrides).
 - `data_alignment.json` – loader diagnostics (symbols kept/discarded, overlap windows) when available.

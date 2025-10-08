@@ -97,6 +97,10 @@ body {
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
 }
 
+.app-layout--full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .app-sidebar {
   display: grid;
   gap: 20px;
@@ -119,6 +123,37 @@ body {
 
 .selected-run-meta h2 {
   margin: 0 0 4px;
+}
+
+.selected-alpha-chip {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(47, 152, 226, 0.12);
+  border: 1px solid rgba(47, 152, 226, 0.35);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+.selected-alpha-chip__label {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.selected-alpha-chip__name {
+  font-weight: 600;
+  color: #e7f3ff;
+}
+
+.selected-alpha-chip__file {
+  color: var(--muted);
+  font-family: "Fira Code", "SFMono-Regular", "Menlo", monospace;
+  font-size: 12px;
 }
 
 .runs-summary-card {
@@ -319,7 +354,8 @@ body {
   border: 1px solid rgba(44, 60, 76, 0.6);
   overflow: hidden;
   margin-bottom: 20px;
-  min-height: 100px;
+  min-height: 0;
+  height: 520px;
   box-shadow: 0 24px 40px rgba(5, 8, 12, 0.6);
 }
 
@@ -731,6 +767,7 @@ body {
   border-radius: 12px;
   padding: 16px 20px;
   box-shadow: 0 18px 28px rgba(4, 7, 12, 0.4);
+  grid-column: 1 / -1;
 }
 
 .settings-table__header {
@@ -759,8 +796,8 @@ body {
 
 .settings-table__body {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .settings-save {
@@ -803,6 +840,12 @@ body {
   gap: 8px;
 }
 
+.settings-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .settings-card__key {
   font-weight: 600;
   font-size: 13px;
@@ -821,10 +864,68 @@ body {
 }
 
 .settings-card__value {
-  font-size: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-card__input,
+.settings-card__select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(48, 66, 82, 0.7);
+  background: rgba(10, 16, 22, 0.9);
+  color: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.settings-card__input:focus,
+.settings-card__select:focus {
+  outline: none;
+  border-color: rgba(90, 180, 240, 0.8);
+  box-shadow: 0 0 0 3px rgba(90, 180, 240, 0.2);
+}
+
+.settings-card__input:disabled,
+.settings-card__select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-card__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #f3f6f9;
+}
+
+.settings-card__checkbox input {
+  width: 18px;
+  height: 18px;
+}
+
+.settings-card__reset {
+  appearance: none;
+  background: none;
+  border: none;
+  color: rgba(167, 173, 179, 0.8);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  padding: 0;
+}
+
+.settings-card__reset:hover:not(:disabled) {
+  color: rgba(90, 180, 240, 0.9);
+}
+
+.settings-card__reset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .settings-card__meta {
@@ -847,5 +948,17 @@ body {
 
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1400px) {
+  .settings-table__body {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .settings-table__body {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

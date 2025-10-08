@@ -5,7 +5,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
 from typing import Any, Dict
@@ -193,9 +193,10 @@ async def start_pipeline_run(request: HttpRequest):
     job_id = str(_uuid.uuid4())
     client_queue = STATE.new_queue(job_id)
 
+    submitted_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     ui_context = {
         "job_id": job_id,
-        "submitted_at": datetime.utcnow().isoformat() + "Z",
+        "submitted_at": submitted_at,
         "payload": payload_dict,
         "pipeline_args": full_args,
     }

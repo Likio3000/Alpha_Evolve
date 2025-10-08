@@ -19,6 +19,7 @@ import argparse
 import logging
 import os
 import pickle
+import random
 import sys
 import time
 from pathlib import Path
@@ -36,6 +37,71 @@ from utils.config_layering import load_config_file, layer_dataclass_config, _fla
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "pipeline_runs_cs"
+
+_CODENAME_RNG = random.SystemRandom()
+_CODENAME_FIRST_NAMES = [
+    # Spanish
+    "Lucia",
+    "Mateo",
+    "Sofia",
+    "Diego",
+    "Ines",
+    "Carlos",
+    # English
+    "Harper",
+    "Ethan",
+    "Ava",
+    "Noah",
+    "Amelia",
+    "Oliver",
+    # Polish
+    "Zofia",
+    "Jakub",
+    "Maja",
+    "Leon",
+    "Ania",
+    "Oskar",
+    # French
+    "Hugo",
+    "Manon",
+    "Leo",
+    "Camille",
+    "Lucas",
+    "Chloe",
+]
+_CODENAME_LAST_NAMES = [
+    "Garcia",
+    "Lopez",
+    "Martinez",
+    "Santos",
+    "Hernandez",
+    "Ramirez",
+    "Smith",
+    "Johnson",
+    "Bennett",
+    "Clark",
+    "Baker",
+    "Turner",
+    "Kowalski",
+    "Nowak",
+    "Wisniewski",
+    "Lewandowski",
+    "Mazur",
+    "Kaminski",
+    "Dubois",
+    "Lefevre",
+    "Moreau",
+    "Rousseau",
+    "Leroux",
+    "Boulanger",
+]
+
+
+def _generate_run_codename() -> str:
+    """Return a readable codename composed of mixed-language first/last names."""
+    first = _CODENAME_RNG.choice(_CODENAME_FIRST_NAMES)
+    last = _CODENAME_RNG.choice(_CODENAME_LAST_NAMES)
+    return f"{first}-{last}"
 
 
 @dataclass
@@ -382,12 +448,23 @@ def run_pipeline_programmatic(
     os.environ["AE_PIPELINE_DIR"] = str(base_output_dir)
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
+    codename = _generate_run_codename()
     run_dir = (
         base_output_dir
-        / f"run_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
+        / f"run_{codename}_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
         f"{evo_cfg.max_lookback_data_option}_{run_stamp}"
     )
+    attempts = 0
+    while run_dir.exists():
+        attempts += 1
+        codename = f"{_generate_run_codename()}-{attempts}"
+        run_dir = (
+            base_output_dir
+            / f"run_{codename}_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
+            f"{evo_cfg.max_lookback_data_option}_{run_stamp}"
+        )
     run_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Run codename: %s", codename)
 
     try:
         import json
@@ -405,6 +482,7 @@ def run_pipeline_programmatic(
             "python": sys.version,
             "platform": platform.platform(),
             "time": run_stamp,
+            "codename": codename,
         }
         try:
             sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -456,6 +534,7 @@ def run_pipeline_programmatic(
                 fh.write(
                     f"Alpha Evolve Pipeline (dry run)\n\n"
                     f"Run directory: {run_dir}\n"
+                    f"Run codename: {codename}\n"
                     f"Generations: {evo_cfg.generations}\n"
                     f"Data: {bt_cfg.data_dir}\n"
                     f"Backtest top: {bt_cfg.top_to_backtest}\n"
@@ -550,4 +629,3 @@ def run_pipeline_programmatic(
 
     logger.info("\n✔  Pipeline finished – artefacts in  %s", run_dir)
     return run_dir
-

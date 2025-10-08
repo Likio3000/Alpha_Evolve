@@ -20,9 +20,11 @@ p_cross = 0.0
 
 # Hall of Fame
 hof_size = 20
+hof_min_fill = 5
 hof_per_gen = 3
 keep_dupes_in_hof = false
 hof_corr_mode = "flat"                   # flat | per_bar
+quiet = false
 
 # Op/complexity limits
 max_ops = 87
@@ -32,6 +34,15 @@ max_update_ops = 45
 max_scalar_operands = 10
 max_vector_operands = 16
 max_matrix_operands = 4
+parsimony_jitter_pct = 0.0
+ops_split_jitter = 0.0
+ops_split_base_setup = 0.15
+ops_split_base_predict = 0.70
+ops_split_base_update = 0.15
+vector_ops_bias = 0.0
+relation_ops_weight = 3.0
+cs_ops_weight = 1.5
+default_op_weight = 1.0
 
 # Fitness weights and guards
 parsimony_penalty = 0.002
@@ -42,12 +53,22 @@ ic_std_penalty_w = 0.10
 turnover_penalty_w = 0.05
 # Weight for IC t-stat contribution
 ic_tstat_w = 0.0
+factor_penalty_w = 0.0
+factor_penalty_factors = "ret1d_t,vol20_t,range_rel_t"
+transaction_cost_bps = 0.0
 xs_flat_guard = 0.05
 t_flat_guard = 0.05
 early_abort_bars = 20
 early_abort_xs = 0.05
 early_abort_t = 0.05
 flat_bar_threshold = 0.25
+stress_penalty_w = 0.0
+stress_fee_bps = 5.0
+stress_slippage_bps = 2.0
+stress_shock_scale = 1.5
+stress_tail_fee_bps = 10.0
+stress_tail_slippage_bps = 3.5
+stress_tail_shock_scale = 2.5
 
 # Scaling/preprocessing
 scale = "madz"                            # zscore | rank | sign | madz | winsor
@@ -62,6 +83,8 @@ split_weighting = "equal"                 # equal | by_points
 # Temporal decay half-life for more recent bars (0 disables)
 temporal_decay_half_life = 0.0
 eval_cache_size = 128
+qd_archive_enabled = false
+qd_max_entries = 256
 
 # Ramping / selection strategy
 ramp_fraction = 0.3333333333              # fraction of generations to ramp
@@ -74,9 +97,18 @@ ic_phase_gens = 0
 # Rank-based tournament weighting temperature (softmax beta schedule)
 rank_softmax_beta_target = 2.0
 rank_softmax_beta_floor = 0.0
+bandit_enabled = false
 
 # Parallel workers (0/None → auto; 1 → sequential)
 workers = 1
+moea_enabled = false
+moea_elite_frac = 0.2
+mf_enabled = false
+mf_initial_fraction = 0.4
+mf_promote_fraction = 0.3
+mf_min_promote = 8
+cv_k_folds = 0
+cv_embargo = 0
 
 
 [backtest]
@@ -98,6 +130,10 @@ long_short_n = 0                           # 0 → use all
 annualization_factor = 252                 # Trading days in a year for daily equities
 stop_loss_pct = 0.0
 sector_neutralize_positions = false
+ensemble_mode = false
+ensemble_size = 0
+ensemble_max_corr = 0.3
+ensemble_weighting = "equal"
 
 # Risk controls
 volatility_target = 0.0

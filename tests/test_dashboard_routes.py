@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from scripts.dashboard_server.helpers import build_pipeline_args, ROOT
+from scripts.dashboard_server.jobs import STATE
 
 
 pytestmark = pytest.mark.asyncio
@@ -244,3 +245,48 @@ async def test_pipeline_stop_and_events_endpoints(dashboard_env):
 
     events_resp = await dashboard_env.client.get("/api/pipeline/events/unknown")
     assert events_resp.status_code == 404
+
+
+async def test_pipeline_events_streams_incremental_logs(dashboard_env, monkeypatch):
+    """Ensure SSE scaffolding streams log and score payloads before exit."""
+    from scripts.dashboard_server.routes.run_pipeline import _forward_events
+    from scripts.dashboard_server.helpers import _SSEStream
+
+    job_id = "job-test-stream"
+    client_queue = STATE.new_queue(job_id)
+    event_queue: queue.Queue = queue.Queue()
+
+    async def drive_forwarder():
+        await asyncio.wait_for(_forward_events(job_id, event_queue, client_queue), timeout=1.5)
+
+    task = asyncio.create_task(drive_forwarder())
+    try:
+        event_queue.put({"type": "log", "raw": "Booting pipeline"})
+        event_queue.put({"type": "score", "sharpe_best": 1.42, "raw": "Sharpe(best)=1.42"})
+        event_queue.put({"type": "status", "msg": "exit", "code": 0})
+        event_queue.put({"type": "__complete__"})
+
+        await asyncio.sleep(0.05)
+        log_text = STATE.get_log_text(job_id)
+        assert "Booting pipeline" in log_text
+
+        streamed = []
+        while True:
+            try:
+                streamed.append(json.loads(client_queue.get_nowait()))
+            except queue.Empty:
+                break
+        assert any(item["type"] == "log" for item in streamed)
+        assert any(item["type"] == "score" and pytest.approx(1.42) == item["sharpe_best"] for item in streamed)
+        assert any(item["type"] == "status" and item.get("msg") == "exit" for item in streamed)
+
+        q = queue.Queue()
+        sse = _SSEStream(q, keepalive=0.05, prefer_async=False)
+        q.put(json.dumps({"type": "test", "payload": 1}))
+        first = next(iter(sse))
+        assert first.startswith("data: {") and '"type": "test"' in first
+    finally:
+        event_queue.put("__complete__")
+        await asyncio.wait_for(task, timeout=1.0)
+        STATE.logs.pop(job_id, None)
+        STATE.queues.pop(job_id, None)
