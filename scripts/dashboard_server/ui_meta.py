@@ -97,7 +97,7 @@ def get_pipeline_params_ui_meta(request) -> JsonResponse:
                     {"key": "use_train_val_splits", "label": "Use Train/Val Splits", "type": "bool", "default": True, "help": "Split evaluation window into train/validation segments."},
                     {"key": "train_points", "label": "Train Bars", "type": "int", "default": 840, "min": 0, "max": 100000, "step": 10, "help": "Number of bars allocated to training slice when splits enabled."},
                     {"key": "val_points", "label": "Validation Bars", "type": "int", "default": 360, "min": 0, "max": 100000, "step": 10, "help": "Number of bars allocated to validation slice when splits enabled."},
-                    {"key": "regime_diagnostic_factors", "label": "Regime Diagnostic Factors", "type": "text", "default": "regime_volatility_t,regime_momentum_t,cross_btc_momentum_t,sector_momentum_diff_t,onchain_activity_proxy_t,onchain_velocity_proxy_t,onchain_whale_proxy_t", "help": "Comma-separated features tracked in regime diagnostics."},
+                    {"key": "regime_diagnostic_factors", "label": "Regime Diagnostic Factors", "type": "text", "default": "regime_volatility_t,regime_momentum_t,sector_momentum_diff_t,market_dispersion_t", "help": "Comma-separated features tracked in regime diagnostics."},
                 ],
             },
             {

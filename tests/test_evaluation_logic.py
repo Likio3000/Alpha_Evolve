@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from collections import OrderedDict
+from types import SimpleNamespace
 import pytest
 from evolution_components import data_handling
 from utils.features import compute_basic_features
@@ -31,6 +32,40 @@ def build_zero_program() -> AlphaProgram:
         Op(FINAL_PREDICTION_VECTOR_NAME, "vec_mul_scalar", ("opens_t", "zero_scalar")),
     ]
     return AlphaProgram(predict_ops=ops)
+
+
+def build_ctx_from_returns(ret1d_matrix: np.ndarray, ret_fwd_matrix: np.ndarray) -> SimpleNamespace:
+    times = pd.RangeIndex(ret1d_matrix.shape[0])
+    symbols = [f"S{i}" for i in range(ret1d_matrix.shape[1])]
+    aligned = OrderedDict()
+    for idx, sym in enumerate(symbols):
+        aligned[sym] = pd.DataFrame(
+            {
+                "closes": 100.0 + np.arange(ret1d_matrix.shape[0], dtype=float) + idx,
+                "ret1d": ret1d_matrix[:, idx],
+                "ret_fwd": ret_fwd_matrix[:, idx],
+                "vol20": np.zeros(ret1d_matrix.shape[0], dtype=float),
+                "trend_5_20": np.zeros(ret1d_matrix.shape[0], dtype=float),
+            },
+            index=times,
+        )
+    close_matrix = np.tile(
+        (100.0 + np.arange(ret1d_matrix.shape[0], dtype=float))[:, None],
+        (1, ret1d_matrix.shape[1]),
+    )
+    bundle = SimpleNamespace(aligned_dfs=aligned, common_index=times, symbols=symbols)
+    col_matrix_map = {
+        "ret1d": ret1d_matrix,
+        "ret_fwd": ret_fwd_matrix,
+        "close": close_matrix,
+        "closes": close_matrix,
+    }
+    return SimpleNamespace(
+        bundle=bundle,
+        eval_lag=1,
+        sector_ids=np.zeros(ret1d_matrix.shape[1], dtype=float),
+        col_matrix_map=col_matrix_map,
+    )
 
 
 def test_safe_corr_eval_normal():
@@ -527,6 +562,96 @@ def test_correlation_penalty_applied():
     assert res2.fitness == pytest.approx(base_score - 0.5)
 
 
+def test_risk_metric_weights_adjust_fitness():
+    """Adjust fitness according to Sortino reward and tail-risk penalties."""
+    ret1d = np.array([
+        [0.02, 0.03],
+        [-0.05, -0.04],
+        [0.01, -0.02],
+        [-0.03, 0.05],
+        [0.04, -0.01],
+    ])
+    ret_fwd = np.array([
+        [0.018, 0.022],
+        [-0.06, -0.055],
+        [0.012, -0.018],
+        [-0.028, 0.042],
+        [0.035, -0.009],
+    ])
+    ctx = build_ctx_from_returns(ret1d, ret_fwd)
+    prog = AlphaProgram(predict_ops=[
+        Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("ret1d_t",))
+    ])
+
+    hof.clear_hof()
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.0, corr_cutoff=0.0)
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=8,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        sortino_weight=0.0,
+        drawdown_penalty_weight=0.0,
+        downside_penalty_weight=0.0,
+        cvar_penalty_weight=0.0,
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    initialize_evaluation_cache(max_size=4)
+    res_base = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+
+    sortino_weight = 0.25
+    drawdown_weight = 5.0
+    downside_weight = 1.5
+    cvar_weight = 3.0
+
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=8,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        sortino_weight=sortino_weight,
+        drawdown_penalty_weight=drawdown_weight,
+        downside_penalty_weight=downside_weight,
+        cvar_penalty_weight=cvar_weight,
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    initialize_evaluation_cache(max_size=4)
+    res_weighted = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+
+    tail_loss = max(0.0, -res_weighted.cvar)
+    expected_delta = (
+        sortino_weight * res_weighted.sortino_ratio
+        - drawdown_weight * max(0.0, res_weighted.max_drawdown)
+        - downside_weight * res_weighted.downside_deviation
+        - cvar_weight * tail_loss
+    )
+
+    assert res_weighted.fitness == pytest.approx(res_base.fitness + expected_delta, rel=1e-6, abs=1e-6)
+    assert res_weighted.sortino_ratio == pytest.approx(res_base.sortino_ratio)
+    assert res_weighted.downside_deviation == pytest.approx(res_base.downside_deviation)
+    assert res_weighted.cvar == pytest.approx(res_base.cvar)
+
+
 def test_sector_vector_available():
     """Make sure sector_id_vector inputs exist and can drive meaningful processed predictions."""
     class SectorDH(CountingDH):
@@ -717,14 +842,15 @@ def test_evaluate_program_stress_and_regime(monkeypatch):
         regime_diagnostic_factors=(
             "regime_volatility_t",
             "regime_momentum_t",
-            "onchain_activity_proxy_t",
+            "sector_momentum_diff_t",
+            "market_dispersion_t",
         ),
     )
     initialize_evaluation_cache(max_size=2)
     res = evaluate_program(prog, dh, hof, {})
 
     assert isinstance(res.regime_exposures, dict)
-    expected_regime = {"regime_volatility_t", "regime_momentum_t", "onchain_activity_proxy_t"}
+    expected_regime = {"regime_volatility_t", "regime_momentum_t", "sector_momentum_diff_t", "market_dispersion_t"}
     assert res.regime_exposures.keys() & expected_regime
     assert isinstance(res.stress_metrics, dict)
     assert any(k.startswith("base_") for k in res.stress_metrics)

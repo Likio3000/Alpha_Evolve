@@ -42,6 +42,9 @@ class EvalResult:
     regime_exposures: Dict[str, float] = field(default_factory=dict)
     stress_scenarios: Dict[str, Dict[str, float]] = field(default_factory=dict)
     transaction_costs: Dict[str, float] = field(default_factory=dict)
+    sortino_ratio: float = 0.0
+    downside_deviation: float = 0.0
+    cvar: float = 0.0
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
@@ -103,6 +106,11 @@ _EVAL_CONFIG = {
     "ic_std_penalty_weight": 0.0,
     "turnover_penalty_weight": 0.0,
     "ic_tstat_weight": 0.0,
+    "sortino_weight": 0.0,
+    "drawdown_penalty_weight": 0.0,
+    "downside_penalty_weight": 0.0,
+    "cvar_penalty_weight": 0.0,
+    "cvar_alpha": 0.95,
     # Fixed weights for comparability (no ramping)
     "fixed_sharpe_proxy_weight": 0.0,
     "fixed_ic_std_penalty_weight": 0.0,
@@ -132,11 +140,8 @@ _EVAL_CONFIG = {
     "regime_diagnostic_factors": (
         "regime_volatility_t",
         "regime_momentum_t",
-        "cross_btc_momentum_t",
         "sector_momentum_diff_t",
-        "onchain_activity_proxy_t",
-        "onchain_velocity_proxy_t",
-        "onchain_whale_proxy_t",
+        "market_dispersion_t",
     ),
 }
 
@@ -191,6 +196,11 @@ def configure_evaluation(
     ic_std_penalty_weight: float = 0.0,
     turnover_penalty_weight: float = 0.0,
     ic_tstat_weight: float = 0.0,
+    sortino_weight: float = 0.0,
+    drawdown_penalty_weight: float = 0.0,
+    downside_penalty_weight: float = 0.0,
+    cvar_penalty_weight: float = 0.0,
+    cvar_alpha: float = 0.95,
     factor_penalty_weight: float = 0.0,
     factor_penalty_factors: str | Iterable[int] | None = None,
     stress_penalty_weight: float = 0.0,
@@ -238,6 +248,11 @@ def configure_evaluation(
     _EVAL_CONFIG["ic_std_penalty_weight"] = ic_std_penalty_weight
     _EVAL_CONFIG["turnover_penalty_weight"] = turnover_penalty_weight
     _EVAL_CONFIG["ic_tstat_weight"] = ic_tstat_weight
+    _EVAL_CONFIG["sortino_weight"] = sortino_weight
+    _EVAL_CONFIG["drawdown_penalty_weight"] = drawdown_penalty_weight
+    _EVAL_CONFIG["downside_penalty_weight"] = downside_penalty_weight
+    _EVAL_CONFIG["cvar_penalty_weight"] = cvar_penalty_weight
+    _EVAL_CONFIG["cvar_alpha"] = cvar_alpha
     _EVAL_CONFIG["factor_penalty_weight"] = float(factor_penalty_weight)
     factors_raw = ""
     factors_tuple: tuple[str, ...]
@@ -694,11 +709,8 @@ def evaluate_program(
     default_regime_names = (
         "regime_volatility_t",
         "regime_momentum_t",
-        "cross_btc_momentum_t",
         "sector_momentum_diff_t",
-        "onchain_activity_proxy_t",
-        "onchain_velocity_proxy_t",
-        "onchain_whale_proxy_t",
+        "market_dispersion_t",
     )
     if not regime_names:
         regime_names = default_regime_names
@@ -928,10 +940,34 @@ def evaluate_program(
     else:
         mean_daily_ic = float(np.mean(daily_ic_values))
     pnl_primary = np.array(pnl_values_by_h.get(primary_horizon, []), dtype=float)
+    pnl_primary = pnl_primary[np.isfinite(pnl_primary)]
+    sortino_ratio = 0.0
+    downside_deviation = 0.0
+    cvar_value = 0.0
     if pnl_primary.size > 0:
         mean_pnl = float(np.mean(pnl_primary))
         std_pnl = float(np.std(pnl_primary, ddof=0))
         sharpe_proxy = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
+        downside_losses = pnl_primary[pnl_primary < 0.0]
+        if downside_losses.size > 0:
+            downside_deviation = float(np.sqrt(np.mean(np.square(downside_losses))))
+        denom = downside_deviation if downside_deviation > 1e-9 else 1e-9
+        sortino_ratio = float(mean_pnl / denom)
+        try:
+            alpha = float(_EVAL_CONFIG.get("cvar_alpha", 0.95) or 0.95)
+        except Exception:
+            alpha = 0.95
+        alpha = min(max(alpha, 1e-3), 0.999)
+        quantile_level = max(0.0, min(1.0, 1.0 - alpha))
+        if 0.0 < quantile_level < 1.0:
+            tail_cutoff = float(np.quantile(pnl_primary, quantile_level))  # type: ignore[arg-type]
+            tail_mask = pnl_primary <= tail_cutoff
+            if np.any(tail_mask):
+                cvar_value = float(np.mean(pnl_primary[tail_mask]))
+            else:
+                cvar_value = tail_cutoff
+        else:
+            cvar_value = float(np.min(pnl_primary))
     else:
         mean_pnl = 0.0
         std_pnl = 0.0
@@ -1248,9 +1284,13 @@ def evaluate_program(
     score = (
         mean_daily_ic
         + _EVAL_CONFIG.get("sharpe_proxy_weight", 0.0) * sharpe_proxy
+        + _EVAL_CONFIG.get("sortino_weight", 0.0) * sortino_ratio
         - _EVAL_CONFIG.get("ic_std_penalty_weight", 0.0) * ic_std
         - _EVAL_CONFIG.get("turnover_penalty_weight", 0.0) * turnover_proxy
         - parsimony_penalty
+        - _EVAL_CONFIG.get("drawdown_penalty_weight", 0.0) * max(0.0, float(drawdown_proxy))
+        - _EVAL_CONFIG.get("downside_penalty_weight", 0.0) * float(downside_deviation)
+        - _EVAL_CONFIG.get("cvar_penalty_weight", 0.0) * max(0.0, -float(cvar_value))
         + _EVAL_CONFIG.get("ic_tstat_weight", 0.0) * ic_tstat
     )
     correlation_penalty = 0.0
@@ -1426,6 +1466,9 @@ def evaluate_program(
         regime_exposures=regime_exposures,
         stress_scenarios=stress_scenarios,
         transaction_costs=transaction_costs,
+        sortino_ratio=float(sortino_ratio),
+        downside_deviation=float(downside_deviation),
+        cvar=float(cvar_value),
     )
     # Compute fixed-weight fitness if candidate wasn't invalidated to -inf
     try:
@@ -1458,7 +1501,7 @@ def evaluate_program(
         pass
     if result.fitness_static is not None:
         logger.debug(
-            "Eval summary %s | fitness %.6f (fixed %.6f) mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f factor %.6f drawdown %.6f factor_sum %.6f robust %.6f stress %s ops %d factors %s horizons %s",
+            "Eval summary %s | fitness %.6f (fixed %.6f) mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f sortino %.6f downside %.6f cvar %.6f parsimony %.6f correlation %.6f factor %.6f drawdown %.6f factor_sum %.6f robust %.6f stress %s ops %d factors %s horizons %s",
             fp,
             result.fitness,
             result.fitness_static,
@@ -1466,6 +1509,9 @@ def evaluate_program(
             result.ic_std,
             result.turnover_proxy,
             result.sharpe_proxy,
+            result.sortino_ratio,
+            result.downside_deviation,
+            result.cvar,
             result.parsimony_penalty,
             result.correlation_penalty,
             result.factor_penalty,
@@ -1479,13 +1525,16 @@ def evaluate_program(
         )
     else:
         logger.debug(
-            "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f parsimony %.6f correlation %.6f factor %.6f drawdown %.6f factor_sum %.6f robust %.6f stress %s ops %d factors %s horizons %s",
+            "Eval summary %s | fitness %.6f mean_ic %.6f ic_std %.6f turnover %.6f sharpe %.6f sortino %.6f downside %.6f cvar %.6f parsimony %.6f correlation %.6f factor %.6f drawdown %.6f factor_sum %.6f robust %.6f stress %s ops %d factors %s horizons %s",
             fp,
             result.fitness,
             result.mean_ic,
             result.ic_std,
             result.turnover_proxy,
             result.sharpe_proxy,
+            result.sortino_ratio,
+            result.downside_deviation,
+            result.cvar,
             result.parsimony_penalty,
             result.correlation_penalty,
             result.factor_penalty,

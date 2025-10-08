@@ -53,6 +53,16 @@ def _format_path_for_ui(p: Path) -> str:
             return str(p)
 
 
+def _safe_read_json(path: Path) -> Optional[Any]:
+    try:
+        if not path.exists():
+            return None
+        with path.open(encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
 def _resolve_run_dir(run_dir: str) -> Path:
     candidate = Path(run_dir)
     base_candidates = []
@@ -280,3 +290,47 @@ def run_asset(request: HttpRequest):
     response = FileResponse(open(full, "rb"), content_type=media)
     response["Content-Disposition"] = f'inline; filename="{full.name}"'
     return response
+
+
+def run_details(request: HttpRequest):
+    run_dir = request.GET.get("run_dir")
+    if not run_dir:
+        return json_error("run_dir is required", 400)
+    try:
+        resolved = _resolve_run_dir(run_dir)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+
+    sharpe = read_best_sharpe_from_run(resolved)
+    labels = _load_labels()
+    payload: Dict[str, Any] = {
+        "path": _format_path_for_ui(resolved),
+        "name": resolved.name,
+        "label": labels.get(resolved.name),
+        "sharpe_best": None if sharpe is None else float(sharpe),
+    }
+
+    summary = _safe_read_json(resolved / "SUMMARY.json")
+    if summary is not None:
+        payload["summary"] = summary
+
+    meta_dir = resolved / "meta"
+    if meta_dir.exists():
+        ui_context = _safe_read_json(meta_dir / "ui_context.json")
+        if ui_context is not None:
+            payload["ui_context"] = ui_context
+
+        extra_meta: Dict[str, Any] = {}
+        for key, filename in (
+            ("evolution_config", "evolution_config.json"),
+            ("backtest_config", "backtest_config.json"),
+            ("run_metadata", "run_metadata.json"),
+            ("data_alignment", "data_alignment.json"),
+        ):
+            data = _safe_read_json(meta_dir / filename)
+            if data is not None:
+                extra_meta[key] = data
+        if extra_meta:
+            payload["meta"] = extra_meta
+
+    return json_response(payload)

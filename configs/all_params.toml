@@ -3,7 +3,7 @@
 
 [evolution]
 # Data handling
-data_dir = "./data"
+data_dir = "./data_sp500"
 max_lookback_data_option = "common_1200"   # one of: common_1200 | specific_long_10k | full_overlap
 min_common_points = 1200
 eval_lag = 1
@@ -81,7 +81,7 @@ workers = 1
 
 [backtest]
 # Data handling
-data_dir = "./data"
+data_dir = "./data_sp500"
 max_lookback_data_option = "common_1200"
 min_common_points = 1200
 eval_lag = 1
@@ -95,7 +95,7 @@ hold = 1
 scale = "zscore"
 winsor_p = 0.02
 long_short_n = 0                           # 0 → use all
-annualization_factor = 2190                # 365*6 for 4H crypto; set 252 for daily equities
+annualization_factor = 252                 # Trading days in a year for daily equities
 stop_loss_pct = 0.0
 sector_neutralize_positions = false
 

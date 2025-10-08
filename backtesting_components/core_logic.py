@@ -102,7 +102,7 @@ def backtest_cross_sectional_alpha(
     cross_sectional_feature_vector_names: List[str], # Pass these
     winsor_p: float | None = None,
     debug_prints: bool = False, # For optional debug prints
-    annualization_factor: float | None = (365 * 6), # Default for 4H bars; if None, infer from index
+    annualization_factor: float | None = 252, # Default for daily equities; if None, infer from index
     stop_loss_pct: float = 0.0,
     # Optional risk controls
     sector_neutralize_positions: bool = False,
@@ -446,13 +446,18 @@ def backtest_cross_sectional_alpha(
             if not diffs.empty:
                 sec = diffs.median().total_seconds()
                 if sec > 0:
-                    annualization_factor = float((365.0 * 24.0 * 3600.0) / sec)
+                    if abs(sec - 86400.0) <= 1200.0:  # ≈ one trading day
+                        annualization_factor = 252.0
+                    elif abs(sec - 14400.0) <= 600.0:  # ≈ 4h bars
+                        annualization_factor = float(365 * 6)
+                    else:
+                        annualization_factor = float((365.0 * 24.0 * 3600.0) / sec)
                 else:
-                    annualization_factor = float(365 * 6)
+                    annualization_factor = 252.0
             else:
-                annualization_factor = float(365 * 6)
+                annualization_factor = 252.0
         except Exception:
-            annualization_factor = float(365 * 6)
+            annualization_factor = 252.0
     else:
         annualization_factor = float(annualization_factor)
 

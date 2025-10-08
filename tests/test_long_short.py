@@ -107,7 +107,7 @@ def test_long_short_n_trades_only_requested_symbols():
     assert all(np.count_nonzero(p) == 2 for p in manual_pos)
     mean_ret = manual_ret.mean()
     std_ret = manual_ret.std(ddof=0)
-    sharpe = (mean_ret / (std_ret + 1e-9)) * np.sqrt(365 * 6)
+    sharpe = (mean_ret / (std_ret + 1e-9)) * np.sqrt(252)
     assert metrics["Sharpe"] == pytest.approx(sharpe)
 
 
@@ -165,3 +165,93 @@ def test_backtest_reports_extended_stress_metrics():
     assert metrics["Stress"]["ShockScale"] == scenarios["base"]["ShockScale"]
     assert "TransactionCosts" in metrics
     assert "baseline_cost" in metrics["TransactionCosts"]
+
+
+def test_backtest_auto_annualization_daily():
+    """Auto-detect annualisation for daily data when caller leaves factor unset."""
+    index = pd.date_range("2022-01-01", periods=6, freq="D")
+    rets = np.array([
+        [0.01, -0.015, 0.02],
+        [-0.005, 0.018, 0.012],
+        [0.007, 0.006, -0.011],
+        [0.004, -0.007, 0.008],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ])
+    aligned = OrderedDict({
+        "AAA": _build_df(rets[:, 0], index),
+        "BBB": _build_df(rets[:, 1], index),
+        "CCC": _build_df(rets[:, 2], index),
+    })
+    signals = np.array([
+        [0.1, 0.2, -0.3],
+        [0.25, -0.15, 0.05],
+        [-0.05, 0.3, 0.1],
+        [0.2, -0.1, -0.05],
+        [0.1, 0.0, -0.1],
+    ])
+    prog = DummyProg(signals)
+    metrics = backtest_cross_sectional_alpha(
+        prog=prog,
+        aligned_dfs=aligned,
+        common_time_index=index,
+        stock_symbols=list(aligned.keys()),
+        n_stocks=3,
+        fee_bps=0.0,
+        lag=0,
+        hold=1,
+        scale_method="zscore",
+        long_short_n=0,
+        initial_state_vars_config={},
+        scalar_feature_names=[],
+        cross_sectional_feature_vector_names=[],
+        annualization_factor=None,
+    )
+    _, manual_ret = manual_backtest(signals, rets[:-1], 0)
+    sharpe = (manual_ret.mean() / (manual_ret.std(ddof=0) + 1e-9)) * np.sqrt(252)
+    assert metrics["Sharpe"] == pytest.approx(sharpe)
+
+
+def test_backtest_auto_annualization_intraday():
+    """Auto-detect annualisation for 4-hour data, falling back to 365*6 bars/year."""
+    index = pd.date_range("2022-01-01", periods=6, freq="4h")
+    rets = np.array([
+        [0.005, -0.007, 0.01],
+        [-0.003, 0.009, 0.004],
+        [0.008, 0.004, -0.006],
+        [0.004, -0.005, 0.007],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ])
+    aligned = OrderedDict({
+        "AAA": _build_df(rets[:, 0], index),
+        "BBB": _build_df(rets[:, 1], index),
+        "CCC": _build_df(rets[:, 2], index),
+    })
+    signals = np.array([
+        [0.2, -0.1, 0.05],
+        [0.15, 0.1, -0.25],
+        [0.05, 0.2, -0.1],
+        [-0.1, 0.3, -0.05],
+        [0.1, -0.2, 0.05],
+    ])
+    prog = DummyProg(signals)
+    metrics = backtest_cross_sectional_alpha(
+        prog=prog,
+        aligned_dfs=aligned,
+        common_time_index=index,
+        stock_symbols=list(aligned.keys()),
+        n_stocks=3,
+        fee_bps=0.0,
+        lag=0,
+        hold=1,
+        scale_method="zscore",
+        long_short_n=0,
+        initial_state_vars_config={},
+        scalar_feature_names=[],
+        cross_sectional_feature_vector_names=[],
+        annualization_factor=None,
+    )
+    _, manual_ret = manual_backtest(signals, rets[:-1], 0)
+    sharpe = (manual_ret.mean() / (manual_ret.std(ddof=0) + 1e-9)) * np.sqrt(365 * 6)
+    assert metrics["Sharpe"] == pytest.approx(sharpe)

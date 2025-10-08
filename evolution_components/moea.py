@@ -12,11 +12,13 @@ ObjectiveTuple = Tuple[float, ...]
 OBJECTIVE_LABELS: Tuple[str, ...] = (
     "ic",
     "sh",
+    "sortino",
     "neg_turn",
     "neg_complex",
     "neg_dd",
     "neg_factor",
     "neg_robust",
+    "neg_cvar",
 )
 
 
@@ -38,14 +40,17 @@ class ParetoAnalysis:
 def default_objectives(result: EvalResult) -> ObjectiveTuple:
     """Project evaluation metrics into a maximisation objective tuple."""
 
+    tail_loss = max(0.0, -float(getattr(result, "cvar", 0.0)))
     return (
         float(result.mean_ic),
         float(result.sharpe_proxy),
+        float(getattr(result, "sortino_ratio", 0.0)),
         float(-result.turnover_proxy),
         float(-result.parsimony_penalty),
         float(-getattr(result, "max_drawdown", 0.0)),
         float(-getattr(result, "factor_exposure_sum", 0.0)),
         float(-getattr(result, "robustness_penalty", 0.0)),
+        float(-tail_loss),
     )
 
 

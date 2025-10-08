@@ -1,0 +1,30 @@
+import React from "react";
+
+type TabId = "overview" | "settings";
+
+interface HeaderNavProps {
+  active: TabId;
+  onChange: (tab: TabId) => void;
+}
+
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: "overview", label: "Pipeline Overview" },
+  { id: "settings", label: "Settings & Presets" },
+];
+
+export function HeaderNav({ active, onChange }: HeaderNavProps): React.ReactElement {
+  return (
+    <div className="header-nav">
+      {TABS.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={tab.id === active ? "header-nav__btn header-nav__btn--active" : "header-nav__btn"}
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}

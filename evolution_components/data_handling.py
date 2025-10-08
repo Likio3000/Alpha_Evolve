@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
 
-from config import DEFAULT_CRYPTO_SECTOR_MAPPING, DataConfig
+from config import DEFAULT_SECTOR_MAPPING, DataConfig
 from utils.data_loading_common import DataDiagnostics, DataLoadError, align_and_prune, load_symbol_dfs_from_dir
 from utils.cache import compute_align_cache_key, load_aligned_bundle_from_cache, save_aligned_bundle_to_cache
 import numpy as np
@@ -199,7 +199,7 @@ def get_sector_groups(
     elif cfg is not None:
         sector_map = cfg.sector_mapping
     else:
-        sector_map = DEFAULT_CRYPTO_SECTOR_MAPPING
+        sector_map = DEFAULT_SECTOR_MAPPING
 
     groups: List[int] = []
     for s in symbols:

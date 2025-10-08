@@ -13,7 +13,7 @@ Base URL defaults to `http://127.0.0.1:8000`.
     ```json
     {
       "generations": 5,
-      "dataset": "crypto" | "sp500",
+      "dataset": "sp500",
       "config": "optional path to TOML",
       "data_dir": "optional/path/to/csvs",
       "overrides": {
@@ -56,11 +56,13 @@ The UI builds forms from the following helper endpoints:
 - `GET /ui-meta/pipeline-params` – categorised descriptions for pipeline/backtest options.
 - `GET /api/config/defaults` – JSON dump of `EvolutionConfig` and `BacktestConfig` defaults (flattened for the UI).
 - `GET /api/config/presets` – list of available TOML presets under `configs/`.
-- `GET /api/config/preset-values?name=crypto_4h_fast` – resolved values for a preset.
+- `GET /api/config/preset-values?name=sp500` – resolved values for a preset.
 - `POST /api/config/save` – persist a config snapshot (writes under `configs/generated/` by default).
 
 ## Event Streams
-The server maintains an internal SSE queue per job. The helper endpoint `run_pipeline.sse_events(job_id)` is available for custom wiring via `scripts/dashboard_server/helpers.make_sse_response`; if you expose it through the URL config, you receive `data: { ... }` events containing `log`, `progress`, `diag`, and `score` payloads.
+The server maintains an internal SSE queue per job. The helper endpoint `run_pipeline.sse_events(job_id)` is now exposed at `GET /api/pipeline/events/<job_id>` and streams `data: { ... }` payloads with `log`, `progress`, `diag`, and `score` events. You can still compose your own response via `scripts/dashboard_server/helpers.make_sse_response` if you need custom dispatching logic.
+
+To stop a running pipeline from the UI or scripts, send `POST /api/pipeline/stop/<job_id>`.
 
 ## Versioning Notes
 - Payloads accept extra keys; they are forwarded as CLI flags when possible.

@@ -57,6 +57,6 @@ When `--auto-approve` is false, each iteration pauses after generating a candida
 The agent polls at `--approval-poll-interval` seconds until approval is granted or an optional `--approval-timeout` elapses.
 
 ## Tips
-- Seed with `--config configs/crypto_4h_fast.toml` or `configs/sp500.toml` for reproducible baselines.
+- Seed with `--config configs/sp500.toml` for reproducible baselines.
 - Point `--pipeline-output-dir` and `AE_PIPELINE_DIR` at the same location so the dashboard can visualise inner runs.
 - Commit useful search-space definitions under `configs/self_evolution/` and document them here when added.

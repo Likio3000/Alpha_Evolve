@@ -5,7 +5,8 @@ from evolution_components.evaluation_logic import EvalResult
 
 
 def make_result(*, fitness: float, mean_ic: float, sharpe: float, turnover: float, parsimony: float,
-                drawdown: float, factor_sum: float, robustness: float) -> EvalResult:
+                drawdown: float, factor_sum: float, robustness: float,
+                sortino: float = 0.0, downside: float = 0.0, cvar: float = -0.01) -> EvalResult:
     return EvalResult(
         fitness=fitness,
         mean_ic=mean_ic,
@@ -17,6 +18,9 @@ def make_result(*, fitness: float, mean_ic: float, sharpe: float, turnover: floa
         max_drawdown=drawdown,
         factor_exposure_sum=factor_sum,
         robustness_penalty=robustness,
+        sortino_ratio=sortino,
+        downside_deviation=downside,
+        cvar=cvar,
     )
 
 
@@ -31,15 +35,20 @@ def test_default_objectives_negate_penalties():
         drawdown=0.03,
         factor_sum=0.11,
         robustness=0.07,
+        sortino=1.4,
+        downside=0.05,
+        cvar=-0.025,
     )
     objectives = moea.default_objectives(res)
     assert objectives[0] == pytest.approx(res.mean_ic)
     assert objectives[1] == pytest.approx(res.sharpe_proxy)
-    assert objectives[2] == pytest.approx(-res.turnover_proxy)
-    assert objectives[3] == pytest.approx(-res.parsimony_penalty)
-    assert objectives[4] == pytest.approx(-res.max_drawdown)
-    assert objectives[5] == pytest.approx(-res.factor_exposure_sum)
-    assert objectives[6] == pytest.approx(-res.robustness_penalty)
+    assert objectives[2] == pytest.approx(res.sortino_ratio)
+    assert objectives[3] == pytest.approx(-res.turnover_proxy)
+    assert objectives[4] == pytest.approx(-res.parsimony_penalty)
+    assert objectives[5] == pytest.approx(-res.max_drawdown)
+    assert objectives[6] == pytest.approx(-res.factor_exposure_sum)
+    assert objectives[7] == pytest.approx(-res.robustness_penalty)
+    assert objectives[8] == pytest.approx(-max(0.0, -res.cvar))
 
 
 def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure():
@@ -53,6 +62,8 @@ def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure
         drawdown=0.03,
         factor_sum=0.05,
         robustness=0.02,
+        sortino=1.2,
+        cvar=-0.03,
     )
     dominated = make_result(
         fitness=0.6,
@@ -63,6 +74,8 @@ def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure
         drawdown=0.09,
         factor_sum=0.2,
         robustness=0.06,
+        sortino=0.8,
+        cvar=-0.06,
     )
     tradeoff = make_result(
         fitness=0.45,
@@ -73,6 +86,8 @@ def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure
         drawdown=0.02,
         factor_sum=0.01,
         robustness=0.01,
+        sortino=1.0,
+        cvar=-0.015,
     )
     analysis = moea.compute_pareto_analysis([
         (0, dominant),
@@ -90,4 +105,6 @@ def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure
 
     obj_dict = moea.to_objective_dict(analysis.objectives[0])
     assert obj_dict["neg_turn"] == pytest.approx(-dominant.turnover_proxy)
+    assert obj_dict["sortino"] == pytest.approx(dominant.sortino_ratio)
+    assert obj_dict["neg_cvar"] == pytest.approx(-max(0.0, -dominant.cvar))
     assert set(obj_dict.keys()) == set(moea.OBJECTIVE_LABELS)

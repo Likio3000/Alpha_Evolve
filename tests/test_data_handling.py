@@ -7,7 +7,7 @@ from evolution_components.data_handling import (
     initialize_data,
     get_sector_groups,
 )
-from config import DEFAULT_CRYPTO_SECTOR_MAPPING
+from config import DEFAULT_SECTOR_MAPPING
 from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
 from utils.data_loading_common import DataLoadError
 from utils.features import compute_basic_features
@@ -81,19 +81,19 @@ def test_get_data_splits_returns_expected_lengths():
 
 
 def test_get_sector_groups_example_symbols():
-    """Map a handful of symbols to their configured sector groups for sanity."""
+    """Map a handful of symbols with an override mapping while unknown default stays -1."""
     symbols = [
         "BINANCE_BTCUSDT, 240",
         "BINANCE_ETHUSDT, 240",
         "BYBIT_BONKUSDT, 240",
     ]
-    groups = get_sector_groups(symbols)
-    expected = [
-        DEFAULT_CRYPTO_SECTOR_MAPPING["BTC"],
-        DEFAULT_CRYPTO_SECTOR_MAPPING["ETH"],
-        DEFAULT_CRYPTO_SECTOR_MAPPING["BONK"],
-    ]
-    assert list(groups) == expected
+    groups_default = get_sector_groups(symbols)
+    assert list(groups_default) == [-1, -1, -1]
+    override = {"BTC": 10, "ETH": 11, "BONK": 12}
+    groups_override = get_sector_groups(symbols, mapping=override)
+    expected = [override["BTC"], override["ETH"], override["BONK"]]
+    assert list(groups_override) == expected
+    assert DEFAULT_SECTOR_MAPPING == {}
 
 
 @pytest.mark.parametrize(

@@ -92,9 +92,7 @@ def build_pipeline_args(payload: Dict[str, Any], include_runner: bool = True) ->
     dataset = str(payload.get("dataset", "")).strip().lower()
     cfg_path = payload.get("config")
     if not cfg_path and dataset:
-        if dataset in ("crypto", "crypto_4h", "crypto4h"):
-            cfg_path = str(ROOT / "configs" / "crypto_4h_fast.toml")
-        elif dataset in ("sp500", "s&p500", "snp500"):
+        if dataset in ("sp500", "s&p500", "snp500"):
             cfg_path = str(ROOT / "configs" / "sp500.toml")
     if cfg_path:
         args += ["--config", str(cfg_path)]

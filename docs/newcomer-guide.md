@@ -19,7 +19,7 @@ This guide gives new contributors (including AI coding agents) the context they 
 - `evolution_components/` – selection, fitness, mutation, and orchestration code.
 - `backtesting_components/` – portfolio simulation, metrics, and stress testing.
 - `scripts/` – operational scripts (dashboard launcher, data fetch, cleanup, smoke runs, tests).
-- `configs/` – curated TOML configs (crypto 4h, SP500) that mirror `config.py` dataclasses.
+- `configs/` – curated TOML configs (SP500 defaults plus workspace overrides) that mirror `config.py` dataclasses.
 - `dashboard-ui/` – pre-built static SPA; rebuild instructions live in `docs/guides/dashboard-ui.md`.
 - `tests/` – pytest coverage for loaders, configs, and dashboard routes.
 

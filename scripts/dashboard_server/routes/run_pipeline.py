@@ -182,8 +182,8 @@ async def start_pipeline_run(request: HttpRequest):
         path_obj = Path(str(cfg_path))
         if not path_obj.exists():
             return json_error(f"Config not found: {path_obj}", 404)
-    elif dataset and dataset not in {"crypto", "crypto_4h", "crypto4h", "sp500", "s&p500", "snp500"}:
-        return json_error("Unknown dataset; provide dataset=crypto|sp500 or a config path", 400)
+    elif dataset and dataset not in {"sp500", "s&p500", "snp500"}:
+        return json_error("Unknown dataset; provide dataset=sp500 or a config path", 400)
 
     cli_args = build_pipeline_args(payload_dict, include_runner=False)
     full_args = build_pipeline_args(payload_dict, include_runner=True)

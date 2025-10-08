@@ -12,6 +12,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from scripts.dashboard_server.helpers import build_pipeline_args, ROOT
+
 
 pytestmark = pytest.mark.asyncio
 
@@ -40,6 +42,30 @@ async def dashboard_env(tmp_path, monkeypatch):
     _write_backtest_files(run_dir)
     (pipeline_dir / "LATEST").write_text("run_demo", encoding="utf-8")
 
+    summary_path = run_dir / "SUMMARY.json"
+    summary_path.write_text(json.dumps({
+        "schema_version": 1,
+        "top_sharpe": 1.25,
+    }), encoding="utf-8")
+
+    meta_dir = run_dir / "meta"
+    meta_dir.mkdir()
+    (meta_dir / "ui_context.json").write_text(json.dumps({
+        "job_id": "abc123",
+        "submitted_at": "2024-01-01T00:00:00Z",
+        "payload": {
+            "generations": 7,
+            "dataset": "sp500",
+            "overrides": {
+                "bt_top": 12,
+                "dry_run": False,
+            },
+        },
+        "pipeline_args": ["uv", "run", "run_pipeline.py", "7"],
+    }), encoding="utf-8")
+    (meta_dir / "evolution_config.json").write_text(json.dumps({"generations": 7}), encoding="utf-8")
+    (meta_dir / "backtest_config.json").write_text(json.dumps({"bt_top": 12}), encoding="utf-8")
+
     monkeypatch.setenv("AE_PIPELINE_DIR", str(pipeline_dir))
 
     helpers_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.helpers"))
@@ -62,6 +88,17 @@ async def dashboard_env(tmp_path, monkeypatch):
             importlib.reload(helpers_mod)
             importlib.reload(runs_mod)
             importlib.reload(app_mod)
+
+
+async def test_build_pipeline_args_defaults_to_sp500():
+    payload = {"generations": 3, "dataset": "sp500"}
+    args = build_pipeline_args(payload, include_runner=False)
+    assert args[0] == "3"
+    assert args[1] == "--config"
+    assert args[2].endswith("configs/sp500.toml")
+
+    args_no_dataset = build_pipeline_args({"generations": 2}, include_runner=False)
+    assert "--config" not in args_no_dataset
 
 
 async def test_resolve_latest_run_dir_reads_relative_pointer(dashboard_env):
@@ -112,6 +149,18 @@ async def test_alpha_timeseries_endpoint(dashboard_env):
     payload = ok_resp.json()
     assert payload["date"]
     assert len(payload["equity"]) == len(payload["date"])
+
+
+async def test_run_details_endpoint_returns_metadata(dashboard_env):
+    """Ensure /api/run-details exposes summary/meta payloads for the selected run."""
+    resp = await dashboard_env.client.get("/api/run-details", params={"run_dir": "run_demo"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["name"] == "run_demo"
+    assert payload["sharpe_best"] == pytest.approx(1.25)
+    assert payload["summary"]["schema_version"] == 1
+    assert payload["ui_context"]["payload"]["generations"] == 7
+    assert payload["meta"]["evolution_config"]["generations"] == 7
 
 
 async def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatch):
@@ -183,3 +232,15 @@ async def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatc
         if not payload.get("running"):
             break
         await asyncio.sleep(0.05)
+
+
+async def test_pipeline_stop_and_events_endpoints(dashboard_env):
+    """Confirm new pipeline helper endpoints enforce method semantics and report missing jobs."""
+    stop_get = await dashboard_env.client.get("/api/pipeline/stop/unknown")
+    assert stop_get.status_code == 405
+
+    stop_post = await dashboard_env.client.post("/api/pipeline/stop/unknown")
+    assert stop_post.status_code == 404
+
+    events_resp = await dashboard_env.client.get("/api/pipeline/events/unknown")
+    assert events_resp.status_code == 404

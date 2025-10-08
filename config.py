@@ -10,43 +10,25 @@ Dataclass-based “single source of truth” for every pipeline knob.
 from dataclasses import dataclass, field
 from typing import Dict
 
-# Default mapping from token symbol to sector ID used across the project.  The
-# mapping groups major crypto assets into rough "sectors" so relation-based
-# operations can reason about them.  A value of ``-1`` denotes an unknown
-# sector.
-DEFAULT_CRYPTO_SECTOR_MAPPING: Dict[str, int] = {
-    "BTC": 0,  # Core
-    "ETH": 1,
-    "SOL": 1,  # Ecosystem
-    # Altcoins
-    "ADA": 2,
-    "AVA": 2,
-    "SUI": 2,
-    "APT": 2,
-    "INJ": 2,
-    "RNDR": 2,
-    "ARB": 2,
-    "LINK": 2,
-    # Memes
-    "BONK": 3,
-    "DOGE": 3,
-    "PEPE": 3,
-}
+# Default mapping from symbol to sector ID used across the project.  Projects
+# can override this with their own equity-sector map; by default we keep it
+# empty which yields ``-1`` (unknown) for every instrument.
+DEFAULT_SECTOR_MAPPING: Dict[str, int] = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  shared data-handling knobs
 # ─────────────────────────────────────────────────────────────────────────────
 @dataclass
 class DataConfig:
-    data_dir: str = "./data"
+    data_dir: str = "./data_sp500"
     max_lookback_data_option: str = "common_1200"
     min_common_points: int = 1200
     eval_lag: int = 1
-    # Mapping from token symbols to sector IDs used for relation-aware
-    # operations.  It defaults to ``DEFAULT_CRYPTO_SECTOR_MAPPING`` defined
+    # Mapping from symbols to sector IDs used for relation-aware
+    # operations.  It defaults to ``DEFAULT_SECTOR_MAPPING`` defined
     # above but can be overridden per configuration instance.
     sector_mapping: Dict[str, int] = field(
-        default_factory=lambda: DEFAULT_CRYPTO_SECTOR_MAPPING.copy()
+        default_factory=lambda: DEFAULT_SECTOR_MAPPING.copy()
     )
 
 
@@ -136,11 +118,8 @@ class EvolutionConfig(DataConfig):
     regime_diagnostic_factors: tuple[str, ...] = (
         "regime_volatility_t",
         "regime_momentum_t",
-        "cross_btc_momentum_t",
         "sector_momentum_diff_t",
-        "onchain_activity_proxy_t",
-        "onchain_velocity_proxy_t",
-        "onchain_whale_proxy_t",
+        "market_dispersion_t",
     )
 
     # evaluation cache
@@ -214,8 +193,8 @@ class BacktestConfig(DataConfig):
     scale: str = "zscore"
     winsor_p: float = 0.02               # Tail prob for 'winsor' scale
     long_short_n: int = 0                 # 0 → use all symbols
-    # For 4 hour bars on 24/7 crypto data use 365 days × 6 bars/day
-    annualization_factor: float = 365 * 6
+    # For daily equities use trading-day annualization (≈252)
+    annualization_factor: float = 252
     seed: int = 42
     # Optional intrabar per-asset stop-loss. If > 0, a long exits at
     # -stop_loss_pct and a short exits at +stop_loss_pct during the next bar

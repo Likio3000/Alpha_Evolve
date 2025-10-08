@@ -41,6 +41,17 @@ Many examples use `uv`, a fast Python runtime and package manager. Install it
 from <https://github.com/astral-sh/uv> (e.g., `curl -Ls https://astral.sh/uv/install.sh | sh`).
 If `uv` is unavailable you can replace `uv` with `python` in the commands.
 
+## Dashboard UI (React + TypeScript)
+
+The dashboard front-end lives in `dashboard-ui/` and is now written in React + TypeScript.
+
+- Source lives under `dashboard-ui/src`; we use Vite for local development and builds.
+- Install dependencies with `npm install` (or `pnpm install`) and start a dev server via `npm run dev`.
+- Run `npm run build` to regenerate the production bundle in `dashboard-ui/dist/` before deploying.
+- The repository ships with a pre-built `dist/` that loads React from a CDN so the Django server keeps working even without Node.js tooling.
+- When hacking on the UI in an offline environment, remember to rebuild the bundle once dependencies are available.
+- The dashboard header now exposes an Overview tab (with runs, live charts, animation) and a Settings tab that surfaces config defaults/presets and lets you save curated TOML snapshots.
+
 ## Data Setup
 
 Place your historical OHLC data in the `data` directory at the project root.
@@ -50,29 +61,20 @@ example:
 
 ```text
 data/
-└── BTC.csv
+└── AAPL.csv
 ```
 
 You can override the location with the `--data_dir` option when running the
 pipeline.
 
-### Sector mapping (crypto vs SP500)
+### Sector mapping (optional)
 
-The project ships with a simple crypto‑oriented sector mapping used by some
-operators and for optional sector‑neutralization during evolution/backtests. For
-symbols not present in the mapping (e.g., most SP500 tickers), we assign `-1`
-as a catch‑all sector. In that case:
-
-- The `sector_id_vector` feature is a constant `-1` vector.
-- Sector neutralization degenerates to global de‑meaning (equivalent to
-  subtracting the cross‑sectional mean), so it’s safe but redundant.
-
-Recommendations:
-
-- Crypto: leave sector neutralization enabled (default).
-- SP500: you can disable it for clarity with `--no-sector_neutralize` on
-  evolution and `--sector_neutralize_positions false` on backtests, or set those
-  in `configs/sp500.toml`.
+By default the evolution pipeline uses an empty sector map so every ticker is
+assigned `-1` (unknown). This keeps the SP500 workflow simple: the
+`sector_id_vector` feature collapses to a constant and sector neutralisation is
+equivalent to de‑meaning across the whole universe. If you maintain your own
+industry classification, provide it via `sector_mapping` in a custom config or
+feed it through `--sector_mapping` JSON overrides.
 
 ### Pipeline output location
 
@@ -82,7 +84,7 @@ flag or the `AE_PIPELINE_DIR` environment variable:
 
 ```bash
 # Legacy CLI example (commands no longer available)
-uv run run_pipeline.py 10 --config configs/crypto.toml --output-dir ~/.alpha-evolve/runs
+uv run run_pipeline.py 10 --config configs/sp500.toml --output-dir ~/.alpha-evolve/runs
 
 # Match the dashboard server with the same directory
 AE_PIPELINE_DIR=~/.alpha-evolve/runs uv run scripts/run_dashboard.py
@@ -128,7 +130,7 @@ sh scripts/smoke_run.sh
 
 ## Guided Self-Evolution
 
-- Run the autonomous controller with `uv run scripts/self_evolve.py` and a search-space file (sample: `configs/self_evolution/sample_crypto_space.json`).
+- Run the autonomous controller with `uv run scripts/self_evolve.py` and a search-space file (sample: `configs/self_evolution/sample_equity_space.json`).
 - After each pipeline run the agent writes its analysis to `agent_briefings.jsonl` and pauses until you edit `pending_action.json` to approve/reject the next iteration.
 - The handshake file also embeds the proposed config; tweak it before setting `status: approved` if you want to adjust parameters manually.
 - Artefacts (run dirs, briefing log, pending action, generated configs) live in `pipeline_runs_cs/self_evolution/self_evo_session_*`. The CLI exposes `--auto-approve` for unattended loops.
@@ -140,7 +142,7 @@ sh scripts/smoke_run.sh
 You can now provide configuration via a file and environment variables, with the
 following precedence: file < env < CLI.
 
-- Use `--config configs/crypto.toml` (TOML preferred). YAML is supported if
+- Use `--config configs/sp500.toml` (TOML preferred). YAML is supported if
   `PyYAML` is installed.
 - Environment variables override file values. Use uppercase keys with prefixes:
   `AE_` for common, `AE_EVO_` (evolution only) and `AE_BT_` (backtest only).
@@ -180,15 +182,10 @@ default. You can control the cache via CLI or environment variables:
 
 Recommended settings
 
-- Crypto:
-  - `--selection_metric auto` (or `phased` with `--ic_phase_gens 5`)
-  - `--ramp_fraction 0.33 --ramp_min_gens 5`
-  - `--novelty_boost_w 0.02` to `0.05`
-  - Keep `sector_neutralize` enabled (default)
-- SP500:
-  - Same selection settings as above
-  - Disable sector neutralization (already disabled in `configs/sp500.toml`)
-  - `annualization_factor = 252` (already in `configs/sp500.toml`)
+- `--selection_metric auto` (or `phased` with `--ic_phase_gens 5`)
+- `--ramp_fraction 0.33 --ramp_min_gens 5`
+- `--novelty_boost_w` in the `0.02–0.05` range when you need extra diversity
+- Keep `annualization_factor = 252` for daily SP500 data (already baked into `configs/sp500.toml`)
 
 ### Flags overview (quick reference)
 
@@ -253,10 +250,10 @@ explicitly supplied falls back to the defaults defined in
 [`config.py`](config.py).
 
 For a longer run using the parameters described in the paper, create a TOML
-config (see `configs/crypto.toml` and `configs/sp500.toml`) and run:
+config (see `configs/sp500.toml`) and run:
 
 ```bash
-alpha-evolve-pipeline 100 --config configs/crypto.toml
+alpha-evolve-pipeline 100 --config configs/sp500.toml
 ```
 
 CLI flags override config and environment variables (precedence: file < env < CLI).
@@ -328,7 +325,7 @@ Section 4.1 of the reproduction guide:
 * evaluation cache size **128**
 * correlation cutoff for Hall of Fame entries **15 %**
 * Sharpe proxy weight **0**
-* annualization factor **365 * 6** (default for 4-hour crypto bars)
+* annualization factor **252** (trading days per year for daily data)
 * long/short universe size **0** (use all symbols)
 * `factor_penalty_w` default **0.0** (set >0 to penalize exposure to style factors listed in `factor_penalty_factors`, e.g. `ret1d_t,vol20_t,range_rel_t`)
 * `evaluation_horizons` default **(1,)** (supply additional horizons such as `(1, 3, 6)` to score alphas on multiple holding periods; metrics are averaged across horizons)

@@ -100,8 +100,6 @@ def list_configs(request: HttpRequest):
 def _preset_map() -> Dict[str, str]:
     presets: Dict[str, str] = {}
     cand = {
-        "crypto": "configs/crypto.toml",
-        "crypto_4h_fast": "configs/crypto_4h_fast.toml",
         "sp500": "configs/sp500.toml",
     }
     for key, rel in cand.items():
