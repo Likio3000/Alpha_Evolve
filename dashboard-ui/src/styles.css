@@ -553,6 +553,7 @@ body {
 
 .bt-row {
   cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .bt-row:hover {
@@ -560,7 +561,20 @@ body {
 }
 
 .bt-row--active {
-  background: rgba(47, 152, 226, 0.14);
+  background: rgba(47, 152, 226, 0.16);
+  box-shadow: 0 12px 26px rgba(47, 152, 226, 0.18);
+}
+
+.bt-row--active:hover {
+  background: rgba(47, 152, 226, 0.2);
+}
+
+.bt-row--active td {
+  border-bottom-color: rgba(47, 152, 226, 0.45);
+}
+
+.bt-row--active td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .bt-alpha-id {

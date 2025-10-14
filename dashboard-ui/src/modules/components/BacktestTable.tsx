@@ -46,7 +46,7 @@ export function BacktestTable({ rows, selected, onSelect }: BacktestTableProps):
           </thead>
           <tbody>
             {rows.map((row) => {
-              const key = row.TS || row.AlphaID || "";
+              const key = row.TimeseriesFile || row.TS || row.AlphaID || "";
               const isSelected = selected === key;
               return (
                 <tr

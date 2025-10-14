@@ -77,7 +77,7 @@ export function App(): React.ReactElement {
 
   const selectedAlphaKey = useMemo(() => {
     if (!selectedRow) return null;
-    return selectedRow.TimeseriesFile || selectedRow.AlphaID || null;
+    return selectedRow.TimeseriesFile || selectedRow.TS || selectedRow.AlphaID || null;
   }, [selectedRow]);
 
 const closeEventStream = useCallback(() => {
