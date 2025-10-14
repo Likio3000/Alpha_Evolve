@@ -480,9 +480,7 @@ const closeEventStream = useCallback(() => {
     <div className="app-shell">
       <header className="app-shell__header">
         <h1>Alpha Evolve Dashboard</h1>
-        <p className="app-shell__subtitle">
-          React + TypeScript dashboard for evolving and monitoring alpha runs.
-        </p>
+        <p className="app-shell__subtitle">by LIKIO</p>
         <HeaderNav active={activeTab} onChange={setActiveTab} />
         {banner ? (
           <div className="app-banner" role="status">
@@ -518,18 +516,6 @@ const closeEventStream = useCallback(() => {
                 {selectedRun ? (
                   <div className="selected-run-meta">
                     <h2>{selectedRun.label || selectedRun.name}</h2>
-                    <span className="muted">{selectedRun.path}</span>
-                    {selectedRow ? (
-                      <div className="selected-alpha-chip">
-                        <span className="selected-alpha-chip__label">Selected alpha</span>
-                        <span className="selected-alpha-chip__name">
-                          {selectedRow.AlphaID || selectedRow.TimeseriesFile || "n/a"}
-                        </span>
-                        {selectedRow.TimeseriesFile ? (
-                          <span className="selected-alpha-chip__file">{selectedRow.TimeseriesFile}</span>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </div>
                 ) : (
                   <h2>Select a run to inspect its backtest results</h2>

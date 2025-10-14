@@ -594,12 +594,6 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
-@media (min-width: 960px) {
-  .chart-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 .chart-card {
   background: linear-gradient(155deg, rgba(20, 26, 33, 0.92), rgba(12, 18, 24, 0.94));
   border: 1px solid rgba(44, 60, 76, 0.6);
