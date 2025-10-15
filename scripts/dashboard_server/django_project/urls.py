@@ -66,6 +66,7 @@ urlpatterns = [
     path("api/alpha-timeseries", runs.alpha_timeseries),
     path("api/job-log/<str:job_id>", runs.job_log),
     path("api/job-status/<str:job_id>", runs.job_status),
+    path("api/job-activity/<str:job_id>", runs.job_activity),
     path("api/run-label", runs.set_run_label),
     path("api/run-details", runs.run_details),
     path("api/run-asset", runs.run_asset),

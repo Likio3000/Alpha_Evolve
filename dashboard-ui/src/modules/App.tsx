@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchAlphaTimeseries,
   fetchBacktestSummary,
-  fetchJobLog,
-  fetchJobStatus,
+  fetchJobActivity,
   fetchLastRun,
   fetchRuns,
   startPipelineRun,
@@ -22,6 +21,8 @@ import { usePolling } from "./hooks/usePolling";
 import {
   AlphaTimeseries,
   BacktestRow,
+  GenerationProgressState,
+  GenerationSummary,
   PipelineJobState,
   PipelineRunRequest,
   RunSummary,
@@ -45,6 +46,158 @@ function extractSharpeFromLog(log: string | null | undefined): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+const SUMMARY_HISTORY_LIMIT = 400;
+
+function toNumber(value: unknown, fallback = 0): number {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function mapNumberRecord(source: unknown): Record<string, number> {
+  const record = asRecord(source);
+  if (!record) {
+    return {};
+  }
+  const result: Record<string, number> = {};
+  for (const [key, val] of Object.entries(record)) {
+    const num = Number(val);
+    if (Number.isFinite(num)) {
+      result[key] = num;
+    }
+  }
+  return result;
+}
+
+function mapNestedNumberRecord(source: unknown): Record<string, Record<string, number>> {
+  const record = asRecord(source);
+  if (!record) {
+    return {};
+  }
+  const result: Record<string, Record<string, number>> = {};
+  for (const [key, val] of Object.entries(record)) {
+    result[key] = mapNumberRecord(val);
+  }
+  return result;
+}
+
+function mapGenerationProgress(raw: unknown): GenerationProgressState | null {
+  const record = asRecord(raw);
+  if (!record) {
+    return null;
+  }
+  const generation = toNumber(record.gen ?? record.generation, NaN);
+  const completed = toNumber(record.completed, NaN);
+  if (!Number.isFinite(generation) || !Number.isFinite(completed)) {
+    return null;
+  }
+  const total = toNullableNumber(record.total ?? record.population ?? record.total_individuals);
+  const pctComplete = toNullableNumber(record.pct_complete ?? record.pct);
+  let derivedPct = pctComplete;
+  if (derivedPct === null && total && total > 0) {
+    derivedPct = Math.min(1, generation / total);
+  }
+  return {
+    generation,
+    generationsTotal: toNullableNumber(record.generations_total ?? record.total_gens),
+    pctComplete: derivedPct,
+    completed,
+    totalIndividuals: total,
+    bestFitness: toNullableNumber(record.best),
+    medianFitness: toNullableNumber(record.median),
+    elapsedSeconds: toNullableNumber(record.elapsed_sec ?? record.elapsed),
+    etaSeconds: toNullableNumber(record.eta_sec ?? record.eta),
+  };
+}
+
+function mapGenerationSummary(raw: unknown): GenerationSummary | null {
+  const record = asRecord(raw);
+  if (!record) {
+    return null;
+  }
+  const generation = toNumber(record.generation, NaN);
+  const total = toNumber(record.generations_total, NaN);
+  if (!Number.isFinite(generation) || !Number.isFinite(total)) {
+    return null;
+  }
+  const pctCompleteRaw = Number(record.pct_complete);
+  const pctComplete = Number.isFinite(pctCompleteRaw)
+    ? pctCompleteRaw
+    : generation / Math.max(1, total);
+
+  const bestRecord = asRecord(record.best);
+  if (!bestRecord) {
+    return null;
+  }
+
+  const timingRecord = asRecord(record.timing);
+  const populationRecord = asRecord(record.population);
+  const penalties = mapNumberRecord(record.penalties);
+  const fitnessBreakdownRaw = asRecord(record.fitness_breakdown);
+  const fitnessBreakdown: Record<string, number | null> = {};
+  if (fitnessBreakdownRaw) {
+    for (const [key, val] of Object.entries(fitnessBreakdownRaw)) {
+      const num = Number(val);
+      fitnessBreakdown[key] = Number.isFinite(num) ? num : null;
+    }
+  }
+
+  const best: GenerationSummary["best"] = {
+    fitness: toNumber(bestRecord.fitness),
+    fitnessStatic: toNullableNumber(bestRecord.fitness_static),
+    meanIc: toNumber(bestRecord.mean_ic),
+    icStd: toNumber(bestRecord.ic_std),
+    turnover: toNumber(bestRecord.turnover),
+    sharpeProxy: toNumber(bestRecord.sharpe_proxy),
+    sortino: toNumber(bestRecord.sortino),
+    drawdown: toNumber(bestRecord.drawdown),
+    downsideDeviation: toNumber(bestRecord.downside_deviation),
+    cvar: toNumber(bestRecord.cvar),
+    factorPenalty: toNumber(bestRecord.factor_penalty),
+    fingerprint: typeof bestRecord.fingerprint === "string" ? bestRecord.fingerprint : null,
+    programSize: Math.trunc(toNumber(bestRecord.program_size)),
+    program: typeof bestRecord.program === "string" ? bestRecord.program : "",
+    horizonMetrics: mapNestedNumberRecord(bestRecord.horizon_metrics),
+    factorExposures: mapNumberRecord(bestRecord.factor_exposures),
+    regimeExposures: mapNumberRecord(bestRecord.regime_exposures),
+    transactionCosts: mapNumberRecord(bestRecord.transaction_costs),
+    stressMetrics: mapNumberRecord(bestRecord.stress_metrics),
+  };
+
+  const timing = {
+    generationSeconds: toNumber(timingRecord?.generation_seconds),
+    averageSeconds: toNullableNumber(timingRecord?.average_seconds),
+    etaSeconds: toNullableNumber(timingRecord?.eta_seconds),
+  };
+
+  const population = {
+    size: Math.trunc(toNumber(populationRecord?.size)),
+    uniqueFingerprints: Math.trunc(toNumber(populationRecord?.unique_fingerprints)),
+  };
+
+  return {
+    generation,
+    generationsTotal: total,
+    pctComplete,
+    best,
+    penalties,
+    fitnessBreakdown,
+    timing,
+    population,
+  };
+}
+
 export function App(): React.ReactElement {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [lastRunPath, setLastRunPath] = useState<string | null>(null);
@@ -65,8 +218,8 @@ export function App(): React.ReactElement {
   const [job, setJob] = useState<PipelineJobState | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "settings">("overview");
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const eventJobIdRef = useRef<string | null>(null);
+  const closeEventStream = useCallback(() => {}, []);
+  const [pendingRunSelectionBaseline, setPendingRunSelectionBaseline] = useState<string | null | undefined>(undefined);
 
   const selectedRun = useMemo(() => {
     if (!selectedRunPath) {
@@ -80,13 +233,6 @@ export function App(): React.ReactElement {
     return selectedRow.TimeseriesFile || selectedRow.TS || selectedRow.AlphaID || null;
   }, [selectedRow]);
 
-const closeEventStream = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    eventJobIdRef.current = null;
-  }, []);
   const refreshRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
@@ -116,7 +262,30 @@ const closeEventStream = useCallback(() => {
       if (selectedRunPath !== null) {
         setSelectedRunPath(null);
       }
+      if (pendingRunSelectionBaseline !== undefined) {
+        setPendingRunSelectionBaseline(undefined);
+      }
       return;
+    }
+
+    const latestPath = runs[0]?.path ?? null;
+
+    if (pendingRunSelectionBaseline !== undefined) {
+      if (latestPath && latestPath !== pendingRunSelectionBaseline) {
+        if (selectedRunPath !== latestPath) {
+          setSelectedRunPath(latestPath);
+        }
+        setPendingRunSelectionBaseline(undefined);
+        return;
+      }
+      if (lastRunPath && lastRunPath !== pendingRunSelectionBaseline) {
+        const match = runs.find((run) => run.path === lastRunPath);
+        if (match && match.path !== selectedRunPath) {
+          setSelectedRunPath(match.path);
+        }
+        setPendingRunSelectionBaseline(undefined);
+        return;
+      }
     }
 
     if (selectedRunPath && runs.some((run) => run.path === selectedRunPath)) {
@@ -131,143 +300,10 @@ const closeEventStream = useCallback(() => {
       }
     }
 
-    const fallback = runs[0]?.path ?? null;
-    if (fallback !== selectedRunPath) {
-      setSelectedRunPath(fallback);
+    if (latestPath !== selectedRunPath) {
+      setSelectedRunPath(latestPath);
     }
-  }, [runs, selectedRunPath, lastRunPath]);
-
-  useEffect(() => () => closeEventStream(), [closeEventStream]);
-
-  const openEventStream = useCallback((jobId: string) => {
-    if (!jobId) {
-      return;
-    }
-    if (eventSourceRef.current && eventJobIdRef.current === jobId) {
-      return;
-    }
-    closeEventStream();
-
-    const source = new EventSource(`/api/pipeline/events/${encodeURIComponent(jobId)}`);
-    eventSourceRef.current = source;
-    eventJobIdRef.current = jobId;
-
-    const appendLog = (line: string) => {
-      if (typeof line !== "string") {
-        return;
-      }
-      const normalized = line.replace(/\r?\n$/, "");
-      const cleaned = normalized.replace(/\r/g, "");
-      if (!cleaned) {
-        return;
-      }
-      setJob((current) => {
-        if (!current || current.jobId !== jobId) {
-          return current;
-        }
-        const nextLog = current.log ? `${current.log}\n${cleaned}` : cleaned;
-        return {
-          ...current,
-          log: nextLog,
-          lastMessage: cleaned.trim() || current.lastMessage || "Pipeline running…",
-          lastUpdated: Date.now(),
-        };
-      });
-    };
-
-    const updateSharpe = (value: unknown) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        return;
-      }
-      setJob((current) => {
-        if (!current || current.jobId !== jobId) {
-          return current;
-        }
-        return {
-          ...current,
-          sharpeBest: value,
-          lastUpdated: Date.now(),
-        };
-      });
-    };
-
-    const updateStatus = (status: PipelineJobState["status"], message?: string) => {
-      setJob((current) => {
-        if (!current || current.jobId !== jobId) {
-          return current;
-        }
-        return {
-          ...current,
-          status,
-          lastMessage: message ?? current.lastMessage,
-          lastUpdated: Date.now(),
-        };
-      });
-    };
-
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (!payload || typeof payload !== "object") {
-          return;
-        }
-        const { type } = payload as { type?: string };
-        if (!type) {
-          return;
-        }
-        const raw = typeof payload.raw === "string" ? payload.raw : null;
-        if (raw) {
-          appendLog(raw);
-        }
-        switch (type) {
-          case "score":
-            updateSharpe((payload as { sharpe_best?: number }).sharpe_best);
-            break;
-          case "status": {
-            const msg = String((payload as { msg?: string }).msg ?? "");
-            if (msg === "exit") {
-              const code = Number((payload as { code?: number }).code ?? 1);
-              const success = Number.isFinite(code) && code === 0;
-              updateStatus(success ? "complete" : "error", success ? "Pipeline finished." : "Pipeline stopped.");
-              closeEventStream();
-              void refreshRuns();
-            } else if (msg) {
-              const mapped = msg === "started" ? "Pipeline started." : msg;
-              updateStatus("running", mapped);
-            }
-            break;
-          }
-          case "error": {
-            const detail = (payload as { detail?: unknown }).detail;
-            if (typeof detail === "string" && detail.trim()) {
-              appendLog(detail);
-              updateStatus("error", detail);
-            } else {
-              updateStatus("error", "Pipeline error.");
-            }
-            closeEventStream();
-            void refreshRuns();
-            break;
-          }
-          case "final":
-            updateSharpe((payload as { sharpe_best?: number }).sharpe_best);
-            updateStatus("complete", "Pipeline finished.");
-            closeEventStream();
-            void refreshRuns();
-            break;
-          default:
-            break;
-        }
-      } catch {
-        closeEventStream();
-      }
-    };
-
-    source.onerror = () => {
-      // Allow polling to reconnect
-      closeEventStream();
-    };
-  }, [closeEventStream, refreshRuns]);
+  }, [runs, selectedRunPath, lastRunPath, pendingRunSelectionBaseline]);
 
   useEffect(() => {
     if (!selectedRunPath) {
@@ -350,89 +386,172 @@ const closeEventStream = useCallback(() => {
     setSelectedRow(row);
   }, []);
 
-  const handleStartPipeline = useCallback(
-    async (payload: PipelineRunRequest) => {
-      closeEventStream();
-      const response = await startPipelineRun(payload);
-      setJob({
-        jobId: response.job_id,
-        status: "running",
-        lastMessage: "Pipeline run started.",
-        lastUpdated: Date.now(),
-        log: "",
-      });
-      openEventStream(response.job_id);
-      setBanner("Pipeline run launched.");
-    },
-    [closeEventStream, openEventStream],
-  );
-
-  const refreshJob = useCallback(async () => {
-    if (!job) {
-      return;
-    }
-    try {
-      const status = await fetchJobStatus(job.jobId);
-      let logResponse: { log: string | null } | null = null;
-      if (!eventSourceRef.current || !status.running) {
-        try {
-          logResponse = await fetchJobLog(job.jobId);
-        } catch (err) {
-          // Ignore log fetch errors; the SSE stream (when connected) continues to append logs.
-          logResponse = null;
-        }
+  const refreshJob = useCallback(
+    async (jobIdOverride?: string) => {
+      const activeJobId = jobIdOverride ?? job?.jobId;
+      if (!activeJobId) {
+        return;
       }
-      setJob((current) => {
-        if (!current || current.jobId !== job.jobId) {
-          return current;
+      try {
+        const snapshot = await fetchJobActivity(activeJobId);
+        const summaryPayload = Array.isArray(snapshot.summaries) ? snapshot.summaries : [];
+        const mappedSummaries = summaryPayload
+          .map((entry) => mapGenerationSummary(entry))
+          .filter((entry): entry is GenerationSummary => Boolean(entry));
+        const trimmedSummaries =
+          mappedSummaries.length > SUMMARY_HISTORY_LIMIT
+            ? mappedSummaries.slice(mappedSummaries.length - SUMMARY_HISTORY_LIMIT)
+            : mappedSummaries;
+        let progressState = mapGenerationProgress(snapshot.progress);
+        if (!progressState && trimmedSummaries.length) {
+          const latestSummary = trimmedSummaries[trimmedSummaries.length - 1];
+          progressState = {
+            generation: latestSummary.generation,
+            generationsTotal: latestSummary.generationsTotal,
+            pctComplete: latestSummary.pctComplete,
+            completed: latestSummary.population.size,
+            totalIndividuals: latestSummary.population.size,
+            bestFitness: latestSummary.best.fitness,
+            medianFitness: latestSummary.best.meanIc,
+            elapsedSeconds: latestSummary.timing.generationSeconds,
+            etaSeconds: latestSummary.timing.etaSeconds,
+          };
         }
-        const next: PipelineJobState = {
-          ...current,
-          lastUpdated: Date.now(),
-        };
-        if (logResponse && typeof logResponse.log === "string") {
-          next.log = logResponse.log;
-          const sharpe = extractSharpeFromLog(logResponse.log);
-          if (sharpe !== null) {
-            next.sharpeBest = sharpe;
+        const updatedAtMs = (() => {
+          const raw = snapshot.updated_at;
+          const numeric = typeof raw === "number" ? raw : Number(raw);
+          if (Number.isFinite(numeric)) {
+            return Math.max(Date.now(), Math.trunc(numeric > 1e12 ? numeric : numeric * 1000));
           }
-        }
-        if (!status.exists) {
-          next.status = "error";
-          next.lastMessage = "Job no longer exists.";
-        } else if (status.running) {
-          next.status = "running";
-          if (!next.lastMessage) {
+          return Date.now();
+        })();
+
+        setJob((current) => {
+          const base: PipelineJobState =
+            current && current.jobId === activeJobId
+              ? current
+              : {
+                  jobId: activeJobId,
+                  status: "running",
+                  lastMessage: "Pipeline running…",
+                  lastUpdated: Date.now(),
+                  log: "",
+                  sharpeBest: null,
+                  progress: null,
+                  summaries: [],
+                };
+          const next: PipelineJobState = {
+            ...base,
+            lastUpdated: updatedAtMs,
+          };
+          if (!snapshot.exists) {
+            next.status = "error";
+            next.lastMessage = "Job no longer exists.";
+            return next;
+          }
+          const statusRaw = snapshot.status;
+          if (typeof statusRaw === "string" && ["idle", "running", "error", "complete"].includes(statusRaw)) {
+            next.status = statusRaw as PipelineJobState["status"];
+          } else if (snapshot.running) {
+            next.status = "running";
+          } else if (next.status === "running") {
+            next.status = "complete";
+            if (!next.lastMessage) {
+              next.lastMessage = "Pipeline finished.";
+            }
+          }
+          const messageRaw = snapshot.last_message;
+          if (typeof messageRaw === "string" && messageRaw.trim()) {
+            next.lastMessage = messageRaw;
+          } else if (!next.lastMessage && next.status === "running") {
             next.lastMessage = "Pipeline running…";
           }
-        } else if (current.status === "running") {
-          next.status = "complete";
-          next.lastMessage = next.lastMessage ?? "Pipeline finished.";
-        }
-        return next;
-      });
+          if (typeof snapshot.log === "string") {
+            const logText = snapshot.log;
+            next.log = logText;
+            const sharpeFromLog = extractSharpeFromLog(logText);
+            if (sharpeFromLog !== null) {
+              next.sharpeBest = sharpeFromLog;
+            }
+          }
+          const sharpeRaw = snapshot.sharpe_best;
+          if (sharpeRaw !== undefined && sharpeRaw !== null) {
+            const value = Number(sharpeRaw);
+            if (Number.isFinite(value)) {
+              next.sharpeBest = value;
+            }
+          }
+          if (progressState) {
+            next.progress = progressState;
+          }
+          if (trimmedSummaries.length) {
+            next.summaries = trimmedSummaries;
+          }
+          const logPath = snapshot.log_path;
+          if (typeof logPath === "string") {
+            next.logPath = logPath;
+          }
+          return next;
+        });
 
-      if (!status.exists || !status.running) {
-        closeEventStream();
-        void refreshRuns();
-      } else if (!eventSourceRef.current || eventJobIdRef.current !== job.jobId) {
-        openEventStream(job.jobId);
+        if (!snapshot.running || !snapshot.exists) {
+          void refreshRuns();
+        }
+        const statusValue = typeof snapshot.status === "string" ? snapshot.status : undefined;
+        if ((!snapshot.running || !snapshot.exists) && statusValue === "error") {
+          setPendingRunSelectionBaseline(undefined);
+        }
+      } catch (error) {
+        setJob((current) => {
+          if (!current || current.jobId !== activeJobId) {
+            return current;
+          }
+          return {
+            ...current,
+            status: "error",
+            lastMessage: formatError(error),
+          };
+        });
       }
-    } catch (error) {
-      setJob((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          status: "error",
-          lastMessage: formatError(error),
-        };
-      });
-    }
-  }, [job, closeEventStream, openEventStream, refreshRuns]);
+    },
+    [job, refreshRuns],
+  );
+
+  const handleStartPipeline = useCallback(
+    async (payload: PipelineRunRequest) => {
+      const baseline = lastRunPath ?? (runs[0]?.path ?? null);
+      setPendingRunSelectionBaseline(baseline);
+      try {
+        const response = await startPipelineRun(payload);
+        setJob({
+          jobId: response.job_id,
+          status: "running",
+          lastMessage: "Pipeline run started.",
+          lastUpdated: Date.now(),
+          log: "",
+          sharpeBest: null,
+          progress: null,
+          summaries: [],
+        });
+        setBanner("Pipeline run launched.");
+        void refreshJob(response.job_id);
+      } catch (error) {
+        setPendingRunSelectionBaseline(undefined);
+        throw error;
+      }
+    },
+    [lastRunPath, runs, refreshJob],
+  );
 
   usePolling(() => {
     void refreshJob();
   }, 2000, Boolean(job && job.status === "running"));
+
+  usePolling(() => {
+    if (!runsLoading) {
+      void refreshRuns();
+    }
+  }, 1500, pendingRunSelectionBaseline !== undefined);
 
   const handleRelabel = useCallback(
     async (run: RunSummary, label: string) => {

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import multiprocessing as mp
 import os
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
@@ -40,7 +43,11 @@ def _line_to_event(line: str) -> Dict[str, Any]:
             return {"type": "log", "raw": line}
     if (m := RE_PROGRESS.search(line)) is not None:
         try:
-            return {"type": "progress", "data": json.loads(m.group(1)), "raw": line}
+            data = json.loads(m.group(1))
+            event = {"type": "progress", "data": data, "raw": line}
+            if isinstance(data, dict) and isinstance(data.get("type"), str):
+                event["subtype"] = data["type"]
+            return event
         except Exception:
             return {"type": "log", "raw": line}
     if (m := RE_SHARPE.search(line)) is not None:
@@ -51,13 +58,126 @@ def _line_to_event(line: str) -> Dict[str, Any]:
     return {"type": "log", "raw": line}
 
 
-def _pipeline_worker(cli_args: list[str], root_dir: str, event_queue: mp.Queue) -> None:
+def _pipeline_worker(
+    cli_args: list[str] | tuple[str, ...],
+    root_dir: str | os.PathLike[str],
+    queue_or_job_id: Any,
+    *extra: Any,
+) -> None:
+    if not isinstance(cli_args, list):
+        cli_args = list(cli_args)
+    root_dir = os.fspath(root_dir)
+
+    event_queue: Any | None = None
+    aux_queues: list[Any] = []
+    job_id: str | None = None
+    extras: list[Any] = []
+
+    def _is_queue(obj: Any) -> bool:
+        put = getattr(obj, "put", None)
+        return callable(put)
+
+    for candidate in (queue_or_job_id, *extra):
+        if _is_queue(candidate):
+            if event_queue is None:
+                event_queue = candidate
+            else:
+                aux_queues.append(candidate)
+            continue
+        if isinstance(candidate, (str, os.PathLike)) and job_id is None:
+            job_id = os.fspath(candidate)
+            continue
+        if candidate is not None:
+            extras.append(candidate)
+
+    if event_queue is None:
+        raise TypeError("_pipeline_worker expected at least one queue argument for event dispatching")
+    if extras:
+        logging.getLogger(__name__).warning("Ignoring unexpected pipeline worker arguments: %r", extras)
+
+    if job_id:
+        os.environ.setdefault("PIPELINE_JOB_ID", job_id)
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         os.chdir(root_dir)
     except Exception:
         pass
+
+    def _push_event(line: str) -> None:
+        try:
+            event = _line_to_event(line)
+            event_queue.put(event)
+            for extra_q in aux_queues:
+                try:
+                    extra_q.put(event)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    class _TeeStream(io.TextIOBase):
+        def __init__(self, stream: io.TextIOBase | None) -> None:
+            super().__init__()
+            self._stream = stream
+            self._buffer = ""
+            self._encoding = getattr(stream, "encoding", "utf-8")
+            self._errors = getattr(stream, "errors", "strict")
+
+        def write(self, data: str) -> int:
+            if not isinstance(data, str):
+                data = str(data)
+            if not data:
+                return 0
+            try:
+                if self._stream is not None:
+                    self._stream.write(data)
+                    self._stream.flush()
+            except Exception:
+                pass
+            normalized = data.replace("\r", "\n")
+            self._buffer += normalized
+            while True:
+                idx = self._buffer.find("\n")
+                if idx == -1:
+                    break
+                chunk = self._buffer[:idx]
+                self._buffer = self._buffer[idx + 1 :]
+                _push_event(chunk.rstrip("\r"))
+            return len(data)
+
+        def flush(self) -> None:
+            try:
+                if self._stream is not None:
+                    self._stream.flush()
+            except Exception:
+                pass
+            if self._buffer:
+                _push_event(self._buffer.rstrip("\r"))
+                self._buffer = ""
+
+        def isatty(self) -> bool:
+            if self._stream is None:
+                return False
+            try:
+                return bool(self._stream.isatty())
+            except Exception:
+                return False
+
+        @property
+        def encoding(self) -> str:
+            return self._encoding
+
+        @property
+        def errors(self) -> str:
+            return self._errors
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    tee_stdout = _TeeStream(original_stdout)
+    tee_stderr = _TeeStream(original_stderr)
+    sys.stdout = tee_stdout
+    sys.stderr = tee_stderr
 
     from run_pipeline import parse_args, run_pipeline_programmatic
     try:
@@ -66,22 +186,7 @@ def _pipeline_worker(cli_args: list[str], root_dir: str, event_queue: mp.Queue) 
         options_from_namespace = None  # type: ignore
     from utils import logging_setup
 
-    class _QueueHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            try:
-                event_queue.put(_line_to_event(record.getMessage()))
-            except Exception:
-                pass
-
-    queue_handler = _QueueHandler(level=logging.INFO)
-
     original_setup = logging_setup.setup_logging
-
-    def setup_logging_wrapper(level: int = logging.INFO, log_file: str | None = None) -> None:
-        original_setup(level=level, log_file=log_file)
-        logging.getLogger().addHandler(queue_handler)
-
-    logging_setup.setup_logging = setup_logging_wrapper
 
     try:
         evo_cfg, bt_cfg, ns = parse_args(cli_args)
@@ -118,8 +223,18 @@ def _pipeline_worker(cli_args: list[str], root_dir: str, event_queue: mp.Queue) 
         event_queue.put({"type": "error", "code": 1, "detail": str(exc)})
         event_queue.put({"type": "status", "msg": "exit", "code": 1})
     finally:
+        try:
+            tee_stdout.flush()
+            tee_stderr.flush()
+        except Exception:
+            pass
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
         logging_setup.setup_logging = original_setup
         event_queue.put({"type": "__complete__"})
+
+
+_PIPELINE_WORKER_DEFAULT = _pipeline_worker
 
 
 async def _forward_events(
@@ -128,18 +243,99 @@ async def _forward_events(
     client_queue: Queue,
 ) -> None:
     loop = asyncio.get_running_loop()
+    log_handle = None
+
+    def _log_line(line: str) -> None:
+        nonlocal log_handle
+        if not isinstance(line, str):
+            return
+        activity = STATE.get_activity(job_id) or {}
+        log_path = activity.get("log_path")
+        if not isinstance(log_path, str):
+            return
+        try:
+            if log_handle is None:
+                Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+                log_handle = open(log_path, "a", encoding="utf-8")
+            if line.endswith("\n"):
+                log_handle.write(line)
+            else:
+                log_handle.write(line + "\n")
+            log_handle.flush()
+        except Exception:
+            pass
+
+    def _touch_activity(**updates: Any) -> None:
+        STATE.update_activity(job_id, updated_at=time.time(), **updates)
+
     try:
         while True:
             item = await loop.run_in_executor(None, event_queue.get)
             if not isinstance(item, dict):
                 break
             event_type = item.get("type")
+            raw_line = item.get("raw") if isinstance(item, dict) else None
             if event_type == "__complete__":
                 break
+            _touch_activity()
             if event_type == "log":
-                STATE.add_log(job_id, item.get("raw", ""))
+                if isinstance(raw_line, str):
+                    text = raw_line.strip()
+                    if text:
+                        _touch_activity(last_message=text)
+            elif event_type == "progress":
+                data = item.get("data")
+                subtype = item.get("subtype") or (data.get("type") if isinstance(data, dict) else None)
+                if subtype == "gen_progress" and isinstance(data, dict):
+                    _touch_activity(progress=data)
+                elif subtype == "gen_summary" and isinstance(data, dict):
+                    meta = STATE.meta.get(job_id)
+                    if isinstance(meta, dict):
+                        history = meta.setdefault("gen_history", [])
+                        history.append(data)
+                        # keep history bounded to avoid runaway memory use
+                        if len(history) > 2000:
+                            del history[0 : len(history) - 2000]
+                    STATE.append_activity_summary(job_id, data)
+                    _touch_activity(progress=data)
+            elif event_type == "score":
+                sharpe = item.get("sharpe_best")
+                try:
+                    value = float(sharpe)
+                except (TypeError, ValueError):
+                    value = None
+                if value is not None:
+                    _touch_activity(sharpe_best=value)
+            elif event_type == "status":
+                msg = item.get("msg")
+                if msg == "exit":
+                    try:
+                        code = int(item.get("code", 1))
+                    except Exception:
+                        code = 1
+                    success = code == 0
+                    _touch_activity(
+                        status="complete" if success else "error",
+                        last_message="Pipeline finished." if success else "Pipeline stopped.",
+                    )
+                    if not success:
+                        STATE.pop_meta(job_id)
+                elif isinstance(msg, str):
+                    mapped = "Pipeline started." if msg == "started" else msg
+                    _touch_activity(status="running", last_message=mapped)
+            elif event_type == "error":
+                detail = item.get("detail")
+                if isinstance(detail, str) and detail.strip():
+                    message = detail
+                    _log_line(detail)
+                else:
+                    message = "Pipeline error."
+                _touch_activity(status="error", last_message=message)
             elif event_type == "final":
                 context = STATE.pop_meta(job_id)
+                history = None
+                if isinstance(context, dict):
+                    history = context.pop("gen_history", None)
                 if context:
                     try:
                         run_path = Path(item["run_dir"]).resolve()
@@ -149,16 +345,36 @@ async def _forward_events(
                         context_out["run_dir"] = str(run_path)
                         with open(meta_dir / "ui_context.json", "w", encoding="utf-8") as fh:
                             json.dump(context_out, fh, indent=2)
+                        if history:
+                            with open(meta_dir / "gen_summary.jsonl", "w", encoding="utf-8") as fh_hist:
+                                for entry in history:
+                                    fh_hist.write(json.dumps(entry))
+                                    fh_hist.write("\n")
                     except Exception:
                         pass
-            elif event_type == "status" and item.get("msg") == "exit" and item.get("code") != 0:
-                STATE.pop_meta(job_id)
+                sharpe = item.get("sharpe_best")
+                try:
+                    value = float(sharpe)
+                except (TypeError, ValueError):
+                    value = None
+                if value is not None:
+                    _touch_activity(sharpe_best=value)
+                _touch_activity(status="complete")
+            if isinstance(raw_line, str):
+                STATE.add_log(job_id, raw_line)
+                if raw_line:
+                    _log_line(raw_line)
             try:
                 client_queue.put_nowait(json.dumps(item))
             except Exception:
                 pass
     finally:
         STATE.clear_handle(job_id)
+        if log_handle is not None:
+            try:
+                log_handle.close()
+            except Exception:
+                pass
 
 
 @csrf_exempt
@@ -201,12 +417,32 @@ async def start_pipeline_run(request: HttpRequest):
         "pipeline_args": full_args,
     }
     STATE.set_meta(job_id, ui_context)
+    STATE.init_activity(
+        job_id,
+        {
+            "status": "running",
+            "last_message": "Pipeline started.",
+            "sharpe_best": None,
+            "progress": None,
+            "summaries": [],
+            "updated_at": time.time(),
+        },
+    )
 
     client_queue.put_nowait(json.dumps({"type": "status", "msg": "started", "args": full_args}))
 
+    log_dir = ROOT / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file_path = log_dir / f"pipeline_{job_id}.log"
+    STATE.update_activity(job_id, log_path=str(log_file_path))
+
     ctx = mp.get_context("spawn")
     event_queue: mp.Queue = ctx.Queue()
-    proc = ctx.Process(target=_pipeline_worker, args=(cli_args, str(ROOT), event_queue), daemon=True)
+    worker_fn = _pipeline_worker
+    worker_args: tuple[Any, ...] = (cli_args, str(ROOT), event_queue)
+    if worker_fn is _PIPELINE_WORKER_DEFAULT:
+        worker_args += (job_id,)
+    proc = ctx.Process(target=worker_fn, args=worker_args)
     proc.start()
 
     forward_task = asyncio.create_task(_forward_events(job_id, event_queue, client_queue))

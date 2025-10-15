@@ -15,8 +15,8 @@ export function PipelineControls({
 }: PipelineControlsProps): React.ReactElement {
   const dataset = defaultDataset;
   const datasetLabel = dataset === "sp500" ? "S&P 500 (daily)" : dataset;
-  const [generations, setGenerations] = useState(5);
-  const [popSize, setPopSize] = useState(100);
+  const [generationInput, setGenerationInput] = useState("5");
+  const [popSizeInput, setPopSizeInput] = useState("100");
   const [configPath, setConfigPath] = useState("");
   const [configs, setConfigs] = useState<ConfigListItem[]>([]);
   const [configLoading, setConfigLoading] = useState(false);
@@ -50,12 +50,39 @@ export function PipelineControls({
     };
   }, []);
 
+  const parseWholeNumber = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isInteger(numeric)) {
+      return null;
+    }
+    return numeric;
+  };
+
+  const parsedGenerations = parseWholeNumber(generationInput);
+  const parsedPopSize = parseWholeNumber(popSizeInput);
+  const hasInvalidInput = parsedGenerations === null || parsedPopSize === null;
+  const hasZeroValue =
+    (parsedGenerations !== null && parsedGenerations === 0) ||
+    (parsedPopSize !== null && parsedPopSize === 0);
+  const inlineNotice = hasZeroValue
+    ? "Generations and population size must be greater than zero before launching."
+    : hasInvalidInput
+      ? "Enter whole numbers for generations and population size."
+      : null;
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const sanitizedPopSize = Math.max(10, Math.min(2000, Math.round(Number.isFinite(popSize) ? popSize : 100)));
-    const overrides = { pop_size: sanitizedPopSize };
+    if (parsedGenerations === null || parsedPopSize === null || parsedGenerations === 0 || parsedPopSize === 0) {
+      setMessage("Please provide non-zero whole numbers for generations and population size.");
+      return;
+    }
+    const overrides = { pop_size: parsedPopSize };
     const payload: PipelineRunRequest = {
-      generations,
+      generations: parsedGenerations,
       dataset: configPath ? undefined : dataset,
       config: configPath || undefined,
       overrides,
@@ -83,10 +110,9 @@ export function PipelineControls({
           <span className="form-label">Generations</span>
           <input
             type="number"
-            min={1}
-            max={1000}
-            value={generations}
-            onChange={(event) => setGenerations(Number(event.target.value) || 1)}
+            step={1}
+            value={generationInput}
+            onChange={(event) => setGenerationInput(event.target.value)}
             disabled={busy}
           />
         </label>
@@ -95,19 +121,9 @@ export function PipelineControls({
           <span className="form-label">Population size</span>
           <input
             type="number"
-            min={10}
-            max={2000}
-            step={10}
-            value={popSize}
-            onChange={(event) => {
-              const raw = Number(event.target.value);
-              if (Number.isFinite(raw)) {
-                const clamped = Math.max(10, Math.min(2000, Math.round(raw)));
-                setPopSize(clamped);
-              } else {
-                setPopSize(100);
-              }
-            }}
+            step={1}
+            value={popSizeInput}
+            onChange={(event) => setPopSizeInput(event.target.value)}
             disabled={busy}
           />
         </label>
@@ -132,11 +148,12 @@ export function PipelineControls({
         {configError ? <p className="muted error-text">{configError}</p> : null}
 
         <div className="form-actions">
-          <button className="btn btn-primary" type="submit" disabled={busy}>
+          <button className="btn btn-primary" type="submit" disabled={busy || hasInvalidInput || hasZeroValue}>
             {busy ? "Running…" : "Launch Pipeline"}
           </button>
         </div>
 
+        {inlineNotice ? <p className="form-warning">{inlineNotice}</p> : null}
         {message ? <div className="form-message">{message}</div> : null}
       </form>
     </section>

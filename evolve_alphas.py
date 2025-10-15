@@ -824,11 +824,13 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 continue
 
             eta_str = ""
+            avg_gen_time: float | None = None
+            eta_seconds: float | None = None
             if gen_eval_times_history:
-                avg_gen_time = np.mean(gen_eval_times_history)
+                avg_gen_time = float(np.mean(gen_eval_times_history))
                 remaining_gens = cfg.generations - (gen + 1)
                 if avg_gen_time > 0 and remaining_gens > 0:
-                    eta_seconds = remaining_gens * avg_gen_time
+                    eta_seconds = float(remaining_gens * avg_gen_time)
                     eta_str = f" | ETA {time.strftime('%Hh%Mm%Ss', time.gmtime(eta_seconds))}"
             
             best_prog_idx, best_metrics = eval_results[0]
@@ -866,6 +868,117 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     eta_str,
                     best_program_obj.to_string(max_len=100),
                 )
+
+            # Emit a structured per-generation summary for SSE/dashboard consumption
+            try:
+                import json as _json
+
+                gen_fraction = float((gen + 1) / max(1, cfg.generations))
+                sharpe_w = float(getattr(cfg, "sharpe_proxy_w", 0.0)) * float(min(1.0, ramp))
+                ic_std_w = float(getattr(cfg, "ic_std_penalty_w", 0.0)) * float(min(1.0, ramp))
+                turnover_w = float(getattr(cfg, "turnover_penalty_w", 0.0)) * float(min(1.0, ramp))
+                ic_tstat_w = float(getattr(cfg, "ic_tstat_w", 0.0)) * float(min(1.0, ramp))
+                stress_w = float(getattr(cfg, "stress_penalty_w", 0.0))
+                drawdown_w = float(getattr(cfg, "drawdown_penalty_w", 0.0))
+                downside_w = float(getattr(cfg, "downside_penalty_w", 0.0))
+                cvar_w = float(getattr(cfg, "cvar_penalty_w", 0.0))
+
+                sharpe_bonus = sharpe_w * float(best_metrics.sharpe_proxy)
+                ic_std_penalty = ic_std_w * float(best_metrics.ic_std)
+                turnover_penalty = turnover_w * float(best_metrics.turnover_proxy)
+                stress_penalty = stress_w * float(getattr(best_metrics, "robustness_penalty", 0.0))
+                drawdown_penalty = drawdown_w * max(0.0, float(getattr(best_metrics, "max_drawdown", 0.0)))
+                downside_penalty = downside_w * max(0.0, float(getattr(best_metrics, "downside_deviation", 0.0)))
+                cvar_penalty = cvar_w * max(0.0, -float(getattr(best_metrics, "cvar", 0.0)))
+                factor_penalty = float(getattr(best_metrics, "factor_penalty", 0.0))
+                parsimony_penalty = float(getattr(best_metrics, "parsimony_penalty", 0.0))
+                corr_penalty = float(getattr(best_metrics, "correlation_penalty", 0.0))
+
+                fitness_static = getattr(best_metrics, "fitness_static", None)
+                ic_tstat_component = 0.0
+                try:
+                    ic_tstat_component = float(getattr(best_metrics, "ic_tstat", 0.0))
+                except Exception:
+                    ic_tstat_component = 0.0
+                ic_tstat_bonus = ic_tstat_w * ic_tstat_component if ic_tstat_component else 0.0
+
+                fitness_breakdown = {
+                    "base_ic": float(best_metrics.mean_ic),
+                    "sharpe_bonus": sharpe_bonus,
+                    "ic_std_penalty": ic_std_penalty,
+                    "turnover_penalty": turnover_penalty,
+                    "parsimony_penalty": parsimony_penalty,
+                    "correlation_penalty": corr_penalty,
+                    "factor_penalty": factor_penalty,
+                    "stress_penalty": stress_penalty,
+                    "drawdown_penalty": drawdown_penalty,
+                    "downside_penalty": downside_penalty,
+                    "cvar_penalty": cvar_penalty,
+                    "ic_tstat_bonus": ic_tstat_bonus,
+                    "result": float(best_fit),
+                    "fitness_static": float(fitness_static) if (fitness_static is not None and math.isfinite(fitness_static)) else None,
+                }
+
+                penalties = {
+                    "parsimony": parsimony_penalty,
+                    "correlation": corr_penalty,
+                    "ic_std": ic_std_penalty,
+                    "turnover": turnover_penalty,
+                    "factor": factor_penalty,
+                    "stress": stress_penalty,
+                    "drawdown": drawdown_penalty,
+                    "downside": downside_penalty,
+                    "cvar": cvar_penalty,
+                }
+
+                best_summary = {
+                    "fitness": float(best_fit),
+                    "fitness_static": float(fitness_static) if (fitness_static is not None and math.isfinite(fitness_static)) else None,
+                    "mean_ic": float(best_metrics.mean_ic),
+                    "ic_std": float(best_metrics.ic_std),
+                    "turnover": float(best_metrics.turnover_proxy),
+                    "sharpe_proxy": float(best_metrics.sharpe_proxy),
+                    "sortino": float(getattr(best_metrics, "sortino_ratio", 0.0)),
+                    "drawdown": float(getattr(best_metrics, "max_drawdown", 0.0)),
+                    "downside_deviation": float(getattr(best_metrics, "downside_deviation", 0.0)),
+                    "cvar": float(getattr(best_metrics, "cvar", 0.0)),
+                    "factor_penalty": factor_penalty,
+                    "fingerprint": getattr(best_program_obj, "fingerprint", None),
+                    "program_size": int(best_program_obj.size),
+                    "program": best_program_obj.to_string(max_len=140),
+                    "horizon_metrics": getattr(best_metrics, "horizon_metrics", {}),
+                    "factor_exposures": getattr(best_metrics, "factor_exposures", {}),
+                    "regime_exposures": getattr(best_metrics, "regime_exposures", {}),
+                    "transaction_costs": getattr(best_metrics, "transaction_costs", {}),
+                    "stress_metrics": getattr(best_metrics, "stress_metrics", {}),
+                }
+
+                population_snapshot = {
+                    "size": int(len(pop)),
+                    "unique_fingerprints": int(len({p.fingerprint for p in pop})),
+                }
+
+                timing_snapshot = {
+                    "generation_seconds": float(gen_eval_time),
+                    "average_seconds": float(avg_gen_time) if (avg_gen_time is not None) else None,
+                    "eta_seconds": float(eta_seconds) if (eta_seconds is not None) else None,
+                }
+
+                summary_payload = {
+                    "type": "gen_summary",
+                    "generation": int(gen + 1),
+                    "generations_total": int(getattr(cfg, "generations", 0)),
+                    "pct_complete": gen_fraction,
+                    "best": best_summary,
+                    "penalties": penalties,
+                    "fitness_breakdown": fitness_breakdown,
+                    "timing": timing_snapshot,
+                    "population": population_snapshot,
+                }
+
+                logger.info("PROGRESS %s", _json.dumps(summary_payload))
+            except Exception:
+                pass
 
             logger.debug(
                 "Gen %s | Building new population from elites and offspring",

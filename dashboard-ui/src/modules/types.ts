@@ -30,6 +30,7 @@ export interface AlphaTimeseries {
   date: string[];
   equity: number[];
   ret_net: number[];
+  pending?: boolean;
 }
 
 export interface PipelineRunResponse {
@@ -64,7 +65,75 @@ export interface PipelineJobState {
   lastMessage?: string;
   lastUpdated: number;
   log: string;
+  logPath?: string | null;
   sharpeBest?: number | null;
+  progress?: GenerationProgressState | null;
+  summaries: GenerationSummary[];
+}
+
+export interface JobActivityResponse {
+  exists: boolean;
+  running: boolean;
+  status?: PipelineJobState["status"] | string | null;
+  last_message?: string | null;
+  log?: string | null;
+  log_path?: string | null;
+  sharpe_best?: number | null;
+  progress?: unknown;
+  summaries?: unknown[];
+  updated_at?: number | string | null;
+}
+
+export interface GenerationProgressState {
+  generation: number;
+  generationsTotal?: number | null;
+  pctComplete?: number | null;
+  completed: number;
+  totalIndividuals?: number | null;
+  bestFitness?: number | null;
+  medianFitness?: number | null;
+  elapsedSeconds?: number | null;
+  etaSeconds?: number | null;
+}
+
+export interface GenerationSummaryBest {
+  fitness: number;
+  fitnessStatic: number | null;
+  meanIc: number;
+  icStd: number;
+  turnover: number;
+  sharpeProxy: number;
+  sortino: number;
+  drawdown: number;
+  downsideDeviation: number;
+  cvar: number;
+  factorPenalty: number;
+  fingerprint?: string | null;
+  programSize: number;
+  program: string;
+  horizonMetrics: Record<string, Record<string, number>>;
+  factorExposures: Record<string, number>;
+  regimeExposures: Record<string, number>;
+  transactionCosts: Record<string, number>;
+  stressMetrics: Record<string, number>;
+}
+
+export interface GenerationSummary {
+  generation: number;
+  generationsTotal: number;
+  pctComplete: number;
+  best: GenerationSummaryBest;
+  penalties: Record<string, number>;
+  fitnessBreakdown: Record<string, number | null>;
+  timing: {
+    generationSeconds: number;
+    averageSeconds: number | null;
+    etaSeconds: number | null;
+  };
+  population: {
+    size: number;
+    uniqueFingerprints: number;
+  };
 }
 
 export interface RunUIContext {

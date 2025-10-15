@@ -135,22 +135,13 @@ function ConfigTable({
             onChange(key, event.target.checked);
           };
 
+          const metaClass = changed ? "settings-card__meta" : "settings-card__meta settings-card__meta--muted";
+
           return (
             <div key={key} className={changed ? "settings-card settings-card--changed" : "settings-card"}>
               <div className="settings-card__top">
                 <div className="settings-card__key">{key}</div>
-                <div className="settings-card__actions">
-                  {changed ? <span className="settings-card__badge">Changed</span> : null}
-                  <button
-                    type="button"
-                    className="settings-card__reset"
-                    onClick={() => onReset(key)}
-                    disabled={disabled || baseValue === undefined || !changed}
-                    aria-label={`Reset ${key} to default`}
-                  >
-                    Reset
-                  </button>
-                </div>
+                {changed ? <span className="settings-card__badge">Changed</span> : null}
               </div>
               <div className="settings-card__value">
                 {isBoolean ? (
@@ -203,11 +194,18 @@ function ConfigTable({
                   )
                 ) : null}
               </div>
-              {baseValue !== undefined ? (
-                <div className={changed ? "settings-card__meta" : "settings-card__meta settings-card__meta--muted"}>
-                  Default: {formatValue(baseValue)}
-                </div>
-              ) : null}
+              <div className="settings-card__footer">
+                <button
+                  type="button"
+                  className="settings-card__reset"
+                  onClick={() => onReset(key)}
+                  disabled={disabled || baseValue === undefined || !changed}
+                  aria-label={`Reset ${key} to default`}
+                >
+                  Reset
+                </button>
+                {baseValue !== undefined ? <div className={metaClass}>Default: {formatValue(baseValue)}</div> : null}
+              </div>
             </div>
           );
         })}

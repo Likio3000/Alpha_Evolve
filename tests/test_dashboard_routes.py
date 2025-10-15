@@ -7,6 +7,7 @@ import queue
 from types import SimpleNamespace
 import threading
 from pathlib import Path
+import contextlib
 
 import httpx
 import pytest
@@ -139,6 +140,13 @@ async def test_backtest_summary_requires_valid_run_dir(dashboard_env):
     rows = ok_resp.json()
     assert rows and rows[0]["AlphaID"] == "Alpha_01"
 
+    prefixed_resp = await dashboard_env.client.get(
+        "/api/backtest-summary", params={"run_dir": f"pipeline_runs_cs/{dashboard_env.run_dir.name}"}
+    )
+    assert prefixed_resp.status_code == 200
+    prefixed_rows = prefixed_resp.json()
+    assert prefixed_rows and prefixed_rows[0]["AlphaID"] == "Alpha_01"
+
     bad_resp = await dashboard_env.client.get("/api/backtest-summary", params={"run_dir": "../../etc"})
     assert bad_resp.status_code == 400
 
@@ -150,6 +158,18 @@ async def test_alpha_timeseries_endpoint(dashboard_env):
     payload = ok_resp.json()
     assert payload["date"]
     assert len(payload["equity"]) == len(payload["date"])
+
+
+async def test_alpha_timeseries_pending_when_summary_missing(dashboard_env, monkeypatch):
+    """Pending runs should return a 202 with empty vectors instead of surfacing errors."""
+    monkeypatch.setattr("scripts.dashboard_server.routes.runs._summary_csv", lambda *_a, **_k: None)
+    resp = await dashboard_env.client.get("/api/alpha-timeseries", params={"run_dir": "run_demo", "alpha_id": "Alpha_01"})
+    assert resp.status_code == 202
+    payload = resp.json()
+    assert payload["pending"] is True
+    assert payload["date"] == []
+    assert payload["equity"] == []
+    assert payload["ret_net"] == []
 
 
 async def test_run_details_endpoint_returns_metadata(dashboard_env):
@@ -235,58 +255,201 @@ async def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatc
         await asyncio.sleep(0.05)
 
 
-async def test_pipeline_stop_and_events_endpoints(dashboard_env):
-    """Confirm new pipeline helper endpoints enforce method semantics and report missing jobs."""
+async def test_pipeline_stop_and_activity_endpoint(dashboard_env):
+    """Confirm helper endpoints enforce method semantics and activity snapshots handle missing jobs."""
     stop_get = await dashboard_env.client.get("/api/pipeline/stop/unknown")
     assert stop_get.status_code == 405
 
     stop_post = await dashboard_env.client.post("/api/pipeline/stop/unknown")
     assert stop_post.status_code == 404
 
-    events_resp = await dashboard_env.client.get("/api/pipeline/events/unknown")
-    assert events_resp.status_code == 404
+    activity_resp = await dashboard_env.client.get("/api/job-activity/unknown")
+    assert activity_resp.status_code == 200
+    payload = activity_resp.json()
+    assert payload["exists"] is False
+    assert payload["running"] is False
+    assert payload["log"] == ""
 
 
-async def test_pipeline_events_streams_incremental_logs(dashboard_env, monkeypatch):
-    """Ensure SSE scaffolding streams log and score payloads before exit."""
+async def test_pipeline_activity_snapshot_tracks_events(dashboard_env, tmp_path):
+    """Ensure activity snapshots capture logs, progress, scores, and status transitions."""
     from scripts.dashboard_server.routes.run_pipeline import _forward_events
-    from scripts.dashboard_server.helpers import _SSEStream
 
-    job_id = "job-test-stream"
+    job_id = "job-test-activity"
     client_queue = STATE.new_queue(job_id)
     event_queue: queue.Queue = queue.Queue()
+    log_file = tmp_path / "dashboard" / "pipeline.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    STATE.init_activity(job_id, {"status": "running"})
+    STATE.update_activity(job_id, log_path=str(log_file))
 
     async def drive_forwarder():
         await asyncio.wait_for(_forward_events(job_id, event_queue, client_queue), timeout=1.5)
 
     task = asyncio.create_task(drive_forwarder())
     try:
+        summary_payload = {
+            "type": "gen_summary",
+            "generation": 1,
+            "generations_total": 2,
+            "pct_complete": 0.5,
+            "best": {
+                "fitness": 0.5,
+                "fitness_static": 0.45,
+                "mean_ic": 0.12,
+                "ic_std": 0.03,
+                "turnover": 0.1,
+                "sharpe_proxy": 0.6,
+                "sortino": 0.0,
+                "drawdown": 0.02,
+                "downside_deviation": 0.01,
+                "cvar": -0.01,
+                "factor_penalty": 0.0,
+                "fingerprint": "fp-demo",
+                "program_size": 12,
+                "program": "alpha()",
+                "horizon_metrics": {},
+                "factor_exposures": {},
+                "regime_exposures": {},
+                "transaction_costs": {},
+                "stress_metrics": {},
+            },
+            "penalties": {"parsimony": 0.01},
+            "fitness_breakdown": {"parsimony": 0.01},
+            "timing": {"generation_seconds": 1.0, "average_seconds": 1.0, "eta_seconds": 2.0},
+            "population": {"size": 32, "unique_fingerprints": 30},
+        }
+
         event_queue.put({"type": "log", "raw": "Booting pipeline"})
+        event_queue.put({"type": "progress", "subtype": "gen_progress", "data": {"gen": 1, "completed": 32}})
+        event_queue.put({"type": "progress", "subtype": "gen_summary", "data": summary_payload})
         event_queue.put({"type": "score", "sharpe_best": 1.42, "raw": "Sharpe(best)=1.42"})
         event_queue.put({"type": "status", "msg": "exit", "code": 0})
         event_queue.put({"type": "__complete__"})
 
         await asyncio.sleep(0.05)
-        log_text = STATE.get_log_text(job_id)
-        assert "Booting pipeline" in log_text
+        activity = STATE.get_activity(job_id)
+        assert activity is not None
+        assert activity.get("status") == "complete"
+        assert activity.get("sharpe_best") == pytest.approx(1.42)
+        assert activity.get("summaries"), "Expected summaries to be captured in activity snapshot"
 
-        streamed = []
-        while True:
-            try:
-                streamed.append(json.loads(client_queue.get_nowait()))
-            except queue.Empty:
-                break
-        assert any(item["type"] == "log" for item in streamed)
-        assert any(item["type"] == "score" and pytest.approx(1.42) == item["sharpe_best"] for item in streamed)
-        assert any(item["type"] == "status" and item.get("msg") == "exit" for item in streamed)
-
-        q = queue.Queue()
-        sse = _SSEStream(q, keepalive=0.05, prefer_async=False)
-        q.put(json.dumps({"type": "test", "payload": 1}))
-        first = next(iter(sse))
-        assert first.startswith("data: {") and '"type": "test"' in first
+        response = await dashboard_env.client.get(f"/api/job-activity/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["exists"] is True
+        assert payload["running"] is False
+        assert "Booting pipeline" in payload["log"]
+        assert payload["status"] == "complete"
+        assert payload["sharpe_best"] == pytest.approx(1.42)
+        assert payload["summaries"], "Expected summaries to be returned in activity payload"
+        assert payload["log_path"].endswith("pipeline.log")
     finally:
         event_queue.put("__complete__")
         await asyncio.wait_for(task, timeout=1.0)
         STATE.logs.pop(job_id, None)
         STATE.queues.pop(job_id, None)
+        STATE.activity.pop(job_id, None)
+
+
+async def test_job_activity_reads_log_file_tail(dashboard_env, tmp_path):
+    """Verify job activity falls back to the on-disk log when in-memory buffer is empty."""
+    job_id = "job-log-tail"
+    STATE.init_activity(job_id, {"status": "running"})
+    log_file = tmp_path / "logs" / "tail.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text("line-1\nline-2\n", encoding="utf-8")
+    STATE.update_activity(job_id, log_path=str(log_file))
+
+    resp = await dashboard_env.client.get(f"/api/job-activity/{job_id}")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["exists"] is True
+    assert payload["log"].endswith("line-2\n")
+
+    STATE.activity.pop(job_id, None)
+
+
+async def test_progress_summary_events_persist(tmp_path):
+    """Ensure PROGRESS gen_summary events are broadcast and persisted to gen_summary.jsonl."""
+    from scripts.dashboard_server.routes.run_pipeline import _forward_events
+
+    job_id = "job-progress-summary"
+    client_queue = STATE.new_queue(job_id)
+    event_queue: queue.Queue = queue.Queue()
+    STATE.set_meta(job_id, {"payload": {"generations": 3}})
+
+    run_dir = tmp_path / "progress_run"
+    run_dir.mkdir()
+
+    summary_payload = {
+        "type": "gen_summary",
+        "generation": 1,
+        "generations_total": 4,
+        "pct_complete": 0.25,
+        "best": {
+            "fitness": 0.42,
+            "fitness_static": 0.41,
+            "mean_ic": 0.18,
+            "ic_std": 0.03,
+            "turnover": 0.12,
+            "sharpe_proxy": 0.55,
+            "sortino": 0.0,
+            "drawdown": 0.01,
+            "downside_deviation": 0.02,
+            "cvar": -0.03,
+            "factor_penalty": 0.0,
+            "fingerprint": "fp-demo",
+            "program_size": 18,
+            "program": "alpha_prog_demo()",
+            "horizon_metrics": {"1": {"mean_ic": 0.18, "ic_std": 0.03}},
+            "factor_exposures": {},
+            "regime_exposures": {},
+            "transaction_costs": {},
+            "stress_metrics": {},
+        },
+        "penalties": {"parsimony": 0.01},
+        "fitness_breakdown": {"base_ic": 0.18, "parsimony_penalty": 0.01, "result": 0.17},
+        "timing": {"generation_seconds": 1.2, "average_seconds": 1.2, "eta_seconds": 6.0},
+        "population": {"size": 64, "unique_fingerprints": 52},
+    }
+
+    async def drive_forwarder():
+        await asyncio.wait_for(_forward_events(job_id, event_queue, client_queue), timeout=1.0)
+
+    task = asyncio.create_task(drive_forwarder())
+    try:
+        event_queue.put({"type": "progress", "subtype": "gen_summary", "data": summary_payload})
+        event_queue.put({"type": "final", "run_dir": str(run_dir)})
+        event_queue.put({"type": "status", "msg": "exit", "code": 0})
+        event_queue.put({"type": "__complete__"})
+        await asyncio.wait_for(task, timeout=1.0)
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        STATE.logs.pop(job_id, None)
+        STATE.queues.pop(job_id, None)
+
+    streamed = []
+    while True:
+        try:
+            streamed.append(json.loads(client_queue.get_nowait()))
+        except queue.Empty:
+            break
+    progress_events = [item for item in streamed if item.get("type") == "progress"]
+    assert progress_events, "Expected at least one progress event"
+    assert progress_events[0].get("subtype") == "gen_summary"
+    assert progress_events[0]["data"]["generation"] == 1
+
+    assert job_id not in STATE.meta
+
+    meta_dir = run_dir / "meta"
+    ui_path = meta_dir / "ui_context.json"
+    summary_path = meta_dir / "gen_summary.jsonl"
+    assert ui_path.exists()
+    assert summary_path.exists()
+
+    contents = [json.loads(line) for line in summary_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert contents and contents[0]["generation"] == 1

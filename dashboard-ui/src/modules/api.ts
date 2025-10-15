@@ -7,6 +7,7 @@ import {
   ConfigPresetValues,
   ConfigPresetsResponse,
   ConfigSavePayload,
+  JobActivityResponse,
   JobLogResponse,
   JobStatusResponse,
   LastRunPayload,
@@ -81,6 +82,10 @@ export async function fetchJobStatus(jobId: string): Promise<JobStatusResponse> 
 
 export async function fetchJobLog(jobId: string): Promise<JobLogResponse> {
   return request<JobLogResponse>(`/api/job-log/${encodeURIComponent(jobId)}`);
+}
+
+export async function fetchJobActivity(jobId: string): Promise<JobActivityResponse> {
+  return request<JobActivityResponse>(`/api/job-activity/${encodeURIComponent(jobId)}`);
 }
 
 export async function stopPipelineJob(jobId: string): Promise<{ stopped: boolean }> {

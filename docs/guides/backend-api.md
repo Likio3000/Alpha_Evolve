@@ -60,7 +60,17 @@ The UI builds forms from the following helper endpoints:
 - `POST /api/config/save` – persist a config snapshot (writes under `configs/generated/` by default).
 
 ## Event Streams
-The server maintains an internal SSE queue per job. The helper endpoint `run_pipeline.sse_events(job_id)` is now exposed at `GET /api/pipeline/events/<job_id>` and streams `data: { ... }` payloads with `log`, `progress`, `diag`, and `score` events. You can still compose your own response via `scripts/dashboard_server/helpers.make_sse_response` if you need custom dispatching logic.
+The server maintains an internal SSE queue per job. The helper endpoint `run_pipeline.sse_events(job_id)` is exposed at `GET /api/pipeline/events/<job_id>` and streams `data: { ... }` payloads in real time. Each message includes a `type` field:
+
+- `log` – raw log lines, suitable for appending to a console.
+- `score` – `{"sharpe_best": <float>}` updates when the best Sharpe ratio changes.
+- `progress` – structured payloads with a `subtype`:
+  - `subtype="gen_progress"` mirrors the legacy per-candidate counters (`gen`, `completed`, `total`, `best`, `median`, `eta_sec`).
+  - `subtype="gen_summary"` is emitted once per generation and contains the champion metrics, penalty breakdown, fitness components, timing, and population stats. These summaries are also persisted to `<run>/meta/gen_summary.jsonl` after the job finishes.
+- `diag` – optional diagnostic blobs produced by the evaluator.
+- `status` / `error` – lifecycle and failure notifications.
+
+On completion the server writes `<run>/meta/ui_context.json` (submission metadata) and `<run>/meta/gen_summary.jsonl` (newline-delimited copies of the streamed summaries). You can still compose your own response via `scripts/dashboard_server/helpers.make_sse_response` if you need custom dispatching logic.
 
 To stop a running pipeline from the UI or scripts, send `POST /api/pipeline/stop/<job_id>`.
 

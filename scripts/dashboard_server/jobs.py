@@ -12,14 +12,17 @@ import asyncio
 class JobHandle:
     """Track how a background job can be monitored or stopped."""
 
-    proc: Optional[subprocess.Popen] = None
+    proc: Optional[Any] = None
     task: Optional[asyncio.Task] = None
     stop_cb: Optional[Callable[[], None]] = None
 
     def is_running(self) -> bool:
         if self.proc is not None:
             try:
-                return self.proc.poll() is None
+                if hasattr(self.proc, "poll"):
+                    return self.proc.poll() is None  # subprocess.Popen API
+                if hasattr(self.proc, "is_alive"):
+                    return self.proc.is_alive()  # multiprocessing.Process API
             except Exception:
                 return False
         if self.task is not None:
@@ -32,11 +35,16 @@ class JobHandle:
                 self.stop_cb()
                 return True
             if self.proc is not None:
-                self.proc.terminate()
+                if hasattr(self.proc, "terminate"):
+                    self.proc.terminate()
                 try:
-                    self.proc.wait(timeout=5)
+                    if hasattr(self.proc, "wait"):
+                        self.proc.wait(timeout=5)
+                    elif hasattr(self.proc, "join"):
+                        self.proc.join(timeout=5)
                 except Exception:
-                    self.proc.kill()
+                    if hasattr(self.proc, "kill"):
+                        self.proc.kill()
                 return True
             if self.task is not None:
                 self.task.cancel()
@@ -54,6 +62,7 @@ class JobState:
         self.handles: Dict[str, JobHandle] = {}
         self.logs: Dict[str, deque[str]] = {}
         self.meta: Dict[str, Any] = {}
+        self.activity: Dict[str, Dict[str, Any]] = {}
 
     def new_queue(self, job_id: str):
         q: Queue[str] = Queue()
@@ -97,6 +106,32 @@ class JobState:
 
     def pop_meta(self, job_id: str) -> Any:
         return self.meta.pop(job_id, None)
+
+    def init_activity(self, job_id: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        data = payload.copy() if payload else {}
+        self.activity[job_id] = data
+        return data
+
+    def get_activity(self, job_id: str) -> Dict[str, Any] | None:
+        return self.activity.get(job_id)
+
+    def update_activity(self, job_id: str, **updates: Any) -> Dict[str, Any]:
+        data = self.activity.setdefault(job_id, {})
+        data.update(updates)
+        return data
+
+    def append_activity_summary(self, job_id: str, summary: Any, limit: int = 400) -> None:
+        data = self.activity.setdefault(job_id, {})
+        history = data.setdefault("summaries", [])
+        if isinstance(history, list):
+            history.append(summary)
+            if len(history) > limit:
+                del history[0 : len(history) - limit]
+        else:
+            data["summaries"] = [summary]
+
+    def clear_activity(self, job_id: str) -> None:
+        self.activity.pop(job_id, None)
 
     def stop(self, job_id: str) -> bool:
         handle = self.handles.get(job_id)

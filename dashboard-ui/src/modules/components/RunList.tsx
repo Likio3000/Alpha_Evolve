@@ -48,13 +48,7 @@ export function RunList({
             >
               <div className="run-list__meta">
                 <span className="run-list__name">{run.label || run.name}</span>
-                <span className="run-list__sharpe">
-                  {run.sharpeBest === undefined || run.sharpeBest === null
-                    ? "n/a"
-                    : run.sharpeBest.toFixed(3)}
-                </span>
               </div>
-              <div className="run-list__path">{run.path}</div>
               <button
                 className="btn btn--tiny run-list__relabel"
                 onClick={(evt) => {
@@ -62,7 +56,7 @@ export function RunList({
                   handleRelabel(run);
                 }}
               >
-                Label
+                Rename
               </button>
             </li>
           );

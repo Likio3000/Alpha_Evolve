@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -77,14 +78,19 @@ def _read_codename(run_dir: Path) -> Optional[str]:
 def _resolve_run_dir(run_dir: str) -> Path:
     candidate = Path(run_dir)
     base_candidates = []
+    pipeline_root = PIPELINE_DIR.resolve()
     if candidate.is_absolute():
         base_candidates.append(candidate.resolve())
     else:
-        base_candidates.append((PIPELINE_DIR / candidate).resolve())
+        stripped = candidate
+        if stripped.parts and stripped.parts[0] == pipeline_root.name:
+            stripped = Path(*stripped.parts[1:]) if len(stripped.parts) > 1 else Path(".")
+        base_candidates.append((pipeline_root / stripped).resolve())
+        base_candidates.append((PIPELINE_DIR.parent / candidate).resolve())
         base_candidates.append((ROOT / candidate).resolve())
     for resolved in base_candidates:
         try:
-            resolved.relative_to(PIPELINE_DIR.resolve())
+            resolved.relative_to(pipeline_root)
         except ValueError:
             continue
         if resolved.exists():
@@ -203,11 +209,18 @@ def alpha_timeseries(request: HttpRequest):
         p = _resolve_run_dir(run_dir)
     except ValueError as exc:
         return json_error(str(exc), 400)
+    summary_path = _summary_csv(p)
+    summary_exists = summary_path is not None and summary_path.exists()
+
     try:
         ts_path = _resolve_ts_file(p, file, alpha_id)
     except FileNotFoundError:
+        if not summary_exists:
+            return json_response({"date": [], "equity": [], "ret_net": [], "pending": True}, status=202)
         return json_error("Timeseries CSV not found", 404)
     if not ts_path.exists():
+        if not summary_exists:
+            return json_response({"date": [], "equity": [], "ret_net": [], "pending": True}, status=202)
         return json_error("Timeseries CSV not found", 404)
     dates: List[str] = []
     equity: List[float] = []
@@ -241,6 +254,45 @@ def job_status(request: HttpRequest, job_id: str):
         return json_response({"exists": False, "running": False})
     running = handle.is_running()
     return json_response({"exists": True, "running": bool(running)})
+
+
+def _read_log_tail(path: Path, max_lines: int = 2000) -> str | None:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            lines = deque(fh, maxlen=max_lines if max_lines > 0 else None)
+        return "".join(lines)
+    except Exception:
+        return None
+
+
+def job_activity(request: HttpRequest, job_id: str):
+    activity = STATE.get_activity(job_id)
+    handle = STATE.get_handle(job_id)
+    running = bool(handle and handle.is_running())
+    log_text = STATE.get_log_text(job_id)
+    exists = activity is not None or handle is not None
+    payload: Dict[str, Any] = {
+        "exists": bool(exists),
+        "running": running,
+    }
+    if isinstance(activity, dict):
+        for key in ("status", "last_message", "sharpe_best", "progress", "updated_at"):
+            if key in activity:
+                payload[key] = activity[key]
+        summaries = activity.get("summaries")
+        if isinstance(summaries, list):
+            payload["summaries"] = summaries
+        log_path = activity.get("log_path")
+        if isinstance(log_path, str):
+            payload["log_path"] = log_path
+            if (not log_text or not log_text.strip()) and log_path:
+                tail = _read_log_tail(Path(log_path))
+                if tail is not None:
+                    log_text = tail
+    if not log_text:
+        log_text = ""
+    payload["log"] = log_text
+    return json_response(payload)
 
 
 @csrf_exempt
