@@ -6,9 +6,9 @@ Alpha Evolve is an experiment in evolving alpha factors for systematic trading.
 
 > ⚠️ **CLI entrypoints removed:** As of this version the project is driven entirely
 > via the dashboard UI/REST API. Legacy commands such as
-> `uv run run_pipeline.py …` or `alpha-evolve-pipeline` are no longer available
-> as executable scripts. Existing code modules remain importable for
-> programmatic use inside the server.
+> `run_pipeline.py …` or `alpha-evolve-pipeline` are no longer available
+> as executable scripts. Invoke the pipeline module directly with
+> `python -m alpha_evolve.cli.pipeline` or integrate via the dashboard.
 
 ## Requirements
 
@@ -90,8 +90,8 @@ destination (e.g. a larger external volume) with either the `--output-dir`
 flag or the `AE_PIPELINE_DIR` environment variable:
 
 ```bash
-# Legacy CLI example (commands no longer available)
-uv run run_pipeline.py 10 --config configs/sp500.toml --output-dir ~/.alpha-evolve/runs
+# Programmatic example
+uv run python -m alpha_evolve.cli.pipeline 10 --config configs/sp500.toml --output-dir ~/.alpha-evolve/runs
 
 # Match the dashboard server with the same directory
 AE_PIPELINE_DIR=~/.alpha-evolve/runs uv run scripts/run_dashboard.py
@@ -242,8 +242,8 @@ pre-commit install
 Run the full pipeline for five generations:
 
 ```bash
-# Legacy CLI example (use the dashboard UI instead)
-uv run run_pipeline.py 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
+# Programmatic example (dashboard UI recommended for day-to-day use)
+uv run python -m alpha_evolve.cli.pipeline 5 --max_lookback_data_option full_overlap --fee 0.5 --debug_prints
 ```
 
 Use `--run_baselines` to additionally train the RankLSTM and GA tree baselines.
@@ -251,16 +251,16 @@ Baseline metrics are cached next to the data and reused on subsequent runs.
 Pass `--retrain_baselines` to force a fresh training.
 
 For automation you can still import and call
-`run_pipeline.run_pipeline_programmatic(...)`; day-to-day usage should happen
+`alpha_evolve.cli.pipeline.run_pipeline_programmatic(...)`; day-to-day usage should happen
 through the dashboard UI or the `/api/pipeline/run` endpoint. Any parameter not
 explicitly supplied falls back to the defaults defined in
-[`config.py`](config.py).
+[`alpha_evolve.config`](src/alpha_evolve/config/model.py).
 
 For a longer run using the parameters described in the paper, create a TOML
 config (see `configs/sp500.toml`) and run:
 
 ```bash
-alpha-evolve-pipeline 100 --config configs/sp500.toml
+uv run python -m alpha_evolve.cli.pipeline 100 --config configs/sp500.toml
 ```
 
 CLI flags override config and environment variables (precedence: file < env < CLI).
@@ -282,7 +282,7 @@ fixed‑weight fitness automatically after the ramp period:
 
 ```bash
 # Legacy CLI example (use the dashboard UI instead)
-uv run run_pipeline.py 50 --selection_metric auto --ramp_fraction 0.33 --ramp_min_gens 5
+uv run python -m alpha_evolve.cli.pipeline 50 --selection_metric auto --ramp_fraction 0.33 --ramp_min_gens 5
 ```
 This keeps correlation/variance penalties light early (exploration) and then
 compares candidates on fixed weights (exploitation) to avoid the “best gen is
@@ -321,7 +321,7 @@ As long as your CSVs have the same schema (`time,open,high,low,close` with `time
 
 ## Default hyperparameters
 
-The values in `config.py` mirror the meta‑hyper‑parameters listed in
+The values in `alpha_evolve.config` mirror the meta‑hyper‑parameters listed in
 Section 4.1 of the reproduction guide:
 
 * population size **100**
@@ -343,7 +343,7 @@ Section 4.1 of the reproduction guide:
 Aligned OHLC data is loaded from a directory of CSV files. (I did not have access to the volume data) The
 `full_overlap` strategy is recommended as it keeps the maximum number of
 datapoints shared across all symbols.  After alignment you can obtain
-train/validation/test splits via `evolution_components.get_data_splits`.
+train/validation/test splits via `alpha_evolve.evolution.data.get_data_splits`.
 
 ### Quickstart: SP500
 
@@ -351,8 +351,8 @@ Fetch 20y of split/dividend‑adjusted OHLC from Yahoo and run a short pipeline:
 
 ```bash
 python scripts/fetch_sp500_data.py --out data_sp500 --years 20
-# Legacy CLI example (use the dashboard UI instead)
-uv run run_pipeline.py 5 --config configs/sp500.toml --selection_metric auto \
+# Programmatic example (dashboard UI recommended for day-to-day use)
+uv run python -m alpha_evolve.cli.pipeline 5 --config configs/sp500.toml --selection_metric auto \
   --disable-align-cache --debug_prints
 ```
 By default SP500 runs don’t use a custom sector mapping; you can disable sector

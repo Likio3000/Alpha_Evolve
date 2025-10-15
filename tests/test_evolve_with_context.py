@@ -1,6 +1,6 @@
-from config import EvolutionConfig
-from utils.context import make_eval_context_from_dir
-import evolve_alphas as ea
+from alpha_evolve.config import EvolutionConfig
+from alpha_evolve.utils.context import make_eval_context_from_dir
+from alpha_evolve.evolution import engine as ea
 
 
 def test_evolve_with_explicit_context(monkeypatch):
@@ -21,7 +21,7 @@ def test_evolve_with_explicit_context(monkeypatch):
         strategy=cfg.max_lookback_data_option,
         min_common_points=cfg.min_common_points,
         eval_lag=cfg.eval_lag,
-        dh_module=__import__("evolution_components.data_handling", fromlist=["*"]),
+        dh_module=__import__("alpha_evolve.evolution.data", fromlist=["*"]),
     )
 
     res = ea.evolve_with_context(cfg, ctx)

@@ -5,10 +5,18 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
+from pathlib import Path
 
-from run_pipeline import PipelineOptions
-from self_evolution import AgentConfig, SelfEvolutionAgent, load_search_space
-from utils.logging_setup import setup_logging
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+for path in (SRC, ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from alpha_evolve.cli.pipeline import PipelineOptions
+from alpha_evolve.self_play import AgentConfig, SelfEvolutionAgent, load_search_space
+from alpha_evolve.utils.logging import setup_logging
 
 
 def parse_args() -> argparse.Namespace:

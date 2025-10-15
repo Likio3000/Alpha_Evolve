@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 
-from run_pipeline import _write_summary_json
+from alpha_evolve.cli.pipeline import _write_summary_json
 
 
 def test_write_summary_json(tmp_path: Path):

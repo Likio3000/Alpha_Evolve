@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
-from alpha_framework.program_logic_variation import _finalize_predict_tail
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.programs.logic_variation import _finalize_predict_tail
 
 
 def _feature_vars_with_scalars() -> dict[str, str]:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from evolution_components import qd_archive
-from evolution_components.evaluation_logic import EvalResult
+from alpha_evolve.evolution import qd_archive
+from alpha_evolve.evolution.evaluation import EvalResult
 
 
 class DummyProgram:

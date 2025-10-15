@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from config import BacktestConfig, EvolutionConfig
-from run_pipeline import PipelineOptions
-from self_evolution.agent import AgentConfig, ParameterSpec, ParameterSpace, SelfEvolutionAgent
+from alpha_evolve.config import BacktestConfig, EvolutionConfig
+from alpha_evolve.cli.pipeline import PipelineOptions
+from alpha_evolve.self_play import AgentConfig, ParameterSpec, ParameterSpace, SelfEvolutionAgent
 
 
 def test_parameter_spec_float_range_sampling():

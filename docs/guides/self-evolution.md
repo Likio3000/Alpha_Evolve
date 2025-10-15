@@ -3,7 +3,7 @@
 `uv run scripts/self_evolve.py` orchestrates outer-loop experimentation on top of the standard pipeline. It perturbs configuration parameters, evaluates candidates, and stores a full audit trail so humans (or agents) can approve iterations.
 
 ## Workflow Overview
-1. Load the base `EvolutionConfig`/`BacktestConfig` from `--config` (or defaults in `config.py`).
+1. Load the base `EvolutionConfig`/`BacktestConfig` from `--config` (or defaults in `alpha_evolve.config`).
 2. Sample parameter updates from a search-space file (`--search-space`).
 3. Launch the pipeline with those overrides, collecting metrics from `SUMMARY.json` and backtest artefacts.
 4. Record the iteration outcome under a session directory, including pending approvals if `--auto-approve` is disabled.

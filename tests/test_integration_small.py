@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
-from config import BacktestConfig
-import backtest_evolved_alphas as bt
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.config import BacktestConfig
+from alpha_evolve.backtesting import engine as bt
+from alpha_evolve.programs import AlphaProgram, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.programs.ops import Op
 
 
 def test_end_to_end_small(tmp_path: Path):

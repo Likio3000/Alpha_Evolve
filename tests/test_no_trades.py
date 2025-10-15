@@ -1,12 +1,12 @@
-from alpha_framework import (
+from alpha_evolve.programs import (
     AlphaProgram,
     Op,
     FINAL_PREDICTION_VECTOR_NAME,
     SCALAR_FEATURE_NAMES,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
 )
-from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
-from backtesting_components.core_logic import backtest_cross_sectional_alpha
+from alpha_evolve.backtesting.data import load_and_align_data_for_backtest
+from alpha_evolve.backtesting.core import backtest_cross_sectional_alpha
 
 
 def test_constant_signal_no_trades():

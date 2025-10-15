@@ -1,6 +1,6 @@
 from dataclasses import asdict
 
-from run_pipeline import parse_args
+from alpha_evolve.cli.pipeline import parse_args
 
 
 def test_pipeline_config_layering(tmp_path):

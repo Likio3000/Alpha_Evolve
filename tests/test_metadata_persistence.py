@@ -3,9 +3,9 @@ from pathlib import Path
 
 from dataclasses import asdict
 
-from run_pipeline import _write_data_alignment_meta
-from utils.data_loading_common import DataDiagnostics
-from config import EvolutionConfig
+from alpha_evolve.cli.pipeline import _write_data_alignment_meta
+from alpha_evolve.utils.data_loading import DataDiagnostics
+from alpha_evolve.config import EvolutionConfig
 
 
 def test_write_data_alignment_meta(monkeypatch, tmp_path: Path):
@@ -38,7 +38,7 @@ def test_write_data_alignment_meta(monkeypatch, tmp_path: Path):
             return di
 
     monkeypatch.setitem(globals(), '__dummy', None)  # ensure globals available
-    monkeypatch.setattr('evolution_components.data_handling.get_data_diagnostics', lambda: di)
+    monkeypatch.setattr('alpha_evolve.evolution.data.get_data_diagnostics', lambda: di)
 
     out = _write_data_alignment_meta(run_dir, evo_cfg)
     assert out.exists()

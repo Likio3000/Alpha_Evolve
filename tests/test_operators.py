@@ -1,6 +1,6 @@
 import numpy as np
 
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 
 
 def build_simple_program():

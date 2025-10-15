@@ -1,10 +1,10 @@
 # Pipeline Configuration Reference
 
-Pipeline behaviour is controlled by two dataclasses defined in `config.py`:
+Pipeline behaviour is controlled by two dataclasses exposed via `alpha_evolve.config`:
 - `EvolutionConfig` – evolutionary search parameters.
 - `BacktestConfig` – portfolio simulation and evaluation settings.
 
-Additional heuristics live in `alpha_framework.utils.EvolutionParams` and are surfaced to the UI through `/ui-meta/evolution-params`.
+Additional heuristics live in `alpha_evolve.programs.utils.EvolutionParams` and are surfaced to the UI through `/ui-meta/evolution-params`.
 
 Use this reference as the canonical description of the knobs exposed through the dashboard, REST API, and TOML presets.
 
@@ -70,7 +70,7 @@ Use this reference as the canonical description of the knobs exposed through the
 - `out_summary` – persist `SUMMARY.json` when running programmatically.
 
 ## EvolutionParams (Generation Bias)
-Located in `alpha_framework/utils.py`:
+Located in `src/alpha_evolve/programs/utils.py`:
 - `vector_ops_bias` – probability of forcing vector outputs when sampling ops.
 - `relation_ops_weight`, `cs_ops_weight`, `default_op_weight` – relative weights for relation and cross-sectional ops.
 - `max_setup_ops`, `max_predict_ops`, `max_update_ops` – soft limits mirrored by config defaults.
@@ -85,6 +85,6 @@ These heuristics bias the operator sampler without changing the core search spac
 - Any extra keys submitted to `/api/pipeline/run` go through `build_pipeline_args` and become `--flag value` pairs when compatible with the CLI parser. Non-scalar entries are ignored.
 
 When you introduce new configuration options:
-1. Add them to the relevant dataclass in `config.py`.
+1. Add them to the relevant dataclass in `src/alpha_evolve/config/model.py` (re-exported via `alpha_evolve.config`).
 2. Update this reference and the metadata emitters in `scripts/dashboard_server/ui_meta.py`.
 3. Extend tests (e.g. `tests/test_dashboard_routes.py`) to cover default serialization.

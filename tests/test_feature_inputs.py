@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 
-from utils.features import compute_basic_features
-from evolution_components import data_handling
+from alpha_evolve.utils.features import compute_basic_features
+from alpha_evolve.evolution import data as data_handling
 
 
 def _make_price_series(n: int = 120, seed: int = 0) -> pd.DataFrame:

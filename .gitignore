@@ -15,6 +15,7 @@ wheels/
 /pipeline_runs_cs/
 /evolved_bt_cs_results/
 /backtest_csvs/
+/artifacts/
 *.pkl
 
 # ruff cache

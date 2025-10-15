@@ -1,7 +1,7 @@
 import pytest
 
-from evolution_components import moea
-from evolution_components.evaluation_logic import EvalResult
+from alpha_evolve.evolution import moea
+from alpha_evolve.evolution.evaluation import EvalResult
 
 
 def make_result(*, fitness: float, mean_ic: float, sharpe: float, turnover: float, parsimony: float,

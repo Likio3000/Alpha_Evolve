@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
-from alpha_framework.program_logic_variation import (
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.programs.logic_variation import (
     add_op_mutation,
     remove_op_mutation,
     change_op_mutation,

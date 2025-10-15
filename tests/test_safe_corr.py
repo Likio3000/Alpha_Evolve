@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from evolution_components.hall_of_fame_manager import _safe_corr
+from alpha_evolve.evolution.hall_of_fame import _safe_corr
 
 
 def test_safe_corr_normal():

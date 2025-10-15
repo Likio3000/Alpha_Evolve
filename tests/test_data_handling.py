@@ -1,16 +1,16 @@
 import pandas as pd
 import pytest
 
-from evolution_components.data_handling import (
+from alpha_evolve.evolution.data import (
     _load_and_align_data_internal,
     get_data_splits,
     initialize_data,
     get_sector_groups,
 )
-from config import DEFAULT_SECTOR_MAPPING
-from backtesting_components.data_handling_bt import load_and_align_data_for_backtest
-from utils.data_loading_common import DataLoadError
-from utils.features import compute_basic_features
+from alpha_evolve.config import DEFAULT_SECTOR_MAPPING
+from alpha_evolve.backtesting.data import load_and_align_data_for_backtest
+from alpha_evolve.utils.data_loading import DataLoadError
+from alpha_evolve.utils.features import compute_basic_features
 
 DATA_DIR = "tests/data/good"
 MISSING_DIR = "tests/data/missing_cols"

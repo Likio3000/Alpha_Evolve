@@ -25,7 +25,7 @@ ANNUAL="${ANNUAL:-252}"
 echo "[run_sp500_pipeline] gens=${GENS} data_dir=${DATA_DIR} lookback=${LOOKBACK} annual=${ANNUAL}" >&2
 
 if command -v uv >/dev/null 2>&1; then
-  uv run python run_pipeline.py "${GENS}" \
+  uv run python -m alpha_evolve.cli.pipeline "${GENS}" \
     --data_dir "${DATA_DIR}" \
     --max_lookback_data_option "${LOOKBACK}" \
     --annualization_factor "${ANNUAL}" \
@@ -36,7 +36,7 @@ if command -v uv >/dev/null 2>&1; then
     --ensemble_mode --ensemble_size 5 --ensemble_max_corr 0.3 \
     "$@"
 else
-  python run_pipeline.py "${GENS}" \
+  python3 -m alpha_evolve.cli.pipeline "${GENS}" \
     --data_dir "${DATA_DIR}" \
     --max_lookback_data_option "${LOOKBACK}" \
     --annualization_factor "${ANNUAL}" \

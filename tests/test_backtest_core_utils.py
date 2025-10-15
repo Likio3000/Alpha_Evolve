@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from backtesting_components.core_logic import _scale_signal_cross_sectionally, _max_drawdown
+from alpha_evolve.backtesting.core import _scale_signal_cross_sectionally, _max_drawdown
 
 
 def test_scale_signal_zscore():

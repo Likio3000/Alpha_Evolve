@@ -1,10 +1,10 @@
 import numpy as np
 
-from alpha_framework import (
+from alpha_evolve.programs import (
     AlphaProgram,
     FINAL_PREDICTION_VECTOR_NAME,
 )
-from alpha_framework.program_logic_generation import (
+from alpha_evolve.programs.logic_generation import (
     MAX_SETUP_OPS,
     MAX_PREDICT_OPS,
     MAX_UPDATE_OPS,

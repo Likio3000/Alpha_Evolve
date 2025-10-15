@@ -1,13 +1,13 @@
 import numpy as np
 
-from alpha_framework import (
+from alpha_evolve.programs import (
     AlphaProgram,
     Op,
     FINAL_PREDICTION_VECTOR_NAME,
     CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
     SCALAR_FEATURE_NAMES,
 )
-from alpha_framework.program_logic_variation import (
+from alpha_evolve.programs.logic_variation import (
     mutate_program_logic,
     crossover_program_logic,
 )

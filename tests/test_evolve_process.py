@@ -1,8 +1,8 @@
-from config import EvolutionConfig
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
-import evolve_alphas
-from evolution_components import get_final_hof_programs, clear_hof
-from evolution_components import evaluation_logic
+from alpha_evolve.config import EvolutionConfig
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.evolution import engine as evolve_alphas
+from alpha_evolve.evolution.hall_of_fame import get_final_hof_programs, clear_hof
+from alpha_evolve.evolution import evaluation as evaluation_logic
 
 
 def _fixed_program():

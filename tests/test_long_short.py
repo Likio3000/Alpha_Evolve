@@ -3,7 +3,7 @@ import pandas as pd
 from collections import OrderedDict
 import pytest
 
-from backtesting_components.core_logic import backtest_cross_sectional_alpha, _scale_signal_cross_sectionally
+from alpha_evolve.backtesting.core import backtest_cross_sectional_alpha, _scale_signal_cross_sectionally
 
 class DummyProg:
     def __init__(self, signals):

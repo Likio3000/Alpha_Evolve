@@ -7,10 +7,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alpha_framework.alpha_framework_types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
-from evolution_components import evaluation_logic as el
-from evolution_components import hall_of_fame_manager as hof
-from evolution_components import data_handling as dh
+from alpha_evolve.programs.types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+from alpha_evolve.evolution import evaluation as el
+from alpha_evolve.evolution import hall_of_fame as hof
+from alpha_evolve.evolution import data as dh
 
 
 class _DummyProgram:

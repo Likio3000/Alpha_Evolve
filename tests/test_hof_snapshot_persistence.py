@@ -4,7 +4,7 @@ import json
 
 def test_write_hof_snapshots(monkeypatch, tmp_path: Path):
     """Confirm hall-of-fame diagnostics are persisted per generation with non-empty entries."""
-    from run_pipeline import _write_hof_snapshots
+    from alpha_evolve.cli.pipeline import _write_hof_snapshots
 
     # Fake diagnostics with hof snapshots for two generations
     fake_diags = [
@@ -13,7 +13,7 @@ def test_write_hof_snapshots(monkeypatch, tmp_path: Path):
         {"generation": 3, "hof": []},  # empty should be skipped
     ]
 
-    monkeypatch.setattr("utils.diagnostics.get_all", lambda: fake_diags)
+    monkeypatch.setattr("alpha_evolve.utils.diagnostics.get_all", lambda: fake_diags)
     paths = _write_hof_snapshots(tmp_path)
     assert len(paths) == 2
     for p in paths:

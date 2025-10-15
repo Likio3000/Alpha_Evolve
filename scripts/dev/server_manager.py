@@ -19,10 +19,10 @@ LOG_DIR = ROOT / "logs" / "server"
 PID_FILE = LOG_DIR / "server.pid"
 DEFAULT_LOG_FILE = LOG_DIR / "latest.log"
 DEFAULT_WATCH_DIRS = [
-    ROOT / "scripts" / "dashboard_server",
+    ROOT / "src" / "alpha_evolve" / "dashboard",
     ROOT / "scripts" / "run_dashboard.py",
     ROOT / "dashboard-ui" / "dist",
-    ROOT / "evolution_components",
+    ROOT / "src" / "alpha_evolve" / "evolution",
     ROOT / "configs",
 ]
 

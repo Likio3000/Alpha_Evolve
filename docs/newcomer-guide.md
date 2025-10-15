@@ -8,18 +8,18 @@ This guide gives new contributors (including AI coding agents) the context they 
 - **Core assets:** The evolution pipeline, reproducible run artefacts, and the dashboard that orchestrates both.
 
 ## Architecture Snapshot
-- **Evolution engine (`run_pipeline.py` + `evolution_components/`):** Drives program generation, evaluation, and selection. Configured by `EvolutionConfig`/`BacktestConfig` in `config.py` and the TOML presets in `configs/`.
-- **Backtesting stack (`backtesting_components/`, `utils/`):** Aligns OHLC data, applies transaction-cost and stress adjustments, and writes summaries under each run directory.
-- **Dashboard server (`scripts/dashboard_server/`):** Django ASGI app launched via `uv run scripts/run_dashboard.py`. It exposes REST endpoints under `/api/*`, keeps run/job state, and serves the built UI bundle from `dashboard-ui/dist/`.
+- **Evolution engine (`python -m alpha_evolve.cli.pipeline` + `src/alpha_evolve/evolution/`):** Drives program generation, evaluation, and selection. Configured by `EvolutionConfig`/`BacktestConfig` in `alpha_evolve.config` and the TOML presets in `configs/`.
+- **Backtesting stack (`src/alpha_evolve/backtesting/`, `src/alpha_evolve/utils/`):** Aligns OHLC data, applies transaction-cost and stress adjustments, and writes summaries under each run directory.
+- **Dashboard server (`src/alpha_evolve/dashboard/api/`):** Django ASGI app launched via `uv run scripts/run_dashboard.py`. It exposes REST endpoints under `/api/*`, keeps run/job state, and serves the built UI bundle from `dashboard-ui/dist/`.
 - **Artefact layout (`pipeline_runs_cs/`):** Each run creates `run_*` folders with configs, diagnostics, and backtest CSVs; the dashboard stores relative pointers and labels here.
 - **Supporting scripts (`scripts/`):** Helpers for fetching data, pruning runs, plotting diagnostics, executing smoke tests, and maintaining dependencies.
 
 ## Key Directories
-- `alpha_framework/` – shared AST and operator utilities used during evolution.
-- `evolution_components/` – selection, fitness, mutation, and orchestration code.
-- `backtesting_components/` – portfolio simulation, metrics, and stress testing.
+- `src/alpha_evolve/programs/` – shared AST and operator utilities used during evolution.
+- `src/alpha_evolve/evolution/` – selection, fitness, mutation, and orchestration code.
+- `src/alpha_evolve/backtesting/` – portfolio simulation, metrics, and stress testing.
 - `scripts/` – operational scripts (dashboard launcher, data fetch, cleanup, smoke runs, tests).
-- `configs/` – curated TOML configs (SP500 defaults plus workspace overrides) that mirror `config.py` dataclasses.
+- `configs/` – curated TOML configs (SP500 defaults plus workspace overrides) that mirror the `alpha_evolve.config` dataclasses.
 - `dashboard-ui/` – pre-built static SPA; rebuild instructions live in `docs/guides/dashboard-ui.md`.
 - `tests/` – pytest coverage for loaders, configs, and dashboard routes.
 

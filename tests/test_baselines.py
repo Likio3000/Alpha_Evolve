@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
-from baselines.ga_tree import train_ga_tree, backtest_ga_tree
-from baselines.rank_lstm import train_rank_lstm, backtest_rank_lstm
-from baselines.rsr import train_rsr
+from alpha_evolve.baselines.ga_tree import train_ga_tree, backtest_ga_tree
+from alpha_evolve.baselines.rank_lstm import train_rank_lstm, backtest_rank_lstm
+from alpha_evolve.baselines.rsr import train_rsr
 
 DATA_DIR = "tests/data/good"
 

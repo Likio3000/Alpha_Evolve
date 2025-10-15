@@ -3,18 +3,18 @@ import pandas as pd
 from collections import OrderedDict
 from types import SimpleNamespace
 import pytest
-from evolution_components import data_handling
-from utils.features import compute_basic_features
+from alpha_evolve.evolution import data as data_handling
+from alpha_evolve.utils.features import compute_basic_features
 
-from evolution_components.evaluation_logic import (
+from alpha_evolve.evolution.evaluation import (
     _safe_corr_eval,
     evaluate_program,
     initialize_evaluation_cache,
     configure_evaluation,
     _scale_signal_for_ic,
 )
-from evolution_components import hall_of_fame_manager as hof
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.evolution import hall_of_fame as hof
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 
 
 def build_simple_program(suffix: str = ""):

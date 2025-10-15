@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from baselines.rank_lstm import _prepare_sequences, _train_linear, _predict_linear
-from baselines.rsr import _prepare_graph_features
+from alpha_evolve.baselines.rank_lstm import _prepare_sequences, _train_linear, _predict_linear
+from alpha_evolve.baselines.rsr import _prepare_graph_features
 
 
 # -------------------------------------------------------------------

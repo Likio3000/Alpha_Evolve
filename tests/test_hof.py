@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
-from evolution_components import hall_of_fame_manager as hof
-from evolution_components.evaluation_logic import EvalResult
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.evolution import hall_of_fame as hof
+from alpha_evolve.evolution.evaluation import EvalResult
 
 
 def make_prog(unique: str) -> AlphaProgram:

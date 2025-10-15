@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from alpha_framework import Op
+from alpha_evolve.programs import Op
 
 
 def test_vec_div_scalar_small_denominator():

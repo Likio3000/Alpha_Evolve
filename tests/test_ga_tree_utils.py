@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from baselines.ga_tree import _Node, _tree_predict, _ic, _load_all_csv
+from alpha_evolve.baselines.ga_tree import _Node, _tree_predict, _ic, _load_all_csv
 
 
 # -------------------------------------------------------------------

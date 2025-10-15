@@ -14,8 +14,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from scripts.dashboard_server.helpers import build_pipeline_args, ROOT
-from scripts.dashboard_server.jobs import STATE
+from alpha_evolve.dashboard.api.helpers import build_pipeline_args, ROOT
+from alpha_evolve.dashboard.api.jobs import STATE
 
 
 pytestmark = [pytest.mark.asyncio]
@@ -66,16 +66,16 @@ async def dashboard_env(tmp_path, monkeypatch):
                 "dry_run": False,
             },
         },
-        "pipeline_args": ["uv", "run", "run_pipeline.py", "7"],
+        "pipeline_args": ["uv", "run", "python", "-m", "alpha_evolve.cli.pipeline", "7"],
     }), encoding="utf-8")
     (meta_dir / "evolution_config.json").write_text(json.dumps({"generations": 7}), encoding="utf-8")
     (meta_dir / "backtest_config.json").write_text(json.dumps({"bt_top": 12}), encoding="utf-8")
 
     monkeypatch.setenv("AE_PIPELINE_DIR", str(pipeline_dir))
 
-    helpers_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.helpers"))
-    runs_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.routes.runs"))
-    app_mod = importlib.reload(importlib.import_module("scripts.dashboard_server.app"))
+    helpers_mod = importlib.reload(importlib.import_module("alpha_evolve.dashboard.api.helpers"))
+    runs_mod = importlib.reload(importlib.import_module("alpha_evolve.dashboard.api.routes.runs"))
+    app_mod = importlib.reload(importlib.import_module("alpha_evolve.dashboard.api.app"))
 
 
     # httpx 0.28 automatically issues lifespan events; default construction works.
@@ -165,7 +165,7 @@ async def test_alpha_timeseries_endpoint(dashboard_env):
 
 async def test_alpha_timeseries_pending_when_summary_missing(dashboard_env, monkeypatch):
     """Pending runs should return a 202 with empty vectors instead of surfacing errors."""
-    monkeypatch.setattr("scripts.dashboard_server.routes.runs._summary_csv", lambda *_a, **_k: None)
+    monkeypatch.setattr("alpha_evolve.dashboard.api.routes.runs._summary_csv", lambda *_a, **_k: None)
     resp = await dashboard_env.client.get("/api/alpha-timeseries", params={"run_dir": "run_demo", "alpha_id": "Alpha_01"})
     assert resp.status_code == 202
     payload = resp.json()
@@ -228,11 +228,11 @@ async def test_pipeline_run_does_not_block_healthcheck(dashboard_env, monkeypatc
             return DummyProcess(lambda: fake_worker(*args), (), daemon=daemon)
 
     monkeypatch.setattr(
-        "scripts.dashboard_server.routes.run_pipeline.mp.get_context",
+        "alpha_evolve.dashboard.api.routes.run_pipeline.mp.get_context",
         lambda *_a, **_k: DummyContext(),
     )
     monkeypatch.setattr(
-        "scripts.dashboard_server.routes.run_pipeline._pipeline_worker",
+        "alpha_evolve.dashboard.api.routes.run_pipeline._pipeline_worker",
         fake_worker,
     )
 
@@ -276,7 +276,7 @@ async def test_pipeline_stop_and_activity_endpoint(dashboard_env):
 
 async def test_pipeline_activity_snapshot_tracks_events(dashboard_env, tmp_path):
     """Ensure activity snapshots capture logs, progress, scores, and status transitions."""
-    from scripts.dashboard_server.routes.run_pipeline import _forward_events
+    from alpha_evolve.dashboard.api.routes.run_pipeline import _forward_events
 
     job_id = "job-test-activity"
     client_queue = STATE.new_queue(job_id)
@@ -375,7 +375,7 @@ async def test_job_activity_reads_log_file_tail(dashboard_env, tmp_path):
 
 async def test_progress_summary_events_persist(tmp_path):
     """Ensure PROGRESS gen_summary events are broadcast and persisted to gen_summary.jsonl."""
-    from scripts.dashboard_server.routes.run_pipeline import _forward_events
+    from alpha_evolve.dashboard.api.routes.run_pipeline import _forward_events
 
     job_id = "job-progress-summary"
     client_queue = STATE.new_queue(job_id)

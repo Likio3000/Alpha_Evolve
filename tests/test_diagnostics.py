@@ -1,4 +1,4 @@
-from utils import diagnostics as diag
+from alpha_evolve.utils import diagnostics as diag
 
 
 def test_diagnostics_event_hub_records_and_enriches():

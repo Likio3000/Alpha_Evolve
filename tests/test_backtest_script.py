@@ -2,8 +2,10 @@ import pickle
 
 import pytest
 
-from backtest_evolved_alphas import parse_args, load_programs_from_pickle
-from utils.errors import BacktestError
+from alpha_evolve.backtesting import engine as bt_engine
+parse_args = bt_engine.parse_args
+load_programs_from_pickle = bt_engine.load_programs_from_pickle
+from alpha_evolve.utils.errors import BacktestError
 
 
 # -------------------------------------------------------------------

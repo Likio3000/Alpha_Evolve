@@ -22,7 +22,7 @@ else
 fi
 
 if [ "$#" -eq 0 ]; then
-  set -- scripts/dashboard_server tests/test_dashboard_routes.py
+  set -- src/alpha_evolve/dashboard/api tests/test_dashboard_routes.py
 fi
 
 "$PYTHON_BIN" -m mypy "$@"

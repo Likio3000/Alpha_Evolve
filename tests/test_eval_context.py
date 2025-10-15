@@ -1,7 +1,7 @@
-from evolution_components import data_handling as dh
-from evolution_components.evaluation_logic import evaluate_program
-from utils.context import make_eval_context_from_globals
-from alpha_framework import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
+from alpha_evolve.evolution import data as dh
+from alpha_evolve.evolution.evaluation import evaluate_program
+from alpha_evolve.utils.context import make_eval_context_from_globals
+from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
 
 
 def _simple_prog() -> AlphaProgram:
@@ -23,7 +23,7 @@ def test_eval_context_matches_globals():
     prog = _simple_prog()
 
     # Evaluate via globals
-    from evolution_components import hall_of_fame_manager as hof
+    from alpha_evolve.evolution import hall_of_fame as hof
     metrics_global = evaluate_program(prog, dh, hof, {})
 
     # Evaluate via explicit context

@@ -1,5 +1,5 @@
 import logging
-from run_pipeline import parse_args
+from alpha_evolve.cli.pipeline import parse_args
 
 
 def test_parse_args_defaults():
@@ -29,7 +29,7 @@ def test_parse_args_run_baselines():
 
 def test_train_baselines_logs(tmp_path, caplog):
     """Run baseline training helper and assert both baseline names are logged."""
-    from run_pipeline import _train_baselines
+    from alpha_evolve.cli.pipeline import _train_baselines
 
     caplog.set_level(logging.INFO)
     _train_baselines("tests/data/good", tmp_path)
