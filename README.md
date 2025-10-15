@@ -55,8 +55,8 @@ The dashboard front-end lives in `dashboard-ui/` and is now written in React + T
 ### Automation Helpers
 
 - `python3 scripts/dev/server_manager.py start` manages the Django/Uvicorn backend with `stop`, `restart`, `status`, and `tail` subcommands. Use `--watch` for auto-restart on backend changes.
-- `npm run capture:screens` captures Pipeline Overview and Settings screenshots via Playwright, saving them under `artifacts/screenshots/<timestamp>/` and updating `artifacts/screenshots/latest.json`.
-- `python3 scripts/dev/run_iteration.py` ties it together: start/stop the server, optionally rebuild the UI, then trigger screenshot capture and print the manifest location.
+- `npm run capture:screens` captures Pipeline Overview and Settings screenshots via Playwright, saving them under `artifacts/latest/screenshots/` (with the prior run rotated to `artifacts/previous/`).
+- `python3 scripts/dev/run_iteration.py` ties it together: rotate artefact slots, start/stop the server, optionally rebuild the UI, then trigger screenshot capture and print the manifest location.
 - See `docs/dev-automation-roadmap.md` for the full automation plan and `docs/iteration-log.md` for tracking artefacts per iteration.
 
 ## Data Setup

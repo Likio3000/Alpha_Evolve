@@ -11,13 +11,18 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 
 const rawBaseUrl = process.env.AE_DASHBOARD_URL ?? "http://127.0.0.1:8000/ui/";
 const baseUrl = rawBaseUrl.endsWith("/") ? rawBaseUrl : `${rawBaseUrl}/`;
-const artifactsBase = process.env.AE_SCREENSHOT_DIR
+const outputDir = process.env.AE_SCREENSHOT_DIR
   ? path.resolve(process.env.AE_SCREENSHOT_DIR)
-  : path.join(repoRoot, "artifacts", "screenshots");
-
-const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-const outputDir = path.join(artifactsBase, timestamp);
+  : path.join(repoRoot, "artifacts", "latest", "screenshots");
 fs.mkdirSync(outputDir, { recursive: true });
+const overviewPath = path.join(outputDir, "pipeline-overview.png");
+const settingsPath = path.join(outputDir, "settings-presets.png");
+const manifestPath = path.join(outputDir, "manifest.json");
+for (const filePath of [overviewPath, settingsPath, manifestPath]) {
+  if (fs.existsSync(filePath)) {
+    fs.rmSync(filePath, { force: true });
+  }
+}
 
 const log = (message) => {
   console.log(`[screenshots] ${message}`);
@@ -45,14 +50,12 @@ async function captureScreenshots() {
 
     await page.waitForSelector('[data-test="overview-layout"]', { state: "visible", timeout: 20000 });
     await page.waitForTimeout(600);
-    const overviewPath = path.join(outputDir, "pipeline-overview.png");
     await page.screenshot({ path: overviewPath, fullPage: true });
     log(`Saved overview screenshot to ${overviewPath}`);
 
     await page.click('[data-test="nav-settings"]');
     await page.waitForSelector('[data-test="settings-grid"] .settings-table', { state: "visible", timeout: 20000 });
     await page.waitForTimeout(600);
-    const settingsPath = path.join(outputDir, "settings-presets.png");
     await page.screenshot({ path: settingsPath, fullPage: true });
     log(`Saved settings screenshot to ${settingsPath}`);
 
@@ -65,13 +68,8 @@ async function captureScreenshots() {
         settings: path.relative(repoRoot, settingsPath),
       },
     };
-    const manifestPath = path.join(outputDir, "manifest.json");
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
     log(`Wrote manifest ${manifestPath}`);
-
-    const latestManifestPath = path.join(artifactsBase, "latest.json");
-    fs.writeFileSync(latestManifestPath, JSON.stringify(manifest, null, 2), "utf8");
-    log(`Updated ${latestManifestPath}`);
   } finally {
     await browser.close();
   }

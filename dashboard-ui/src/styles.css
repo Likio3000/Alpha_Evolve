@@ -114,15 +114,28 @@ body {
 }
 
 .selected-run-meta {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 16px 20px;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 88px;
+  padding: 20px 28px;
+  border-radius: 14px;
+  border: 1px solid rgba(90, 132, 194, 0.35);
+  background: linear-gradient(145deg, rgba(18, 31, 53, 0.92), rgba(8, 13, 23, 0.9));
+  box-shadow:
+    0 18px 36px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(216, 236, 255, 0.08);
 }
 
 .selected-run-meta h2 {
-  margin: 0 0 4px;
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #f2f6ff;
+  text-shadow: 0 8px 12px rgba(0, 0, 0, 0.45);
 }
 
 .selected-alpha-chip {

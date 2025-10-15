@@ -4,10 +4,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -16,11 +16,10 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_ROOT = ROOT / "artifacts"
-LOG_ROOT = ARTIFACT_ROOT / "logs"
-SCREENSHOT_ROOT = ARTIFACT_ROOT / "screenshots"
 SERVER_MANAGER = ROOT / "scripts" / "dev" / "server_manager.py"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+KNOWN_ARTIFACT_DIRS = {"latest", "previous"}
 
 
 def run_command(
@@ -62,6 +61,41 @@ def wait_for_dashboard(url: str, timeout: float) -> None:
     raise RuntimeError(f"Dashboard did not become ready within {timeout:.1f}s. Last error: {last_error}")
 
 
+def rotate_artifacts(manage_logs: bool) -> tuple[Path, Path, Path]:
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    for child in ARTIFACT_ROOT.iterdir():
+        if child.name not in KNOWN_ARTIFACT_DIRS:
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+    latest_dir = ARTIFACT_ROOT / "latest"
+    previous_dir = ARTIFACT_ROOT / "previous"
+
+    if previous_dir.exists():
+        shutil.rmtree(previous_dir)
+    if latest_dir.exists():
+        latest_dir.rename(previous_dir)
+    if not previous_dir.exists():
+        previous_dir.mkdir(parents=True, exist_ok=True)
+
+    latest_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = latest_dir / "logs"
+    screenshots_dir = latest_dir / "screenshots"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+    if not manage_logs:
+        note = logs_dir / "README.txt"
+        note.write_text(
+            "Server log not captured; iteration ran with --reuse-server.\n",
+            encoding="utf-8",
+        )
+
+    return latest_dir, logs_dir, screenshots_dir
+
+
 def start_server(host: str, port: int, log_file: Path, extra_env: Dict[str, str]) -> None:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     command = [
@@ -93,11 +127,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Full dashboard URL to ping (default: http://<host>:<port>/ui/)",
     )
-    parser.add_argument(
-        "--log-dir",
-        default=str(LOG_ROOT),
-        help="Directory for server logs (default: artifacts/logs)",
-    )
     parser.add_argument("--skip-build", action="store_true", help="Skip `npm run build` before capturing screenshots.")
     parser.add_argument("--reuse-server", action="store_true", help="Assume server is already running; do not start/stop.")
     parser.add_argument("--timeout", type=float, default=60.0, help="Seconds to wait for dashboard readiness.")
@@ -107,10 +136,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    ARTIFACT_ROOT.mkdir(exist_ok=True)
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    log_dir = Path(args.log_dir)
-    log_file = log_dir / f"dashboard-{timestamp}.log"
+    manage_logs = not args.reuse_server
+    latest_dir, logs_dir, screenshots_dir = rotate_artifacts(manage_logs=manage_logs)
+    log_file = logs_dir / "dashboard.log"
     if args.dashboard_url:
         dashboard_url = args.dashboard_url
     else:
@@ -138,15 +166,16 @@ def main() -> None:
 
         env = os.environ.copy()
         env["AE_DASHBOARD_URL"] = dashboard_url
+        env["AE_SCREENSHOT_DIR"] = str(screenshots_dir)
         run_command(["npm", "run", "capture:screens"], cwd=ROOT / "dashboard-ui", env=env)
 
-        latest_manifest = SCREENSHOT_ROOT / "latest.json"
-        if latest_manifest.exists():
-            data = json.loads(latest_manifest.read_text(encoding="utf-8"))
+        manifest_path = screenshots_dir / "manifest.json"
+        if manifest_path.exists():
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
             print("[iterate] Latest screenshot manifest:")
             print(json.dumps(data, indent=2))
         else:
-            print("[iterate] Warning: latest screenshot manifest not found.")
+            print(f"[iterate] Warning: manifest not found at {manifest_path}.")
     finally:
         if server_started and not args.reuse_server:
             try:

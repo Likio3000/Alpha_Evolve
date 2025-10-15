@@ -1,9 +1,0 @@
-{
-  "timestamp": "2025-10-15T12:03:43.608Z",
-  "baseUrl": "http://127.0.0.1:8000/ui/",
-  "outputDir": "artifacts/screenshots/2025-10-15T12-03-38-743Z",
-  "files": {
-    "overview": "artifacts/screenshots/2025-10-15T12-03-38-743Z/pipeline-overview.png",
-    "settings": "artifacts/screenshots/2025-10-15T12-03-38-743Z/settings-presets.png"
-  }
-}

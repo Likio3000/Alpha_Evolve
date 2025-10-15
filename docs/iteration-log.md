@@ -1,17 +1,22 @@
 # Iteration Log
 
-This log tracks artefacts generated during iterative development passes. Each row
-should reference the screenshots captured by `npm run capture:screens` and any
-associated backend logs.
+This log tracks the two retained artefact slots: `artifacts/latest` (most recent
+run) and `artifacts/previous` (immediately prior run). Each slot contains
+`logs/` and `screenshots/` subdirectories populated by
+`python3 scripts/dev/run_iteration.py` or the equivalent manual steps.
 
 ## Refresh Instructions
-- Start the backend via `python3 scripts/dev/server_manager.py start --log-file artifacts/logs/<timestamp>/dashboard.log`.
-- Build the UI bundle if required (`npm run build`).
-- Capture screenshots with `npm run capture:screens`. The script emits PNGs under `artifacts/screenshots/<timestamp>/`
-  and updates `artifacts/screenshots/latest.json`.
-- Copy the resulting artefact paths into the table below and note any relevant context.
+- Run `python3 scripts/dev/run_iteration.py` for the full start → build → capture → stop loop.
+- For manual operation:
+  - Start the backend with `python3 scripts/dev/server_manager.py start --log-file artifacts/latest/logs/dashboard.log`.
+  - Rebuild the UI if necessary (`npm run build`).
+  - Capture screenshots with `npm run capture:screens` (they land in `artifacts/latest/screenshots/`).
+- The helper script automatically rotates `latest` to `previous` and prunes any older runs.
 
-## Artefacts
-| Timestamp | Overview Screenshot | Settings Screenshot | Manifest | Notes |
-|-----------|---------------------|---------------------|----------|-------|
-| 2025-10-15T09:35:19Z | `artifacts/screenshots/2025-10-15T09-35-19-671Z/pipeline-overview.png` | `artifacts/screenshots/2025-10-15T09-35-19-671Z/settings-presets.png` | `artifacts/screenshots/2025-10-15T09-35-19-671Z/manifest.json` | Generated via `python3 scripts/dev/run_iteration.py --reuse-server --skip-build` |
+## Artefact Slots
+| Slot | Overview Screenshot | Settings Screenshot | Manifest | Notes |
+|------|---------------------|---------------------|----------|-------|
+| latest | `artifacts/latest/screenshots/pipeline-overview.png` | `artifacts/latest/screenshots/settings-presets.png` | `artifacts/latest/screenshots/manifest.json` | Populated by the most recent iteration run. |
+| previous | `artifacts/previous/screenshots/pipeline-overview.png` | `artifacts/previous/screenshots/settings-presets.png` | `artifacts/previous/screenshots/manifest.json` | Automatically rotated from the run before the most recent. |
+
+Logs live alongside each slot at `artifacts/<slot>/logs/dashboard.log`.
