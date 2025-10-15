@@ -596,7 +596,7 @@ export function App(): React.ReactElement {
   }, []);
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-test="app-shell">
       <header className="app-shell__header">
         <h1>Alpha Evolve Dashboard</h1>
         <p className="app-shell__subtitle">by LIKIO</p>
@@ -611,13 +611,13 @@ export function App(): React.ReactElement {
         ) : null}
       </header>
 
-      <main className="app-shell__main">
+      <main className="app-shell__main" data-test="app-main">
         {activeTab === "overview" ? (
           <>
-            <div className="runner-shell">
+            <div className="runner-shell" data-test="overview-runner">
               <RunnerCanvas />
             </div>
-            <div className="app-layout">
+            <div className="app-layout" data-test="overview-layout">
               <div className="app-sidebar">
                 <PipelineControls onSubmit={handleStartPipeline} busy={Boolean(job && job.status === "running")} />
                 <RunList
@@ -662,7 +662,7 @@ export function App(): React.ReactElement {
             </div>
           </>
         ) : (
-          <div className="app-layout app-layout--full">
+          <div className="app-layout app-layout--full" data-test="settings-layout">
             <SettingsPanel onNotify={(msg) => setBanner(msg)} />
           </div>
         )}

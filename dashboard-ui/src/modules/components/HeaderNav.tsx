@@ -14,12 +14,13 @@ const TABS: Array<{ id: TabId; label: string }> = [
 
 export function HeaderNav({ active, onChange }: HeaderNavProps): React.ReactElement {
   return (
-    <div className="header-nav">
+    <div className="header-nav" data-test="header-nav">
       {TABS.map((tab) => (
         <button
           key={tab.id}
           type="button"
           className={tab.id === active ? "header-nav__btn header-nav__btn--active" : "header-nav__btn"}
+          data-test={`nav-${tab.id}`}
           onClick={() => onChange(tab.id)}
         >
           {tab.label}

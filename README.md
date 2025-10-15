@@ -52,6 +52,13 @@ The dashboard front-end lives in `dashboard-ui/` and is now written in React + T
 - When hacking on the UI in an offline environment, remember to rebuild the bundle once dependencies are available.
 - The dashboard header now exposes an Overview tab (with runs, live charts, animation) and a Settings tab that surfaces config defaults/presets and lets you save curated TOML snapshots.
 
+### Automation Helpers
+
+- `python3 scripts/dev/server_manager.py start` manages the Django/Uvicorn backend with `stop`, `restart`, `status`, and `tail` subcommands. Use `--watch` for auto-restart on backend changes.
+- `npm run capture:screens` captures Pipeline Overview and Settings screenshots via Playwright, saving them under `artifacts/screenshots/<timestamp>/` and updating `artifacts/screenshots/latest.json`.
+- `python3 scripts/dev/run_iteration.py` ties it together: start/stop the server, optionally rebuild the UI, then trigger screenshot capture and print the manifest location.
+- See `docs/dev-automation-roadmap.md` for the full automation plan and `docs/iteration-log.md` for tracking artefacts per iteration.
+
 ## Data Setup
 
 Place your historical OHLC data in the `data` directory at the project root.

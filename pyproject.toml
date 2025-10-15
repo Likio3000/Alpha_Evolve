@@ -21,6 +21,7 @@ dependencies = [
     "ruff>=0.11.10",
     "tqdm>=4.67.1",
     "uvicorn>=0.35.0",
+    "watchfiles>=0.24.0",
     "yfinance>=0.2.65",
 ]
 

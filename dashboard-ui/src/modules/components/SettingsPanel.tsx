@@ -387,7 +387,7 @@ export function SettingsPanel({ onNotify }: SettingsPanelProps): React.ReactElem
   const editingDisabled = loading || presetLoading || saving;
 
   return (
-    <section className="panel settings-panel">
+    <section className="panel settings-panel" data-test="settings-panel">
       <div className="panel-header">
         <h2>Settings & Presets</h2>
         <div className="panel-actions">
@@ -406,7 +406,7 @@ export function SettingsPanel({ onNotify }: SettingsPanelProps): React.ReactElem
       {error ? <p className="muted error-text">{error}</p> : null}
       {loading ? <p className="muted">Loading configuration metadata…</p> : null}
 
-      <div className="settings-grid">
+      <div className="settings-grid" data-test="settings-grid">
         <aside className="settings-presets">
           <h3>Dataset Presets</h3>
           <div className="settings-presets__list">

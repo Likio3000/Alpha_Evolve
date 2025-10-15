@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import json
+import os
 import queue
-from types import SimpleNamespace
 import threading
 from pathlib import Path
-import contextlib
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -17,7 +18,9 @@ from scripts.dashboard_server.helpers import build_pipeline_args, ROOT
 from scripts.dashboard_server.jobs import STATE
 
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio]
+if os.environ.get("SKIP_MP_TESTS") == "1":
+    pytestmark.append(pytest.mark.skip("Multiprocessing primitives unavailable in this runtime sandbox."))
 
 def _write_backtest_files(run_dir: Path) -> None:
     bt_dir = run_dir / "backtest_portfolio_csvs"
