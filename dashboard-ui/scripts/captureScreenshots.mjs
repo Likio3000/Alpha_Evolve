@@ -13,12 +13,11 @@ const rawBaseUrl = process.env.AE_DASHBOARD_URL ?? "http://127.0.0.1:8000/ui/";
 const baseUrl = rawBaseUrl.endsWith("/") ? rawBaseUrl : `${rawBaseUrl}/`;
 const outputDir = process.env.AE_SCREENSHOT_DIR
   ? path.resolve(process.env.AE_SCREENSHOT_DIR)
-  : path.join(repoRoot, "artifacts", "latest", "screenshots");
+  : path.join(repoRoot, "artifacts", "now_ui");
 fs.mkdirSync(outputDir, { recursive: true });
 const overviewPath = path.join(outputDir, "pipeline-overview.png");
 const settingsPath = path.join(outputDir, "settings-presets.png");
-const manifestPath = path.join(outputDir, "manifest.json");
-for (const filePath of [overviewPath, settingsPath, manifestPath]) {
+for (const filePath of [overviewPath, settingsPath]) {
   if (fs.existsSync(filePath)) {
     fs.rmSync(filePath, { force: true });
   }
@@ -59,17 +58,6 @@ async function captureScreenshots() {
     await page.screenshot({ path: settingsPath, fullPage: true });
     log(`Saved settings screenshot to ${settingsPath}`);
 
-    const manifest = {
-      timestamp: new Date().toISOString(),
-      baseUrl,
-      outputDir: path.relative(repoRoot, outputDir),
-      files: {
-        overview: path.relative(repoRoot, overviewPath),
-        settings: path.relative(repoRoot, settingsPath),
-      },
-    };
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-    log(`Wrote manifest ${manifestPath}`);
   } finally {
     await browser.close();
   }

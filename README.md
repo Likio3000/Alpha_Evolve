@@ -55,9 +55,13 @@ The dashboard front-end lives in `dashboard-ui/` and is now written in React + T
 ### Automation Helpers
 
 - `python3 scripts/dev/server_manager.py start` manages the Django/Uvicorn backend with `stop`, `restart`, `status`, and `tail` subcommands. Use `--watch` for auto-restart on backend changes.
-- `npm run capture:screens` captures Pipeline Overview and Settings screenshots via Playwright, saving them under `artifacts/latest/screenshots/` (with the prior run rotated to `artifacts/previous/`).
-- `python3 scripts/dev/run_iteration.py` ties it together: rotate artefact slots, start/stop the server, optionally rebuild the UI, then trigger screenshot capture and print the manifest location.
-- See `docs/dev-automation-roadmap.md` for the full automation plan and `docs/iteration-log.md` for tracking artefacts per iteration.
+- `npm run update:artifacts` wraps `python3 scripts/dev/run_iteration.py`; it runs automatically before `npm run dev` so `artifacts/now_ui` always reflects your latest UI build. Export `AE_SKIP_AUTOCAPTURE=1` to disable every automated capture in that shell.
+- `npm run dev` keeps the screenshots fresh during hot reload: after the dev server’s first compile and after each HMR cycle, a lightweight capture runs with `--skip-build --reuse-server --dashboard-url http://127.0.0.1:5173/`, rotating `now_ui → past_ui → past_ui2`.
+- `npm run capture:screens` captures Pipeline Overview and Settings via Playwright, writing `pipeline-overview.png` and `settings-presets.png` into the active slot.
+- `python3 scripts/dev/run_iteration.py` is the orchestration entrypoint: it rotates the three slots, optionally starts the backend, rebuilds the UI, and captures screenshots.
+- See `docs/dev-automation-roadmap.md` for the full automation plan and `docs/iteration-log.md` for the slot layout.
+
+The dev-loop captures assume the Python dashboard backend is already running (e.g. via `python3 scripts/dev/server_manager.py start --watch`); otherwise the Playwright pass will warn about missing data.
 
 ## Data Setup
 

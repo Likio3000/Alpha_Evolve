@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
@@ -19,7 +18,8 @@ ARTIFACT_ROOT = ROOT / "artifacts"
 SERVER_MANAGER = ROOT / "scripts" / "dev" / "server_manager.py"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-KNOWN_ARTIFACT_DIRS = {"latest", "previous"}
+ARTIFACT_SLOTS = ("now_ui", "past_ui", "past_ui2")
+KNOWN_ARTIFACT_DIRS = set(ARTIFACT_SLOTS)
 
 
 def run_command(
@@ -61,7 +61,7 @@ def wait_for_dashboard(url: str, timeout: float) -> None:
     raise RuntimeError(f"Dashboard did not become ready within {timeout:.1f}s. Last error: {last_error}")
 
 
-def rotate_artifacts(manage_logs: bool) -> tuple[Path, Path, Path]:
+def rotate_artifacts() -> Path:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     for child in ARTIFACT_ROOT.iterdir():
         if child.name not in KNOWN_ARTIFACT_DIRS:
@@ -70,30 +70,34 @@ def rotate_artifacts(manage_logs: bool) -> tuple[Path, Path, Path]:
             else:
                 child.unlink()
 
-    latest_dir = ARTIFACT_ROOT / "latest"
-    previous_dir = ARTIFACT_ROOT / "previous"
+    now_dir = ARTIFACT_ROOT / "now_ui"
+    past_dir = ARTIFACT_ROOT / "past_ui"
+    older_dir = ARTIFACT_ROOT / "past_ui2"
 
-    if previous_dir.exists():
-        shutil.rmtree(previous_dir)
-    if latest_dir.exists():
-        latest_dir.rename(previous_dir)
-    if not previous_dir.exists():
-        previous_dir.mkdir(parents=True, exist_ok=True)
+    if older_dir.exists():
+        shutil.rmtree(older_dir)
+    if past_dir.exists():
+        past_dir.rename(older_dir)
+    if now_dir.exists():
+        now_dir.rename(past_dir)
 
-    latest_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir = latest_dir / "logs"
-    screenshots_dir = latest_dir / "screenshots"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    now_dir.mkdir(parents=True, exist_ok=True)
 
-    if not manage_logs:
-        note = logs_dir / "README.txt"
-        note.write_text(
-            "Server log not captured; iteration ran with --reuse-server.\n",
-            encoding="utf-8",
-        )
+    for slot_dir in (past_dir, older_dir):
+        if slot_dir and slot_dir.exists():
+            for child in slot_dir.iterdir():
+                if child.is_file() and child.suffix.lower() != ".png":
+                    child.unlink()
+                elif child.is_dir():
+                    shutil.rmtree(child)
 
-    return latest_dir, logs_dir, screenshots_dir
+    for child in now_dir.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+    return now_dir
 
 
 def start_server(host: str, port: int, log_file: Path, extra_env: Dict[str, str]) -> None:
@@ -136,9 +140,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    manage_logs = not args.reuse_server
-    latest_dir, logs_dir, screenshots_dir = rotate_artifacts(manage_logs=manage_logs)
-    log_file = logs_dir / "dashboard.log"
+    screenshots_dir = rotate_artifacts()
+    logs_root = ROOT / "logs" / "iteration"
+    log_file = logs_root / "dashboard.log"
     if args.dashboard_url:
         dashboard_url = args.dashboard_url
     else:
@@ -168,14 +172,6 @@ def main() -> None:
         env["AE_DASHBOARD_URL"] = dashboard_url
         env["AE_SCREENSHOT_DIR"] = str(screenshots_dir)
         run_command(["npm", "run", "capture:screens"], cwd=ROOT / "dashboard-ui", env=env)
-
-        manifest_path = screenshots_dir / "manifest.json"
-        if manifest_path.exists():
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            print("[iterate] Latest screenshot manifest:")
-            print(json.dumps(data, indent=2))
-        else:
-            print(f"[iterate] Warning: manifest not found at {manifest_path}.")
     finally:
         if server_started and not args.reuse_server:
             try:

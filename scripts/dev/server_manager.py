@@ -172,7 +172,6 @@ def start_once(args: argparse.Namespace) -> None:
     proc = launch_dashboard_process(env, log_path)
     print(f"Server started (pid {proc.pid}). Logging to {log_path}")
 
-
 def stop_server(_: argparse.Namespace) -> None:
     info = read_pid_info()
     if not info:

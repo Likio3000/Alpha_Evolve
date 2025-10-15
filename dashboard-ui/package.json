@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "update:artifacts": "node scripts/updateArtifacts.mjs",
+    "predev": "npm run update:artifacts",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",

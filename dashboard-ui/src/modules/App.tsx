@@ -598,17 +598,19 @@ export function App(): React.ReactElement {
   return (
     <div className="app-shell" data-test="app-shell">
       <header className="app-shell__header">
-        <h1>Alpha Evolve Dashboard</h1>
-        <p className="app-shell__subtitle">by LIKIO</p>
-        <HeaderNav active={activeTab} onChange={setActiveTab} />
-        {banner ? (
-          <div className="app-banner" role="status">
-            {banner}
-            <button className="btn btn--link" onClick={() => setBanner(null)}>
-              Dismiss
-            </button>
-          </div>
-        ) : null}
+        <div className="app-shell__header-inner">
+          <h1>Alpha Evolve Dashboard</h1>
+          <p className="app-shell__subtitle">by LIKIO</p>
+          <HeaderNav active={activeTab} onChange={setActiveTab} />
+          {banner ? (
+            <div className="app-banner" role="status">
+              {banner}
+              <button className="btn btn--link" onClick={() => setBanner(null)}>
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+        </div>
       </header>
 
       <main className="app-shell__main" data-test="app-main">
