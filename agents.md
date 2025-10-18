@@ -17,3 +17,9 @@ This project runs inside a constrained sandbox where Python's `multiprocessing` 
 ## When adding new tests
 - If they depend on `multiprocessing`, guard them with a skip similar to the existing pattern so `SKIP_MP_TESTS=1` avoids hanging the sandbox.
 - Prefer to mock out process spawning in unit tests where possible to keep the sandbox-friendly suite broad.
+
+## Previewing the dashboard UI from artefacts
+- The latest UI capture lives under the `artifacts/now_ui/` slot (`backtest-analysis.png`, `pipeline-controls.png`, `settings-presets.png`, plus `dashboard-server.log`).
+- From the CLI you can inspect the slot with `ls artifacts/now_ui` and open the PNGs in your viewer of choice (`xdg-open artifacts/now_ui/pipeline-controls.png` on Linux).
+- If you need fresh shots, rerun `npm run capture:screens` inside `dashboard-ui/`; the helper rotates previous captures into `artifacts/past_ui/` and `artifacts/past_ui2/` automatically.
+- Share these PNGs with other agents or humans when you need to illustrate the current dashboard state without rebuilding the app.

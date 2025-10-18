@@ -144,7 +144,9 @@ class _SSEStream:
         return f"event: ping\ndata: {payload}\n\n"
 
     def __iter__(self):
-        # Support synchronous iteration for WSGI/Django fallbacks even when prefer_async is True.
+        if self._prefer_async:
+            raise TypeError("SSEStream prefers async iteration under ASGI.")
+        # Support synchronous iteration for environments that explicitly opt-in.
         while True:
             try:
                 item = self._queue.get(timeout=self._keepalive)

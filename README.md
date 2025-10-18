@@ -50,15 +50,15 @@ The dashboard front-end lives in `dashboard-ui/` and is now written in React + T
 - Run `npm run build` to regenerate the production bundle in `dashboard-ui/dist/` before deploying.
 - The repository ships with a pre-built `dist/` that loads React from a CDN so the Django server keeps working even without Node.js tooling.
 - When hacking on the UI in an offline environment, remember to rebuild the bundle once dependencies are available.
-- The dashboard header now exposes an Overview tab (with runs, live charts, animation) and a Settings tab that surfaces config defaults/presets and lets you save curated TOML snapshots.
+- The dashboard header now exposes Backtest Analysis (runs plus charts), Pipeline Controls (launch + activity), and Settings tabs that surface config defaults/presets and let you save curated TOML snapshots.
 
 ### Automation Helpers
 
 - `python3 scripts/dev/server_manager.py start` manages the Django/Uvicorn backend with `stop`, `restart`, `status`, and `tail` subcommands. Use `--watch` for auto-restart on backend changes.
 - `npm run update:artifacts` wraps `python3 scripts/dev/run_iteration.py`; it runs automatically before `npm run dev` so `artifacts/now_ui` always reflects your latest UI build. Export `AE_SKIP_AUTOCAPTURE=1` to disable every automated capture in that shell.
 - `npm run dev` keeps the screenshots fresh during hot reload: after the dev server’s first compile and after each HMR cycle, a lightweight capture runs with `--skip-build --reuse-server --dashboard-url http://127.0.0.1:5173/`, rotating `now_ui → past_ui → past_ui2`.
-- `npm run capture:screens` captures Pipeline Overview and Settings via Playwright, writing `pipeline-overview.png` and `settings-presets.png` into the active slot.
-- `python3 scripts/dev/run_iteration.py` is the orchestration entrypoint: it rotates the three slots, optionally starts the backend, rebuilds the UI, and captures screenshots.
+- `npm run capture:screens` captures Backtest Analysis, Pipeline Controls, and Settings via Playwright, writing `backtest-analysis.png`, `pipeline-controls.png`, and `settings-presets.png` into the active slot.
+- `python3 scripts/dev/run_iteration.py` is the orchestration entrypoint: it rotates the three slots, optionally starts the backend, rebuilds the UI, captures screenshots, and copies the backend log into the fresh slot as `dashboard-server.log`.
 - See `docs/dev-automation-roadmap.md` for the full automation plan and `docs/iteration-log.md` for the slot layout.
 
 The dev-loop captures assume the Python dashboard backend is already running (e.g. via `python3 scripts/dev/server_manager.py start --watch`); otherwise the Playwright pass will warn about missing data.

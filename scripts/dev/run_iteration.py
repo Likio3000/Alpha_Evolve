@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ SERVER_MANAGER = ROOT / "scripts" / "dev" / "server_manager.py"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 ARTIFACT_SLOTS = ("now_ui", "past_ui", "past_ui2")
+BACKEND_LOG_FILENAME = "dashboard-server.log"
 KNOWN_ARTIFACT_DIRS = set(ARTIFACT_SLOTS)
 
 
@@ -61,6 +63,31 @@ def wait_for_dashboard(url: str, timeout: float) -> None:
     raise RuntimeError(f"Dashboard did not become ready within {timeout:.1f}s. Last error: {last_error}")
 
 
+def probe_dashboard(host: str, port: int, timeout: float = 1.5) -> bool:
+    """Return True when an Alpha Evolve dashboard is already serving on host:port."""
+    health_url = f"http://{host}:{port}/health"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(health_url)
+    except Exception:
+        return False
+    if resp.status_code != 200:
+        return False
+    try:
+        payload = resp.json()
+    except ValueError:
+        return False
+    return payload.get("ok") is True
+
+
+def port_in_use(host: str, port: int) -> bool:
+    """Best-effort check to see if anything is listening on host:port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        result = sock.connect_ex((host, port))
+        return result == 0
+
+
 def rotate_artifacts() -> Path:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     for child in ARTIFACT_ROOT.iterdir():
@@ -83,10 +110,11 @@ def rotate_artifacts() -> Path:
 
     now_dir.mkdir(parents=True, exist_ok=True)
 
+    allowed_suffixes = {".png", ".log"}
     for slot_dir in (past_dir, older_dir):
         if slot_dir and slot_dir.exists():
             for child in slot_dir.iterdir():
-                if child.is_file() and child.suffix.lower() != ".png":
+                if child.is_file() and child.suffix.lower() not in allowed_suffixes:
                     child.unlink()
                 elif child.is_dir():
                     shutil.rmtree(child)
@@ -143,6 +171,8 @@ def main() -> None:
     screenshots_dir = rotate_artifacts()
     logs_root = ROOT / "logs" / "iteration"
     log_file = logs_root / "dashboard.log"
+    log_target = screenshots_dir / BACKEND_LOG_FILENAME
+
     if args.dashboard_url:
         dashboard_url = args.dashboard_url
     else:
@@ -160,8 +190,29 @@ def main() -> None:
 
     try:
         if not args.reuse_server:
-            start_server(args.host, args.port, log_file, extra_env)
-            server_started = True
+            if probe_dashboard(args.host, args.port):
+                print("[iterate] Detected existing dashboard instance; reusing it.")
+            else:
+                try:
+                    start_server(args.host, args.port, log_file, extra_env)
+                    server_started = True
+                except subprocess.CalledProcessError as exc:
+                    if probe_dashboard(args.host, args.port):
+                        print("[iterate] Dashboard was already running; proceeding without restarting.")
+                    elif port_in_use(args.host, args.port):
+                        msg = (
+                            f"Port {args.host}:{args.port} is already in use by another service. "
+                            "Stop that process or rerun with --port/--reuse-server."
+                        )
+                        raise RuntimeError(msg) from exc
+                    else:
+                        raise
+        else:
+            if not probe_dashboard(args.host, args.port) and port_in_use(args.host, args.port):
+                print(
+                    "[iterate] --reuse-server supplied but dashboard is not responding yet; "
+                    "waiting for it to become ready."
+                )
 
         wait_for_dashboard(dashboard_url, args.timeout)
 
@@ -178,6 +229,11 @@ def main() -> None:
                 stop_server()
             except Exception as exc:
                 print(f"[iterate] Failed to stop server cleanly: {exc}", file=sys.stderr)
+        try:
+            if log_file.exists():
+                shutil.copy2(log_file, log_target)
+        except Exception as exc:
+            print(f"[iterate] Failed to copy backend log: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":

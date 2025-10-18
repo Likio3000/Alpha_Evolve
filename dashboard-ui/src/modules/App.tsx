@@ -14,9 +14,10 @@ import { RunList } from "./components/RunList";
 import { BacktestTable } from "./components/BacktestTable";
 import { TimeseriesCharts } from "./components/TimeseriesCharts";
 import { JobConsole } from "./components/JobConsole";
-import { HeaderNav } from "./components/HeaderNav";
+import { HeaderNav, TabId } from "./components/HeaderNav";
 import { RunnerCanvas } from "./components/RunnerCanvas";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { IntroductionPage } from "./components/IntroductionPage";
 import { usePolling } from "./hooks/usePolling";
 import {
   AlphaTimeseries,
@@ -217,7 +218,7 @@ export function App(): React.ReactElement {
 
   const [job, setJob] = useState<PipelineJobState | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "settings">("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("introduction");
   const closeEventStream = useCallback(() => {}, []);
   const [pendingRunSelectionBaseline, setPendingRunSelectionBaseline] = useState<string | null | undefined>(undefined);
 
@@ -614,6 +615,15 @@ export function App(): React.ReactElement {
       </header>
 
       <main className="app-shell__main" data-test="app-main">
+        {activeTab === "introduction" ? (
+          <>
+            <div className="runner-shell" data-test="introduction-runner">
+              <RunnerCanvas />
+            </div>
+            <IntroductionPage />
+          </>
+        ) : null}
+
         {activeTab === "overview" ? (
           <>
             <div className="runner-shell" data-test="overview-runner">
@@ -621,7 +631,6 @@ export function App(): React.ReactElement {
             </div>
             <div className="app-layout" data-test="overview-layout">
               <div className="app-sidebar">
-                <PipelineControls onSubmit={handleStartPipeline} busy={Boolean(job && job.status === "running")} />
                 <RunList
                   runs={runs}
                   selected={selectedRunPath}
@@ -658,16 +667,32 @@ export function App(): React.ReactElement {
                   data={alphaTimeseries}
                   label={selectedRow?.AlphaID ?? selectedRow?.TimeseriesFile ?? null}
                 />
+              </div>
+            </div>
+          </>
+        ) : null}
 
+        {activeTab === "controls" ? (
+          <>
+            <div className="runner-shell" data-test="controls-runner">
+              <RunnerCanvas />
+            </div>
+            <div className="app-layout" data-test="controls-layout">
+              <div className="app-sidebar">
+                <PipelineControls onSubmit={handleStartPipeline} busy={Boolean(job && job.status === "running")} />
+              </div>
+              <div className="app-content">
                 <JobConsole job={job} onCopyLog={handleCopyLog} onStop={handleStopJob} />
               </div>
             </div>
           </>
-        ) : (
+        ) : null}
+
+        {activeTab === "settings" ? (
           <div className="app-layout app-layout--full" data-test="settings-layout">
             <SettingsPanel onNotify={(msg) => setBanner(msg)} />
           </div>
-        )}
+        ) : null}
       </main>
     </div>
   );

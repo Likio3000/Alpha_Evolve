@@ -74,6 +74,5 @@ urlpatterns = [
     path(".well-known/appspecific/com.chrome.devtools.json", _chrome_devtools_manifest),
 ]
 
-if UI_DIST.exists():
-    urlpatterns.append(re_path(r"^ui/?$", _serve_ui))
-    urlpatterns.append(re_path(r"^ui/(?P<path>.*)$", _serve_ui))
+urlpatterns.append(re_path(r"^ui/?$", _serve_ui))
+urlpatterns.append(re_path(r"^ui/(?P<path>.*)$", _serve_ui))

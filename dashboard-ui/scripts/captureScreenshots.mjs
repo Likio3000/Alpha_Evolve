@@ -15,9 +15,11 @@ const outputDir = process.env.AE_SCREENSHOT_DIR
   ? path.resolve(process.env.AE_SCREENSHOT_DIR)
   : path.join(repoRoot, "artifacts", "now_ui");
 fs.mkdirSync(outputDir, { recursive: true });
-const overviewPath = path.join(outputDir, "pipeline-overview.png");
+const introductionPath = path.join(outputDir, "introduction-overview.png");
+const overviewPath = path.join(outputDir, "backtest-analysis.png");
+const controlsPath = path.join(outputDir, "pipeline-controls.png");
 const settingsPath = path.join(outputDir, "settings-presets.png");
-for (const filePath of [overviewPath, settingsPath]) {
+for (const filePath of [introductionPath, overviewPath, controlsPath, settingsPath]) {
   if (fs.existsSync(filePath)) {
     fs.rmSync(filePath, { force: true });
   }
@@ -47,10 +49,23 @@ async function captureScreenshots() {
       log(`Warning: dashboard responded with ${status}`);
     }
 
+    await page.click('[data-test="nav-introduction"]');
+    await page.waitForSelector('[data-test="introduction-layout"]', { state: "visible", timeout: 20000 });
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: introductionPath, fullPage: true });
+    log(`Saved Introduction screenshot to ${introductionPath}`);
+
+    await page.click('[data-test="nav-overview"]');
     await page.waitForSelector('[data-test="overview-layout"]', { state: "visible", timeout: 20000 });
     await page.waitForTimeout(600);
     await page.screenshot({ path: overviewPath, fullPage: true });
-    log(`Saved overview screenshot to ${overviewPath}`);
+    log(`Saved Backtest Analysis screenshot to ${overviewPath}`);
+
+    await page.click('[data-test="nav-controls"]');
+    await page.waitForSelector('[data-test="controls-layout"]', { state: "visible", timeout: 20000 });
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: controlsPath, fullPage: true });
+    log(`Saved Pipeline Controls screenshot to ${controlsPath}`);
 
     await page.click('[data-test="nav-settings"]');
     await page.waitForSelector('[data-test="settings-grid"] .settings-table', { state: "visible", timeout: 20000 });
