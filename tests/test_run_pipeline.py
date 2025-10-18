@@ -1,4 +1,5 @@
 import logging
+import json
 from alpha_evolve.cli.pipeline import parse_args
 
 
@@ -36,3 +37,27 @@ def test_train_baselines_logs(tmp_path, caplog):
     logged = "\n".join(r.message for r in caplog.records)
     assert "GA tree" in logged
     assert "RankLSTM" in logged
+
+
+def test_write_summary_json_without_csv(tmp_path):
+    """_write_summary_json should tolerate missing summary CSVs (e.g., empty HOF)."""
+    from alpha_evolve.cli.pipeline import _write_summary_json
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "meta").mkdir()
+    pickle_path = run_dir / "pickles" / "hof.pkl"
+    pickle_path.parent.mkdir(parents=True, exist_ok=True)
+    pickle_path.write_bytes(b"")
+
+    summary_path = _write_summary_json(
+        run_dir,
+        pickle_path,
+        summary_csv=None,
+        backtested_alphas_override=0,
+        note="No valid programmes evolved; back-test skipped.",
+    )
+    payload = json.loads(summary_path.read_text())
+    assert payload["backtested_alphas"] == 0
+    assert payload["backtest_summary_csv"] is None
+    assert payload["note"].startswith("No valid programmes")

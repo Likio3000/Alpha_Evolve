@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from typing import Optional
+from typing import Dict, Optional
 
 try:
     # Use tqdm's write to avoid breaking progress bars
@@ -31,53 +31,41 @@ class _TqdmCompatibleHandler(logging.StreamHandler):
 
 
 class _ColorFormatter(logging.Formatter):
-    """Minimal ANSI color formatter for console readability.
+    """ANSI colour formatter with a calm, structured aesthetic."""
 
-    Colors only when the output stream is a TTY and NO_COLOR is not set.
-    """
-
-    # ANSI escape sequences
     RESET = "\033[0m"
     DIM = "\033[2m"
-    BOLD = "\033[1m"
     FG = {
-        "grey": "\033[90m",
-        "red": "\033[31m",
-        "green": "\033[32m",
-        "yellow": "\033[33m",
-        "blue": "\033[34m",
-        "magenta": "\033[35m",
-        "cyan": "\033[36m",
-        "white": "\033[37m",
+        logging.CRITICAL: "\033[35m",
+        logging.ERROR: "\033[31m",
+        logging.WARNING: "\033[33m",
+        logging.INFO: "\033[36m",
+        logging.DEBUG: "\033[90m",
     }
 
     def __init__(self, fmt: str, datefmt: str | None, use_color: bool) -> None:
         super().__init__(fmt, datefmt)
-        self.use_color = use_color
+        self._use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
-        base = super().format(record)
-        if not self.use_color:
-            return base
+        text = super().format(record)
+        if not self._use_color:
+            return text
 
-        level = record.levelno
-        if level >= logging.ERROR:
-            color = self.FG["red"]
-        elif level >= logging.WARNING:
-            color = self.FG["yellow"]
-        elif level >= logging.INFO:
-            color = self.FG["green"]
-        else:
-            color = self.FG["cyan"]
-
-        # Lightly dim timestamp and location, keep message colored by level
-        # Expect input format like: "2025-08-23 11:49:39,291 [INFO] module:123 | message"
+        # Expect blocks separated by the unicode box-drawing divider
         try:
-            prefix, message = base.split("| ", 1)
-            prefix_col = f"{self.DIM}{prefix}{self.RESET}"
-            return f"{color}{message}{self.RESET}" if not prefix else f"{prefix_col} | {color}{message}{self.RESET}"
-        except Exception:
-            return f"{color}{base}{self.RESET}"
+            ts, level, logger_name, message = text.split(" │ ", 3)
+        except ValueError:
+            return text
+
+        level_colour = self.FG.get(record.levelno, self.FG[logging.DEBUG])
+        ts_coloured = f"{self.DIM}{ts}{self.RESET}"
+        lvl_coloured = f"{level_colour}{level}{self.RESET}"
+        logger_coloured = f"{self.DIM}{logger_name}{self.RESET}"
+        msg_colour = level_colour if record.levelno >= logging.INFO else self.FG[logging.DEBUG]
+        message_coloured = f"{msg_colour}{message}{self.RESET}"
+
+        return " │ ".join((ts_coloured, lvl_coloured, logger_coloured, message_coloured))
 
 
 def _make_console_handler(level: int) -> logging.Handler:
@@ -91,27 +79,47 @@ def _make_console_handler(level: int) -> logging.Handler:
     is_tty = sys.stdout.isatty() if hasattr(sys.stdout, "isatty") else False
     use_color = bool(force_color or (is_tty and not no_color))
 
-    # Lighter format: time only (HH:MM:SS) and no module/lineno in console
-    fmt = "%(asctime)s [%(levelname)s] | %(message)s"
+    fmt = "%(asctime)s │ %(levelname)-5s │ %(name)s │ %(message)s"
     handler.setFormatter(_ColorFormatter(fmt, datefmt="%H:%M:%S", use_color=use_color))
     return handler
 
 
-def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> None:
-    """Configure root logger with tqdm-friendly, colored console output.
+def _build_uvicorn_log_config(level: int) -> Dict[str, object]:
+    level_name = logging.getLevelName(level)
+    base_fmt = "%(asctime)s │ %(levelname)-5s │ %(name)s │ %(message)s"
+    access_fmt = "%(asctime)s │ ACCESS │ %(client_addr)s → %(request_line)s (%(status_code)s)"
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {"format": base_fmt, "datefmt": "%H:%M:%S"},
+            "access": {"format": access_fmt, "datefmt": "%H:%M:%S"},
+        },
+        "handlers": {
+            "default": {"class": "logging.StreamHandler", "formatter": "default", "stream": "ext://sys.stdout"},
+            "access": {"class": "logging.StreamHandler", "formatter": "access", "stream": "ext://sys.stdout"},
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": level_name, "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": level_name, "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
 
-    - Console: colorized, compatible with tqdm progress bars
-    - File (optional): plain text without ANSI codes
-    """
+
+def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> Dict[str, object]:
+    """Configure root logging and return a uvicorn-compatible log config."""
     handlers: list[logging.Handler] = [_make_console_handler(level)]
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
         # File: keep date and a tidier format (seconds precision)
-        file_handler.setFormatter(logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
         handlers.append(file_handler)
 
     logging.basicConfig(level=level, handlers=handlers, force=True)
@@ -139,6 +147,8 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
     # Print the date once at the start to avoid per-line date clutter
     try:
         import time as _t
-        logging.getLogger(__name__).info("Date %s", _t.strftime("%Y-%m-%d"))
+        logging.getLogger("alpha_evolve.logger").info("Session started · %s", _t.strftime("%Y-%m-%d"))
     except Exception:
         pass
+
+    return _build_uvicorn_log_config(level)

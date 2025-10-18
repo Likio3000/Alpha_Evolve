@@ -4,8 +4,10 @@ import asyncio
 import io
 import json
 import logging
+import math
 import multiprocessing as mp
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -32,18 +34,48 @@ from ..http import json_error, json_response
 from ..models import PipelineRunRequest
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def _parse_constant(token: str) -> float:
+    if token == "NaN":
+        return float("nan")
+    if token == "Infinity":
+        return float("inf")
+    if token == "-Infinity":
+        return float("-inf")
+    raise ValueError(f"Unexpected JSON constant: {token}")
+
+
+def _sanitize_json_data(value: Any) -> Any:
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_json_data(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json_data(v) for v in value]
+    return value
+
+
 def _line_to_event(line: str) -> Dict[str, Any]:
     line = line.rstrip("\n")
+    if line:
+        line = ANSI_ESCAPE_RE.sub("", line)
     if not line:
         return {"type": "log", "raw": ""}
     if (m := RE_DIAG.search(line)) is not None:
         try:
-            return {"type": "diag", "data": json.loads(m.group(1)), "raw": line}
+            data = json.loads(m.group(1), parse_constant=_parse_constant)
+            data = _sanitize_json_data(data)
+            return {"type": "diag", "data": data, "raw": line}
         except Exception:
             return {"type": "log", "raw": line}
     if (m := RE_PROGRESS.search(line)) is not None:
         try:
-            data = json.loads(m.group(1))
+            data = json.loads(m.group(1), parse_constant=_parse_constant)
+            data = _sanitize_json_data(data)
             event = {"type": "progress", "data": data, "raw": line}
             if isinstance(data, dict) and isinstance(data.get("type"), str):
                 event["subtype"] = data["type"]

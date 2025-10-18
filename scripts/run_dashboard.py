@@ -50,7 +50,7 @@ def _level_from_env(var: str, default: int = logging.INFO) -> int:
 def main() -> None:
     level = _level_from_env("LOG_LEVEL", logging.INFO)
     log_file = os.environ.get("LOG_FILE")
-    setup_logging(level=level, log_file=log_file)
+    log_config = setup_logging(level=level, log_file=log_file)
 
     host = os.environ.get("HOST", "127.0.0.1")
     try:
@@ -59,9 +59,19 @@ def main() -> None:
         port = 8000
     access_log = os.environ.get("ACCESS_LOG", "0") in ("1", "true", "True")
 
+    logger = logging.getLogger("dashboard.server")
     ui_url = f"http://{host}:{port}/ui"
-    logging.getLogger(__name__).info("Open UI: %s", ui_url)
-    uvicorn.run(app, host=host, port=port, access_log=access_log, log_level="info")
+    logger.info("Dashboard ready → %s", ui_url)
+    logger.debug("Host=%s | Port=%d | Access log=%s", host, port, "on" if access_log else "off")
+
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        access_log=access_log,
+        log_level=logging.getLevelName(level).lower(),
+        log_config=log_config,
+    )
 
 
 if __name__ == "__main__":

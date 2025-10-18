@@ -1,4 +1,18 @@
 import React, { useMemo } from "react";
+import { ActivityStatus } from "./pipeline-activity/ActivityStatus";
+import { ChampionPanel } from "./pipeline-activity/ChampionPanel";
+import { DiagnosticsPanel } from "./pipeline-activity/DiagnosticsPanel";
+import { MetricEntry, MetricsDeck } from "./pipeline-activity/MetricsDeck";
+import {
+  buildSparklineFromSummaries,
+  formatDelta,
+  formatDuration,
+  formatNumber,
+  selectLatestSummary,
+  selectPreviousSummary,
+  sortEntriesByMagnitude,
+  toPercentage,
+} from "./pipeline-activity/utils";
 import { GenerationSummary, PipelineJobState } from "../types";
 
 interface JobConsoleProps {
@@ -7,91 +21,14 @@ interface JobConsoleProps {
   onCopyLog?: (job: PipelineJobState) => void;
 }
 
-const SPARKLINE_WIDTH = 160;
-const SPARKLINE_HEIGHT = 48;
-
-const LABEL_OVERRIDES: Record<string, string> = {
-  base_ic: "Base IC",
-  sharpe_bonus: "Sharpe bonus",
-  ic_std_penalty: "IC σ penalty",
-  turnover_penalty: "Turnover penalty",
-  parsimony_penalty: "Parsimony",
-  correlation_penalty: "Correlation",
-  factor_penalty: "Factor penalty",
-  stress_penalty: "Stress penalty",
-  drawdown_penalty: "Drawdown penalty",
-  downside_penalty: "Downside penalty",
-  cvar_penalty: "CVaR penalty",
-  ic_tstat_bonus: "IC t-stat bonus",
-};
-
-function formatDuration(seconds?: number | null): string | null {
-  if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) {
-    return null;
-  }
-  const total = Math.max(0, Math.round(seconds));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  if (hours > 0) {
-    return `${hours}h${minutes.toString().padStart(2, "0")}m${secs.toString().padStart(2, "0")}s`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m${secs.toString().padStart(2, "0")}s`;
-  }
-  return `${secs}s`;
-}
-
-function toPercentage(value?: number | null): number | null {
-  if (value === undefined || value === null || !Number.isFinite(value)) {
-    return null;
-  }
-  return Math.max(0, Math.min(1, value)) * 100;
-}
-
-function prettifyKey(key: string): string {
-  return LABEL_OVERRIDES[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function buildSparkline(values: number[]): { points: string; min: number; max: number } | null {
-  if (values.length < 2) {
-    return null;
-  }
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const stepX = SPARKLINE_WIDTH / (values.length - 1);
-  const points = values
-    .map((value, idx) => {
-      const norm = (value - min) / range;
-      const x = idx * stepX;
-      const y = SPARKLINE_HEIGHT - norm * SPARKLINE_HEIGHT;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  return { points, min, max };
-}
-
-function formatDelta(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) {
-    return "";
-  }
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${value.toFixed(4)}`;
-}
-
-function selectLatestSummary(job: PipelineJobState): GenerationSummary | null {
-  if (!job.summaries || job.summaries.length === 0) {
-    return null;
-  }
-  return job.summaries[job.summaries.length - 1];
-}
-
-function selectPreviousSummary(job: PipelineJobState): GenerationSummary | null {
-  if (!job.summaries || job.summaries.length < 2) {
-    return null;
-  }
-  return job.summaries[job.summaries.length - 2];
+function resolvePctComplete(job: PipelineJobState, latestSummary: GenerationSummary | null): number | null {
+  return toPercentage(
+    (latestSummary && latestSummary.pctComplete) ??
+      (job.progress?.pctComplete ??
+        (job.progress && job.progress.generationsTotal
+          ? job.progress.generation / Math.max(1, job.progress.generationsTotal)
+          : null)),
+  );
 }
 
 export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.ReactElement {
@@ -105,22 +42,19 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
   }
 
   const canStop = job.status === "running" && onStop;
-  const latestSummary = selectLatestSummary(job);
-  const previousSummary = selectPreviousSummary(job);
+  const summaries = job.summaries ?? [];
+  const latestSummary = selectLatestSummary(summaries);
+  const previousSummary = selectPreviousSummary(summaries);
 
-  const pctComplete = toPercentage(
-    (latestSummary && latestSummary.pctComplete) ??
-      (job.progress?.pctComplete ??
-        (job.progress && job.progress.generationsTotal
-          ? job.progress.generation / Math.max(1, job.progress.generationsTotal)
-          : null)),
-  );
+  const pctComplete = resolvePctComplete(job, latestSummary);
   const generationLabel = latestSummary
     ? `Gen ${latestSummary.generation}/${latestSummary.generationsTotal}`
     : job.progress?.generation !== undefined
       ? `Gen ${job.progress.generation}`
       : null;
   const etaLabel = formatDuration(latestSummary?.timing.etaSeconds ?? job.progress?.etaSeconds);
+  const elapsedSeconds = job.progress?.elapsedSeconds ?? latestSummary?.timing.generationSeconds ?? null;
+
   const bestFitness = latestSummary?.best.fitness ?? job.progress?.bestFitness ?? null;
   const meanIc = latestSummary?.best.meanIc ?? job.progress?.medianFitness ?? null;
   const deltaFitness =
@@ -133,37 +67,138 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
     typeof deltaFitness === "number" && Number.isFinite(deltaFitness) ? deltaFitness : null;
   const deltaIcValue = typeof deltaIc === "number" && Number.isFinite(deltaIc) ? deltaIc : null;
 
-  const summaries = job.summaries ?? [];
-  const sparkline = useMemo(() => {
-    if (!summaries.length) {
-      return null;
-    }
-    const values = summaries
-      .map((entry) => entry.best.fitness)
-      .filter((value) => Number.isFinite(value))
-      .slice(-60);
-    return buildSparkline(values);
-  }, [summaries]);
+  const sparkline = useMemo(() => buildSparklineFromSummaries(summaries), [summaries]);
 
-  const penaltyEntries = useMemo(() => {
-    if (!latestSummary) {
-      return [];
-    }
-    return Object.entries(latestSummary.penalties)
-      .filter(([, value]) => Number.isFinite(value) && Math.abs(Number(value)) > 1e-6)
-      .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
-      .slice(0, 5);
-  }, [latestSummary]);
+  const penaltyEntries = useMemo(
+    () =>
+      latestSummary
+        ? sortEntriesByMagnitude(latestSummary.penalties, 5)
+        : [],
+    [latestSummary],
+  );
 
   const scoreEntries = useMemo(() => {
     if (!latestSummary) {
       return [];
     }
-    return Object.entries(latestSummary.fitnessBreakdown)
-      .filter(([key, value]) => key !== "result" && key !== "fitness_static" && value !== null && Number.isFinite(value))
-      .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
-      .slice(0, 5);
+    const filtered: Record<string, number> = {};
+    for (const [key, value] of Object.entries(latestSummary.fitnessBreakdown)) {
+      if (key === "result" || key === "fitness_static" || value === null) {
+        continue;
+      }
+      const num = Number(value);
+      if (Number.isFinite(num)) {
+        filtered[key] = num;
+      }
+    }
+    return sortEntriesByMagnitude(filtered, 5);
   }, [latestSummary]);
+
+  const factorExposures = useMemo(
+    () => (latestSummary ? sortEntriesByMagnitude(latestSummary.best.factorExposures, 5, 1e-4) : []),
+    [latestSummary],
+  );
+
+  const regimeExposures = useMemo(
+    () => (latestSummary ? sortEntriesByMagnitude(latestSummary.best.regimeExposures, 5, 1e-4) : []),
+    [latestSummary],
+  );
+
+  const stressMetrics = useMemo(
+    () => (latestSummary ? sortEntriesByMagnitude(latestSummary.best.stressMetrics, 5, 1e-4) : []),
+    [latestSummary],
+  );
+
+  const cadenceStats = useMemo(() => {
+    const stats: Array<{ label: string; value: string }> = [];
+    const generationTime = formatDuration(latestSummary?.timing.generationSeconds);
+    const avgTime = formatDuration(latestSummary?.timing.averageSeconds);
+    const eta = formatDuration(latestSummary?.timing.etaSeconds ?? job.progress?.etaSeconds);
+    if (generationTime) {
+      stats.push({ label: "Last generation", value: generationTime });
+    }
+    if (avgTime) {
+      stats.push({ label: "Average per generation", value: avgTime });
+    }
+    if (eta) {
+      stats.push({ label: "Pipeline ETA", value: eta });
+    }
+    stats.push({
+      label: "Summaries received",
+      value: summaries.length ? `${summaries.length}` : "0",
+    });
+    return stats;
+  }, [job.progress?.etaSeconds, latestSummary, summaries.length]);
+
+  const metrics: MetricEntry[] = useMemo(() => {
+    const entries: MetricEntry[] = [
+      {
+        id: "best-fitness",
+        label: "Best fitness",
+        value: formatNumber(bestFitnessValue),
+        delta: formatDelta(deltaFitnessValue, 4),
+        trend: deltaFitnessValue === null ? null : deltaFitnessValue >= 0 ? "up" : "down",
+        caption: previousSummary ? "Δ vs prior generation" : "Reported best score so far",
+      },
+      {
+        id: "mean-ic",
+        label: "Mean IC",
+        value: formatNumber(meanIcValue),
+        delta: formatDelta(deltaIcValue, 4),
+        trend: deltaIcValue === null ? null : deltaIcValue >= 0 ? "up" : "down",
+        caption: previousSummary ? "Δ vs prior generation" : "Population mean correlation",
+      },
+    ];
+
+    if (latestSummary) {
+      entries.push(
+        {
+          id: "sharpe-proxy",
+          label: "Sharpe proxy",
+          value: formatNumber(latestSummary.best.sharpeProxy, 3),
+          caption: "Alpha-adjusted Sharpe proxy",
+        },
+        {
+          id: "drawdown",
+          label: "Drawdown",
+          value: formatNumber(latestSummary.best.drawdown, 3),
+          caption: "Worst peak-to-trough drawdown",
+        },
+      );
+    } else if (job.progress?.medianFitness !== null) {
+      entries.push({
+        id: "median-fitness",
+        label: "Median fitness",
+        value: formatNumber(job.progress?.medianFitness ?? null),
+        caption: "Real-time population median",
+      });
+    }
+
+    if (job.progress) {
+      const populationTotal = job.progress.totalIndividuals;
+      const completed = job.progress.completed;
+      const generation = job.progress.generation;
+      entries.push({
+        id: "generation-progress",
+        label: "Generation progress",
+        value: generation !== undefined && generation !== null ? `Gen ${generation}` : "n/a",
+        caption:
+          populationTotal !== undefined && populationTotal !== null
+            ? `${completed}/${populationTotal} evaluated`
+            : `${completed} evaluated`,
+      });
+    }
+
+    return entries;
+  }, [
+    bestFitnessValue,
+    deltaFitnessValue,
+    deltaIcValue,
+    job.progress,
+    latestSummary,
+    meanIcValue,
+    previousSummary,
+  ]);
 
   const handleCopy = () => {
     if (!onCopyLog) return;
@@ -176,7 +211,7 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
         <h2>Pipeline Activity</h2>
         <div className="panel-actions">
           {canStop ? (
-            <button className="btn btn-warning" onClick={() => onStop(job)}>
+            <button className="btn btn-warning" onClick={() => onStop?.(job)}>
               Stop run
             </button>
           ) : null}
@@ -185,138 +220,49 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
           </button>
         </div>
       </div>
-      <div className="pipeline-activity__status-row">
-        <div className={`status-badge status-badge--${job.status}`}>{job.status}</div>
-        {generationLabel ? <span className="pipeline-activity__status-meta">{generationLabel}</span> : null}
-        {etaLabel ? <span className="pipeline-activity__status-meta muted">ETA {etaLabel}</span> : null}
-      </div>
 
-      <div className="pipeline-activity__progress">
-        <div className="pipeline-activity__progress-bar">
-          <div
-            className="pipeline-activity__progress-bar-fill"
-            style={{ width: `${pctComplete !== null ? pctComplete : 0}%` }}
-          />
+      <ActivityStatus
+        status={job.status}
+        pctComplete={pctComplete}
+        generationLabel={generationLabel}
+        etaLabel={etaLabel}
+        lastMessage={job.lastMessage}
+        lastUpdated={job.lastUpdated}
+        elapsedSeconds={elapsedSeconds}
+      />
+
+      <MetricsDeck metrics={metrics} sparkline={sparkline} />
+
+      <DiagnosticsPanel
+        penalties={penaltyEntries}
+        scoreContribs={scoreEntries}
+        cadenceStats={cadenceStats}
+        penaltiesPending={!latestSummary}
+        contribsPending={!latestSummary}
+      />
+
+      <ChampionPanel
+        fingerprint={latestSummary?.best.fingerprint}
+        program={latestSummary?.best.program}
+        populationSize={latestSummary?.population.size}
+        populationUnique={latestSummary?.population.uniqueFingerprints}
+        programSize={latestSummary?.best.programSize}
+        turnover={latestSummary?.best.turnover}
+        factorExposures={factorExposures}
+        regimeExposures={regimeExposures}
+        stressMetrics={stressMetrics}
+        pending={!latestSummary}
+      />
+
+      {!latestSummary ? (
+        <div className="pipeline-activity__pending">
+          <h3>Awaiting first generation summary</h3>
+          <p className="muted">
+            Core metrics update in real-time, and full champion analytics will appear as soon as the engine publishes a
+            generation summary.
+          </p>
         </div>
-        <div className="pipeline-activity__progress-meta">
-          <span>
-            {pctComplete !== null ? `${pctComplete.toFixed(1)}% complete` : "Waiting for progress updates…"}
-          </span>
-          {job.lastMessage ? <span className="muted">{job.lastMessage}</span> : null}
-        </div>
-      </div>
-
-      {latestSummary ? (
-        <>
-          <div className="pipeline-activity__metrics">
-            <div className="pipeline-activity__metric">
-              <span className="pipeline-activity__metric-label">Best fitness</span>
-              <span className="pipeline-activity__metric-value">
-                {bestFitnessValue !== null ? bestFitnessValue.toFixed(4) : "n/a"}
-              </span>
-              {deltaFitnessValue !== null ? (
-                <span
-                  className={`metric-delta ${
-                    deltaFitnessValue >= 0 ? "metric-delta--up" : "metric-delta--down"
-                  }`}
-                >
-                  {formatDelta(deltaFitnessValue)}
-                </span>
-              ) : null}
-            </div>
-            <div className="pipeline-activity__metric">
-              <span className="pipeline-activity__metric-label">Mean IC</span>
-              <span className="pipeline-activity__metric-value">
-                {meanIcValue !== null ? meanIcValue.toFixed(4) : "n/a"}
-              </span>
-              {deltaIcValue !== null ? (
-                <span
-                  className={`metric-delta ${deltaIcValue >= 0 ? "metric-delta--up" : "metric-delta--down"}`}
-                >
-                  {formatDelta(deltaIcValue)}
-                </span>
-              ) : null}
-            </div>
-            <div className="pipeline-activity__metric">
-              <span className="pipeline-activity__metric-label">Turnover</span>
-              <span className="pipeline-activity__metric-value">
-                {latestSummary.best.turnover.toFixed(4)}
-              </span>
-            </div>
-            <div className="pipeline-activity__metric pipeline-activity__metric--sparkline">
-              <span className="pipeline-activity__metric-label">Fitness trend</span>
-              {sparkline ? (
-                <svg
-                  className="pipeline-activity__sparkline"
-                  viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}
-                  xmlns="http://www.w3.org/2000/svg"
-                  preserveAspectRatio="none"
-                >
-                  <polyline points={sparkline.points} />
-                </svg>
-              ) : (
-                <span className="muted">Collecting data…</span>
-              )}
-            </div>
-          </div>
-
-          <div className="pipeline-activity__detail-grid">
-            <div>
-              <h3>Penalty breakdown</h3>
-              {penaltyEntries.length ? (
-                <ul className="pipeline-activity__list">
-                  {penaltyEntries.map(([key, value]) => (
-                    <li key={key}>
-                      <span>{prettifyKey(key)}</span>
-                      <span className="pipeline-activity__penalty-value">
-                        -{Math.abs(Number(value)).toFixed(4)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted">No active penalties this generation.</p>
-              )}
-            </div>
-
-            <div>
-              <h3>Score contributions</h3>
-              {scoreEntries.length ? (
-                <ul className="pipeline-activity__list">
-                  {scoreEntries.map(([key, value]) => (
-                    <li key={key}>
-                      <span>{prettifyKey(key)}</span>
-                      <span
-                        className={`pipeline-activity__contrib ${
-                          Number(value) >= 0 ? "pipeline-activity__contrib--pos" : "pipeline-activity__contrib--neg"
-                        }`}
-                      >
-                        {formatDelta(Number(value))}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted">Awaiting breakdown data…</p>
-              )}
-            </div>
-
-            <div>
-              <h3>Champion fingerprint</h3>
-              <div className="pipeline-activity__program">
-                <code>{latestSummary.best.fingerprint ?? "n/a"}</code>
-              </div>
-              <h4>Program</h4>
-              <pre className="pipeline-activity__program-snippet">{latestSummary.best.program}</pre>
-              <p className="muted">
-                Population: {latestSummary.population.size} candidates ({latestSummary.population.uniqueFingerprints} unique)
-              </p>
-            </div>
-          </div>
-        </>
-      ) : (
-        <p className="muted">Waiting for first generation summary…</p>
-      )}
+      ) : null}
 
       <div className="pipeline-activity__log">
         <div className="pipeline-activity__log-header">

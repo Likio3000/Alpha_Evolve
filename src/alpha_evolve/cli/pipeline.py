@@ -250,40 +250,51 @@ def options_from_namespace(ns: argparse.Namespace) -> PipelineOptions:
 # ─────────────────────────────────────────────────────────────────────────────
 #  helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _write_summary_json(run_dir: Path, pickle_path: Path, summary_csv: Path) -> Path:
+def _write_summary_json(
+    run_dir: Path,
+    pickle_path: Path,
+    summary_csv: Path | None,
+    *,
+    backtested_alphas_override: int | None = None,
+    note: str | None = None,
+) -> Path:
     """Write a compact run summary JSON with key artefacts.
 
     Returns path to the created SUMMARY.json.
     """
-    summary_json = summary_csv.with_suffix(".json")
     data = {
         "schema_version": 1,
         "run_dir": str(run_dir),
         "programs_pickle": str(pickle_path),
-        "backtest_summary_csv": str(summary_csv),
-        "backtest_summary_json": str(summary_json),
+        "backtest_summary_csv": str(summary_csv) if summary_csv is not None else None,
+        "backtest_summary_json": str(summary_csv.with_suffix(".json")) if summary_csv is not None else None,
     }
     meta_dir = run_dir / "meta"
     if (meta_dir / "data_alignment.json").exists():
         data["data_alignment"] = str(meta_dir / "data_alignment.json")
-    # Optionally include counts
-    try:
-        import pandas as _pd
-        df = _pd.read_csv(summary_csv)
-        data["backtested_alphas"] = int(len(df))
-        # Best Sharpe and a few handy fields for UI consumption
-        if "Sharpe" in df.columns and len(df) > 0:
-            best = df.sort_values("Sharpe", ascending=False).iloc[0]
-            data["best_metrics"] = {
-                "Sharpe": float(best.get("Sharpe", 0.0)),
-                "AnnReturn": float(best.get("AnnReturn", 0.0)),
-                "MaxDD": float(best.get("MaxDD", 0.0)),
-                "Ops": int(best.get("Ops", 0)),
-                "AlphaID": str(best.get("AlphaID", "")),
-                "TimeseriesFile": str(best.get("TimeseriesFile", "")),
-            }
-    except Exception:
-        pass
+    if backtested_alphas_override is not None:
+        data["backtested_alphas"] = int(backtested_alphas_override)
+    elif summary_csv is not None:
+        # Optionally include counts
+        try:
+            import pandas as _pd
+            df = _pd.read_csv(summary_csv)
+            data["backtested_alphas"] = int(len(df))
+            # Best Sharpe and a few handy fields for UI consumption
+            if "Sharpe" in df.columns and len(df) > 0:
+                best = df.sort_values("Sharpe", ascending=False).iloc[0]
+                data["best_metrics"] = {
+                    "Sharpe": float(best.get("Sharpe", 0.0)),
+                    "AnnReturn": float(best.get("AnnReturn", 0.0)),
+                    "MaxDD": float(best.get("MaxDD", 0.0)),
+                    "Ops": int(best.get("Ops", 0)),
+                    "AlphaID": str(best.get("AlphaID", "")),
+                    "TimeseriesFile": str(best.get("TimeseriesFile", "")),
+                }
+        except Exception:
+            pass
+    if note:
+        data["note"] = note
     out = run_dir / "SUMMARY.json"
     with open(out, "w") as fh:
         _json.dump(data, fh, indent=2)
@@ -321,7 +332,9 @@ def _write_hof_snapshots(run_dir: Path) -> list[Path]:
         except Exception:
             continue
     return out_paths
-def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
+
+
+def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> tuple[Path, int]:
     import time
     logger = logging.getLogger(__name__)
     logger.info(f"\n— Evolution: {cfg.generations} generations  (seed {cfg.seed})")
@@ -337,7 +350,7 @@ def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> Path:
         pickle.dump(hof, fh)
 
     logger.info(f"Saved {len(hof)} programmes → {out_file}")
-    return out_file
+    return out_file, len(hof)
 
 
 def _train_baselines(data_dir: str, out_dir: Path, *, retrain: bool = False) -> None:
@@ -544,7 +557,7 @@ def run_pipeline_programmatic(
         return run_dir
 
     try:
-        pickle_path = _evolve_and_save(evo_cfg, run_dir)
+        pickle_path, hof_count = _evolve_and_save(evo_cfg, run_dir)
     except DataLoadError as e:
         logger.exception("Evolution failed due to data loading error: %s", e)
         raise
@@ -556,6 +569,27 @@ def run_pipeline_programmatic(
         _write_data_alignment_meta(run_dir, evo_cfg)
     except Exception:
         logger.warning("Failed to write data alignment metadata.")
+
+    if hof_count == 0:
+        logger.warning("Evolution produced no valid programmes; skipping back-test.")
+        try:
+            _write_summary_json(
+                run_dir,
+                pickle_path,
+                summary_csv=None,
+                backtested_alphas_override=0,
+                note="No valid programmes evolved; back-test skipped.",
+            )
+        except Exception:
+            logger.info("Failed to write SUMMARY.json; continuing.")
+        if opts.run_baselines:
+            _train_baselines(
+                bt_cfg.data_dir,
+                run_dir,
+                retrain=opts.retrain_baselines,
+            )
+        logger.info("\n✔  Pipeline finished – no programmes to back-test; artefacts in  %s", run_dir)
+        return run_dir
 
     try:
         from alpha_evolve.utils import diagnostics as diag

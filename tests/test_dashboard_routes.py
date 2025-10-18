@@ -95,6 +95,46 @@ async def dashboard_env(tmp_path, monkeypatch):
             importlib.reload(app_mod)
 
 
+async def test_line_to_event_strips_ansi_sequences():
+    from alpha_evolve.dashboard.api.routes.run_pipeline import _line_to_event
+
+    payload = {
+        "type": "gen_progress",
+        "gen": 3,
+        "completed": 24,
+        "total": 64,
+        "best": 0.42,
+        "median": 0.12,
+    }
+    line = "\x1b[32mPROGRESS " + json.dumps(payload) + "\x1b[0m"
+
+    event = _line_to_event(line)
+    assert event["type"] == "progress"
+    assert event.get("data") == payload
+    assert "raw" in event
+    assert "\x1b" not in event["raw"]
+
+
+async def test_line_to_event_normalizes_nonfinite_values():
+    from alpha_evolve.dashboard.api.routes.run_pipeline import _line_to_event
+
+    line = (
+        "\x1b[32mPROGRESS "
+        '{"type": "gen_progress", "gen": 2, "completed": 3, "total": 5, '
+        '"best": -Infinity, "median": NaN, "eta_sec": Infinity, "history": [NaN, 1.0]}'
+        "\x1b[0m"
+    )
+    event = _line_to_event(line)
+    data = event["data"]
+    assert data["gen"] == 2
+    assert data["best"] is None
+    assert data["median"] is None
+    assert data["eta_sec"] is None
+    assert data["history"] == [None, 1.0]
+    # Should serialize cleanly for SSE dispatch
+    json.dumps(event)
+
+
 async def test_build_pipeline_args_defaults_to_sp500():
     payload = {"generations": 3, "dataset": "sp500"}
     args = build_pipeline_args(payload, include_runner=False)
