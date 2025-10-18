@@ -677,13 +677,9 @@ export function App(): React.ReactElement {
             <div className="runner-shell" data-test="controls-runner">
               <RunnerCanvas />
             </div>
-            <div className="app-layout" data-test="controls-layout">
-              <div className="app-sidebar">
-                <PipelineControls onSubmit={handleStartPipeline} busy={Boolean(job && job.status === "running")} />
-              </div>
-              <div className="app-content">
-                <JobConsole job={job} onCopyLog={handleCopyLog} onStop={handleStopJob} />
-              </div>
+            <div className="app-layout app-layout--stack" data-test="controls-layout">
+              <PipelineControls onSubmit={handleStartPipeline} busy={Boolean(job && job.status === "running")} />
+              <JobConsole job={job} onCopyLog={handleCopyLog} onStop={handleStopJob} />
             </div>
           </>
         ) : null}

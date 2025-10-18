@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "update:artifacts": "node scripts/updateArtifacts.mjs",
-    "predev": "npm run update:artifacts",
+    "predev": "node scripts/predevAutocapture.mjs",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",

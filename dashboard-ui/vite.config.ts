@@ -9,6 +9,11 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const updateScript = path.resolve(__dirname, "scripts", "updateArtifacts.mjs");
 const DEV_CAPTURE_URL = process.env.AE_DEV_CAPTURE_URL ?? "http://127.0.0.1:5173/";
+const autoCaptureEnabled = Boolean(process.env.AE_ENABLE_AUTOCAPTURE) && !process.env.AE_SKIP_AUTOCAPTURE;
+
+if (!autoCaptureEnabled) {
+  console.info("[artifacts] Auto capture disabled (set AE_ENABLE_AUTOCAPTURE=1 to enable).");
+}
 
 function runUpdateArtifactsCLI(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -35,11 +40,6 @@ function artifactsAutoCapturePlugin() {
     name: "alpha-evolve-artifacts-autocapture",
     apply: "serve",
     configureServer(server) {
-      if (process.env.AE_SKIP_AUTOCAPTURE) {
-        server.config.logger.info("[artifacts] Auto capture disabled via AE_SKIP_AUTOCAPTURE.");
-        return;
-      }
-
       let running = false;
       let pendingReason: string | null = null;
       let timer: NodeJS.Timeout | null = null;
@@ -88,9 +88,6 @@ function artifactsAutoCapturePlugin() {
       });
     },
     handleHotUpdate(ctx) {
-      if (process.env.AE_SKIP_AUTOCAPTURE) {
-        return;
-      }
       if (ctx.file.includes(`${path.sep}artifacts${path.sep}`)) {
         return;
       }
@@ -102,7 +99,7 @@ function artifactsAutoCapturePlugin() {
 
 export default defineConfig({
   base: "./",
-  plugins: [react(), artifactsAutoCapturePlugin()],
+  plugins: autoCaptureEnabled ? [react(), artifactsAutoCapturePlugin()] : [react()],
   build: {
     sourcemap: true,
     outDir: "dist",

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { fetchConfigList } from "../api";
 import { ConfigListItem, PipelineRunRequest } from "../types";
 
@@ -13,6 +13,7 @@ export function PipelineControls({
   busy,
   defaultDataset = "sp500",
 }: PipelineControlsProps): React.ReactElement {
+  const formId = useId();
   const dataset = defaultDataset;
   const datasetLabel = dataset === "sp500" ? "S&P 500 (daily)" : dataset;
   const [generationInput, setGenerationInput] = useState("5");
@@ -99,8 +100,20 @@ export function PipelineControls({
 
   return (
     <section className="panel panel-controls">
-      <h2>Pipeline Controls</h2>
-      <form className="form-grid" onSubmit={handleSubmit}>
+      <div className="panel-header">
+        <h2>Pipeline Controls</h2>
+        <div className="panel-actions">
+          <button
+            className="btn btn-primary"
+            type="submit"
+            form={formId}
+            disabled={busy || hasInvalidInput || hasZeroValue}
+          >
+            {busy ? "Running…" : "Launch Pipeline"}
+          </button>
+        </div>
+      </div>
+      <form id={formId} className="form-grid" onSubmit={handleSubmit}>
         <label className="form-field">
           <span className="form-label">Dataset preset</span>
           <input type="text" value={datasetLabel} readOnly />
@@ -146,12 +159,6 @@ export function PipelineControls({
 
         {configLoading ? <p className="muted">Loading configuration presets…</p> : null}
         {configError ? <p className="muted error-text">{configError}</p> : null}
-
-        <div className="form-actions">
-          <button className="btn btn-primary" type="submit" disabled={busy || hasInvalidInput || hasZeroValue}>
-            {busy ? "Running…" : "Launch Pipeline"}
-          </button>
-        </div>
 
         {inlineNotice ? <p className="form-warning">{inlineNotice}</p> : null}
         {message ? <div className="form-message">{message}</div> : null}

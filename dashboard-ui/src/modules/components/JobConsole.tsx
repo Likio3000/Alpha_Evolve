@@ -1,6 +1,5 @@
 import React, { useMemo } from "react";
 import { ActivityStatus } from "./pipeline-activity/ActivityStatus";
-import { ChampionPanel } from "./pipeline-activity/ChampionPanel";
 import { DiagnosticsPanel } from "./pipeline-activity/DiagnosticsPanel";
 import { MetricEntry, MetricsDeck } from "./pipeline-activity/MetricsDeck";
 import {
@@ -94,21 +93,6 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
     return sortEntriesByMagnitude(filtered, 5);
   }, [latestSummary]);
 
-  const factorExposures = useMemo(
-    () => (latestSummary ? sortEntriesByMagnitude(latestSummary.best.factorExposures, 5, 1e-4) : []),
-    [latestSummary],
-  );
-
-  const regimeExposures = useMemo(
-    () => (latestSummary ? sortEntriesByMagnitude(latestSummary.best.regimeExposures, 5, 1e-4) : []),
-    [latestSummary],
-  );
-
-  const stressMetrics = useMemo(
-    () => (latestSummary ? sortEntriesByMagnitude(latestSummary.best.stressMetrics, 5, 1e-4) : []),
-    [latestSummary],
-  );
-
   const cadenceStats = useMemo(() => {
     const stats: Array<{ label: string; value: string }> = [];
     const generationTime = formatDuration(latestSummary?.timing.generationSeconds);
@@ -200,6 +184,29 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
     previousSummary,
   ]);
 
+  const programMeta = useMemo(() => {
+    if (!latestSummary) {
+      return [];
+    }
+    const meta: Array<{ label: string; value: string }> = [];
+    const programSize = latestSummary.best.programSize;
+    if (programSize !== undefined && programSize !== null) {
+      meta.push({ label: "Program size", value: `${programSize}` });
+    }
+    const turnoverValue = latestSummary.best.turnover;
+    if (turnoverValue !== undefined && turnoverValue !== null) {
+      meta.push({ label: "Turnover", value: formatNumber(turnoverValue, 4) });
+    }
+    const populationSize = latestSummary.population.size;
+    const populationUnique = latestSummary.population.uniqueFingerprints;
+    if (populationSize !== undefined && populationSize !== null) {
+      const uniqueLabel =
+        populationUnique !== undefined && populationUnique !== null ? ` (${populationUnique} unique)` : "";
+      meta.push({ label: "Population", value: `${populationSize}${uniqueLabel}` });
+    }
+    return meta;
+  }, [latestSummary]);
+
   const handleCopy = () => {
     if (!onCopyLog) return;
     onCopyLog(job);
@@ -241,20 +248,23 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
         contribsPending={!latestSummary}
       />
 
-      <ChampionPanel
-        fingerprint={latestSummary?.best.fingerprint}
-        program={latestSummary?.best.program}
-        populationSize={latestSummary?.population.size}
-        populationUnique={latestSummary?.population.uniqueFingerprints}
-        programSize={latestSummary?.best.programSize}
-        turnover={latestSummary?.best.turnover}
-        factorExposures={factorExposures}
-        regimeExposures={regimeExposures}
-        stressMetrics={stressMetrics}
-        pending={!latestSummary}
-      />
-
-      {!latestSummary ? (
+      {latestSummary ? (
+        <div className="pipeline-activity__program-card">
+          {programMeta.length ? (
+            <div className="pipeline-activity__program-meta">
+              {programMeta.map((entry) => (
+                <span key={entry.label}>
+                  {entry.label}: <strong>{entry.value}</strong>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <h3 className="pipeline-activity__program-title">Program listing</h3>
+          <pre className="pipeline-activity__program-snippet">
+            {latestSummary.best.program ?? "Program details not available."}
+          </pre>
+        </div>
+      ) : (
         <div className="pipeline-activity__pending">
           <h3>Awaiting first generation summary</h3>
           <p className="muted">
@@ -262,9 +272,9 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
             generation summary.
           </p>
         </div>
-      ) : null}
+      )}
 
-      <div className="pipeline-activity__log">
+      <div className="pipeline-activity__log pipeline-activity__log-card">
         <div className="pipeline-activity__log-header">
           <span>Live log</span>
           {job.sharpeBest !== undefined ? (

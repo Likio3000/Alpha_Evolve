@@ -125,6 +125,15 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.app-layout--stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-layout--stack > * {
+  justify-self: stretch;
+  width: 100%;
+}
+
 .app-sidebar {
   display: grid;
   gap: 24px;
@@ -649,7 +658,21 @@ body {
 /* Forms */
 .form-grid {
   display: grid;
-  gap: 12px;
+  gap: 14px;
+}
+
+@media (min-width: 720px) {
+  .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px 20px;
+    align-items: end;
+  }
+
+  .form-grid > .form-message,
+  .form-grid > .form-warning,
+  .form-grid > p {
+    grid-column: 1 / -1;
+  }
 }
 
 .form-field {
@@ -681,11 +704,6 @@ body {
 
 .form-field input[type="number"] {
   -moz-appearance: textfield;
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
 }
 
 .form-message {
@@ -989,8 +1007,8 @@ body {
 
 .pipeline-activity__metrics {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .pipeline-activity__metric {
@@ -1086,14 +1104,6 @@ body {
   color: var(--muted);
 }
 
-.pipeline-activity__insight-card h4 {
-  margin: 12px 0 6px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-}
-
 .pipeline-activity__stat-list {
   list-style: none;
   margin: 0;
@@ -1149,52 +1159,34 @@ body {
   color: var(--danger);
 }
 
-.pipeline-activity__champion-grid {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-
-.pipeline-activity__champion-card {
+.pipeline-activity__program-card {
   background: rgba(9, 15, 21, 0.84);
   border: 1px solid rgba(28, 44, 60, 0.6);
   border-radius: 12px;
-  padding: 16px 18px;
+  padding: 18px 20px;
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
-.pipeline-activity__champion-card--code {
-  grid-column: 1 / -1;
+.pipeline-activity__program-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
-.pipeline-activity__champion-card h3 {
+.pipeline-activity__program-meta strong {
+  color: #e6f3ff;
+  font-weight: 600;
+}
+
+.pipeline-activity__program-title {
   margin: 0;
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
-}
-
-.pipeline-activity__champion-card h4 {
-  margin: 0 0 6px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-}
-
-.pipeline-activity__champion-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.pipeline-activity__champion-meta strong {
-  color: #e6f3ff;
-  font-weight: 600;
 }
 
 .pipeline-activity__pending {
@@ -1214,19 +1206,6 @@ body {
   color: #e6f3ff;
 }
 
-.pipeline-activity__program {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(40, 64, 82, 0.7);
-  background: rgba(12, 18, 24, 0.85);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  word-break: break-all;
-}
-
 .pipeline-activity__program-snippet {
   margin: 0;
   background: #0f1419;
@@ -1237,17 +1216,14 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   white-space: pre-wrap;
   line-height: 1.4;
-}
-
-.pipeline-activity__exposure-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 520px;
 }
 
 .pipeline-activity__log {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .pipeline-activity__log-header {
@@ -1261,14 +1237,24 @@ body {
   color: var(--muted);
 }
 
+.pipeline-activity__log-card {
+  background: rgba(9, 15, 21, 0.84);
+  border: 1px solid rgba(28, 44, 60, 0.6);
+  border-radius: 12px;
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
 .log-viewer {
-  max-height: 220px;
+  max-height: 260px;
   overflow-y: auto;
   background: #0f1419;
   border: 1px solid rgba(31, 36, 42, 0.9);
   border-radius: 8px;
   padding: 12px;
-  margin: 0 0 12px;
+  margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   white-space: pre-wrap;

@@ -55,8 +55,9 @@ The dashboard front-end lives in `dashboard-ui/` and is now written in React + T
 ### Automation Helpers
 
 - `python3 scripts/dev/server_manager.py start` manages the Django/Uvicorn backend with `stop`, `restart`, `status`, and `tail` subcommands. Use `--watch` for auto-restart on backend changes.
-- `npm run update:artifacts` wraps `python3 scripts/dev/run_iteration.py`; it runs automatically before `npm run dev` so `artifacts/now_ui` always reflects your latest UI build. Export `AE_SKIP_AUTOCAPTURE=1` to disable every automated capture in that shell.
-- `npm run dev` keeps the screenshots fresh during hot reload: after the dev server’s first compile and after each HMR cycle, a lightweight capture runs with `--skip-build --reuse-server --dashboard-url http://127.0.0.1:5173/`, rotating `now_ui → past_ui → past_ui2`.
+- `npm run update:artifacts` wraps `python3 scripts/dev/run_iteration.py`, rotating the screenshot slots and copying the latest backend log. Export `AE_ENABLE_AUTOCAPTURE=1` to run it automatically before `npm run dev`; combine with `AE_SKIP_AUTOCAPTURE=1` to force-disable even when the flag is set.
+- `npm run update:artifacts` still works as a one-off refresh even when automation is disabled.
+- `npm run dev` only refreshes screenshots automatically when you opt in by exporting `AE_ENABLE_AUTOCAPTURE=1`. With the flag set (and `AE_SKIP_AUTOCAPTURE` unset) the dev server triggers `run_iteration.py` after the first compile and after each HMR cycle using `--skip-build --reuse-server --dashboard-url http://127.0.0.1:5173/`, rotating `now_ui → past_ui → past_ui2`.
 - `npm run capture:screens` captures Backtest Analysis, Pipeline Controls, and Settings via Playwright, writing `backtest-analysis.png`, `pipeline-controls.png`, and `settings-presets.png` into the active slot.
 - `python3 scripts/dev/run_iteration.py` is the orchestration entrypoint: it rotates the three slots, optionally starts the backend, rebuilds the UI, captures screenshots, and copies the backend log into the fresh slot as `dashboard-server.log`.
 - See `docs/dev-automation-roadmap.md` for the full automation plan and `docs/iteration-log.md` for the slot layout.
