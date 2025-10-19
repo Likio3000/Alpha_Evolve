@@ -7,6 +7,7 @@ client code does not need to handle the optional dependency.
 """
 
 from __future__ import annotations
+import sys
 try:
     from tqdm import tqdm
 except ImportError:
@@ -36,8 +37,16 @@ def pbar(iterable, *, desc: str, disable: bool, total: int | None = None):
         with ``update`` and ``close`` methods is provided for compatibility.
     """
     if tqdm and not disable:
-        return tqdm(iterable, desc=desc, total=total, leave=False, ncols=100,
-                    bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]')  # type: ignore
+        return tqdm(
+            iterable,
+            desc=desc,
+            total=total,
+            leave=False,
+            mininterval=0.3,
+            ncols=100,
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+            file=sys.stdout,
+        )  # type: ignore
     class _DummyPBar:
         def __init__(self, it, **_kwargs):
             self._it = iter(it)

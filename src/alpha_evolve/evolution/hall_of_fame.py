@@ -281,6 +281,9 @@ def add_program_to_hof(
     logger = logging.getLogger(__name__)
 
     fp = program.fingerprint
+    was_known_fp = fp in _hof_fingerprints_set
+    prev_best_fp = _hof_programs_data[0].fingerprint if _hof_programs_data else None
+    prev_best_fitness = _hof_programs_data[0].metrics.fitness if _hof_programs_data else float("-inf")
 
     # Reject if the new program's predictions are highly correlated with any
     # existing HOF entry.  Skip comparison against entries that share the same
@@ -341,9 +344,6 @@ def add_program_to_hof(
         _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
         _hof_fingerprints_set.add(fp)
         inserted = True
-
-
-        _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)  # Sort by fitness
     if len(_hof_programs_data) > _hof_max_size:
         removed_prog_data = _hof_programs_data.pop()
         # If we remove a unique program, ensure its fingerprint is also removed from the set
@@ -368,14 +368,24 @@ def add_program_to_hof(
     if inserted:
         # Always keep HOF sorted by fitness, even on in-place updates
         _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)
-        
-        logger.info(
-            "HOF + %-8s fit=%+.4f  IC=%+.4f  ops=%d",
-            fp[:8],
-            metrics.fitness,
-            metrics.mean_ic,
-            program.size,
+        top_entry = _hof_programs_data[0] if _hof_programs_data else None
+        still_in_hof = any(entry.fingerprint == fp for entry in _hof_programs_data)
+        new_best_fp = top_entry.fingerprint if top_entry is not None else None
+        new_best_fitness = top_entry.metrics.fitness if top_entry is not None else float("-inf")
+        new_fp_added = (not was_known_fp) and still_in_hof
+        best_beaten = (
+            top_entry is not None
+            and new_best_fp == fp
+            and new_best_fitness > prev_best_fitness + 1e-6
         )
+        if still_in_hof and (new_fp_added or best_beaten):
+            logger.info(
+                "HOF + %-8s fit=%+.4f  IC=%+.4f  ops=%d",
+                fp[:8],
+                metrics.fitness,
+                metrics.mean_ic,
+                program.size,
+            )
 
 
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
@@ -438,27 +448,32 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     # The printing should just reflect the current state of _hof_programs_data.
 
     logger = logging.getLogger(__name__)
-    logger.info("\n★ Generation %s – Top (up to) %s overall from HOF ★", generation+1, _TOP_TO_SHOW_PRINT)
     hdr = " Rank | Fitness | Fixed |  IC  | Ops | Gen | Finger  | First 90 chars"
-    logger.info(hdr)
-    logger.info("─" * len(hdr))
-    
+    lines = [
+        f"\n★ Generation {generation+1} – Top (up to) {_TOP_TO_SHOW_PRINT} overall from HOF ★",
+        hdr,
+        "─" * len(hdr),
+    ]
+
     # Print from the managed _hof_programs_data
     for rk, entry in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
         head = textwrap.shorten(entry.program.to_string(max_len=300), width=90, placeholder="…")
         fx = getattr(entry.metrics, "fitness_static", None)
         fx_val = fx if fx is not None else float('nan')
-        logger.info(
-            " %4d | %+7.4f | %+7.4f | %+5.3f | %3d | %3d | %s | %s",
-            rk,
-            entry.metrics.fitness,
-            fx_val,
-            entry.metrics.mean_ic,
-            entry.program.size,
-            entry.generation + 1,
-            entry.fingerprint[:8],
-            head,
+        lines.append(
+            " %4d | %+7.4f | %+7.4f | %+5.3f | %3d | %3d | %s | %s"
+            % (
+                rk,
+                entry.metrics.fitness,
+                fx_val,
+                entry.metrics.mean_ic,
+                entry.program.size,
+                entry.generation + 1,
+                entry.fingerprint[:8],
+                head,
+            )
         )
+    logger.info("\n".join(lines))
 def clear_hof():
     """Clears all HOF state."""
     global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints, _hof_raw_pred_matrix

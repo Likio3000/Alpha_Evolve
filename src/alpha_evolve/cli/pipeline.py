@@ -338,8 +338,29 @@ def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> tuple[Path, 
     import time
     logger = logging.getLogger(__name__)
     logger.info(f"\n— Evolution: {cfg.generations} generations  (seed {cfg.seed})")
-    hof = ae.evolve(cfg)                                   # List[(AlphaProgram, IC)]
-    hof = hof[:cfg.hof_size]
+    raw_hof = ae.evolve(cfg)  # List[(AlphaProgram, IC)]
+
+    # Deduplicate by fingerprint while preserving order so back-test work is not repeated
+    seen_fps: set[str] = set()
+    hof = []
+    dropped = 0
+    for prog, score in raw_hof:
+        fp = getattr(prog, "fingerprint", None)
+        key = fp if isinstance(fp, str) else None
+        if key is not None and key in seen_fps:
+            dropped += 1
+            continue
+        if key is not None:
+            seen_fps.add(key)
+        hof.append((prog, score))
+        if len(hof) >= cfg.hof_size:
+            break
+    if dropped:
+        logger.info(
+            "Deduplicated HOF candidates: kept %d unique programmes (dropped %d duplicates)",
+            len(hof),
+            dropped,
+        )
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     out_file = (run_output_dir / "pickles" /

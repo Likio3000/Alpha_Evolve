@@ -328,8 +328,10 @@ def run(
         )
         results.append(metrics)
 
+        alpha_label = metrics.get("AlphaID", f"Alpha_{idx:02d}")
         lg.info(
-            " └─ Sharpe %+0.3f  AnnRet %6.2f%%  MaxDD %6.2f%%  Turnover %.4f",
+            "    ↳ %s  Sharpe %+0.3f  AnnRet %6.2f%%  MaxDD %6.2f%%  Turnover %.4f",
+            alpha_label,
             metrics.get("Sharpe", 0.0),
             metrics.get("AnnReturn", 0.0) * 100,
             metrics.get("MaxDD", 0.0) * 100,
@@ -415,12 +417,7 @@ def run(
         except Exception:
             # Ensemble is best-effort; do not fail the run if issues arise
             pass
-        try:
-            printable = df.drop(columns=["Program", "TimeseriesFile"], errors="ignore")
-            lg.info("\n%s", printable.to_string(index=False))
-        except Exception:
-            pass
-        lg.info("Back-test summary written → %s", summary_csv)
+        lg.info("Back-test summary written → %s (%d alphas)", summary_csv, len(df))
         return summary_csv
     else:
         raise RuntimeError("Backtest produced no results")

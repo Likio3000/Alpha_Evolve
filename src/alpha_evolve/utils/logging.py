@@ -10,6 +10,9 @@ except Exception:  # pragma: no cover
     _tqdm = None  # type: ignore
 
 
+_CONSOLE_HANDLER: "_TqdmCompatibleHandler | None" = None
+
+
 class _TqdmCompatibleHandler(logging.StreamHandler):
     """A logging handler that plays nicely with tqdm progress bars.
 
@@ -20,12 +23,12 @@ class _TqdmCompatibleHandler(logging.StreamHandler):
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
         try:
             msg = self.format(record)
+            target = self.stream if hasattr(self, "stream") and self.stream is not None else sys.stdout
             if _tqdm is not None:
-                _tqdm.write(msg)
+                _tqdm.write(msg, file=target)
             else:
-                stream = self.stream if hasattr(self, "stream") else sys.stdout
-                stream.write(msg + os.linesep)
-                stream.flush()
+                target.write(msg + os.linesep)
+                target.flush()
         except Exception:  # pragma: no cover
             self.handleError(record)
 
@@ -70,7 +73,10 @@ class _ColorFormatter(logging.Formatter):
 
 def _make_console_handler(level: int) -> logging.Handler:
     """Build a tqdm-friendly, colorized console handler."""
-    handler = _TqdmCompatibleHandler(stream=sys.stdout)
+    global _CONSOLE_HANDLER
+    if _CONSOLE_HANDLER is None:
+        _CONSOLE_HANDLER = _TqdmCompatibleHandler(stream=sys.stdout)
+    handler = _CONSOLE_HANDLER
     handler.setLevel(level)
 
     # Detect whether to color: TTY and not NO_COLOR, or FORCE_COLOR set

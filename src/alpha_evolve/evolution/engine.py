@@ -1,8 +1,9 @@
 from __future__ import annotations
+import math
 import random
 import time
+import json as _json
 from typing import Dict, List, Tuple, Set
-import math
 from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
@@ -52,9 +53,16 @@ def _pool_init(data_dir: str, strategy: str, min_common_points: int, eval_lag: i
     from alpha_evolve.evolution import data as _dh
     global _WORKER_CTX
     try:
-        # Precompute column matrices in each worker for vector features
-        # Avoid heavy precompute in workers to reduce init overhead and memory.
-        cols = None
+        # Precompute column matrices in each worker for vector features so we avoid
+        # repeated DataFrame lookups during program evaluation. The caller already
+        # trims out sector IDs, so mirror that logic here.
+        cols = sorted(
+            {
+                name.replace("_t", "")
+                for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+                if name != "sector_id_vector"
+            }
+        )
         _WORKER_CTX = _mk(
             data_dir=data_dir,
             strategy=strategy,
@@ -372,6 +380,57 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             t_start_gen = time.perf_counter()
             eval_results: List[Tuple[int, el_module.EvalResult]] = []
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
+            progress_total = max(1, int(cfg.pop_size) if getattr(cfg, "pop_size", None) else len(pop))
+            progress_step = max(1, int(math.ceil(progress_total / 20)))
+            last_progress_completed = -progress_step
+            last_progress_best = float("-inf")
+            last_progress_median = float("nan")
+
+            def _value_changed(curr: float, prev: float) -> bool:
+                if math.isnan(curr) and math.isnan(prev):
+                    return False
+                if curr == prev:
+                    return False
+                if not math.isfinite(curr) or not math.isfinite(prev):
+                    return curr != prev
+                return abs(curr - prev) > 1e-6
+
+            def _maybe_emit_progress(
+                completed: int,
+                best_score: float,
+                median_score: float,
+                elapsed_sec: float,
+                eta_sec: float | None,
+            ) -> None:
+                nonlocal last_progress_completed, last_progress_best, last_progress_median
+                if completed < 0:
+                    return
+                should_emit = False
+                if completed >= progress_total:
+                    should_emit = True
+                elif completed - last_progress_completed >= progress_step:
+                    should_emit = True
+                elif _value_changed(best_score, last_progress_best) or _value_changed(median_score, last_progress_median):
+                    should_emit = True
+                if not should_emit:
+                    return
+                last_progress_completed = completed
+                last_progress_best = best_score
+                last_progress_median = median_score
+                payload = {
+                    "type": "gen_progress",
+                    "gen": int(gen + 1),
+                    "completed": int(min(completed, progress_total)),
+                    "total": int(progress_total),
+                    "best": float(best_score),
+                    "median": float(median_score),
+                    "elapsed_sec": float(elapsed_sec),
+                    "eta_sec": float(eta_sec) if eta_sec is not None else None,
+                }
+                try:
+                    logger.info("PROGRESS %s", _json.dumps(payload))
+                except Exception:
+                    pass
 
             # Helper to choose selection score based on configuration
             def _sel_score(res: el_module.EvalResult) -> float:
@@ -525,32 +584,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             result.mean_ic,
                             pop[i].size,
                         )
-                        if not cfg.quiet and hasattr(bar, 'set_postfix_str'):
-                            valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
-                            best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
-                            bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
-                        # Emit live progress JSON for dashboards
                         try:
-                            import json as _json
-                            valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
-                            best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float('-inf')
-                            median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float('nan')
+                            valid_scores = pop_fitness_scores[np.isfinite(pop_fitness_scores)]
+                            best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float("-inf")
+                            if not cfg.quiet and hasattr(bar, "set_postfix_str"):
+                                bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+                            median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float("nan")
                             elapsed = float(time.perf_counter() - t_start_gen)
-                            frac = completed / max(1, cfg.pop_size)
+                            frac = completed / float(progress_total)
                             eta = (elapsed / frac - elapsed) if frac > 1e-6 else None
-                            logger.info(
-                                "PROGRESS %s",
-                                _json.dumps({
-                                    "type": "gen_progress",
-                                    "gen": int(gen + 1),
-                                    "completed": int(completed),
-                                    "total": int(cfg.pop_size),
-                                    "best": best_score_so_far,
-                                    "median": median_so_far,
-                                    "elapsed_sec": elapsed,
-                                    "eta_sec": float(eta) if eta is not None else None,
-                                }),
-                            )
+                            _maybe_emit_progress(int(completed), best_score_so_far, median_so_far, elapsed, eta)
                         except Exception:
                             pass
             else:
@@ -578,32 +621,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         result.mean_ic,
                         pop[i].size,
                     )
-                    if not cfg.quiet and hasattr(iterator, 'set_postfix_str'):
-                        valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
-                        best_score_so_far = np.max(valid_scores) if valid_scores.size > 0 else -np.inf
-                        iterator.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
-                    # Emit live progress JSON for dashboards
                     try:
-                        import json as _json
-                        valid_scores = pop_fitness_scores[pop_fitness_scores > -np.inf]
-                        best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float('-inf')
-                        median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float('nan')
+                        valid_scores = pop_fitness_scores[np.isfinite(pop_fitness_scores)]
+                        best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float("-inf")
+                        if not cfg.quiet and hasattr(iterator, "set_postfix_str"):
+                            iterator.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
+                        median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float("nan")
                         elapsed = float(time.perf_counter() - t_start_gen)
-                        frac = idx_in_seq / max(1, cfg.pop_size)
+                        frac = idx_in_seq / float(progress_total)
                         eta = (elapsed / frac - elapsed) if frac > 1e-6 else None
-                        logger.info(
-                            "PROGRESS %s",
-                            _json.dumps({
-                                "type": "gen_progress",
-                                "gen": int(gen + 1),
-                                "completed": int(idx_in_seq),
-                                "total": int(cfg.pop_size),
-                                "best": best_score_so_far,
-                                "median": median_so_far,
-                                "elapsed_sec": elapsed,
-                                "eta_sec": float(eta) if eta is not None else None,
-                            }),
-                        )
+                        _maybe_emit_progress(int(idx_in_seq), best_score_so_far, median_so_far, elapsed, eta)
                     except Exception:
                         pass
             
@@ -776,7 +803,6 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         pass
                     # Emit a structured per-generation diagnostic line for live dashboards
                     try:
-                        import json as _json
                         last_entry = diag.get_all()[-1] if hasattr(diag, "get_all") and diag.get_all() else None
                         if last_entry is not None:
                             logging.getLogger(__name__).info("DIAG %s", _json.dumps(last_entry))
@@ -872,8 +898,6 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
 
             # Emit a structured per-generation summary for SSE/dashboard consumption
             try:
-                import json as _json
-
                 gen_fraction = float((gen + 1) / max(1, cfg.generations))
                 sharpe_w = float(getattr(cfg, "sharpe_proxy_w", 0.0)) * float(min(1.0, ramp))
                 ic_std_w = float(getattr(cfg, "ic_std_penalty_w", 0.0)) * float(min(1.0, ramp))
@@ -1167,12 +1191,39 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
     # Precompute column matrices for all cross-sectional vector features (strip _t)
     try:
         from alpha_evolve.programs.types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN
-        derived = set(getattr(dh_module, "DERIVED_VECTOR_FEATURES", set()))
-        cols = [
-            c.replace("_t", "")
-            for c in _VECN
-            if c != "sector_id_vector" and c not in derived
-        ]
+
+        def _normalize(name: str | None) -> str | None:
+            if not name:
+                return None
+            trimmed = str(name).strip()
+            if not trimmed or trimmed == "sector_id_vector":
+                return None
+            return trimmed.replace("_t", "")
+
+        requested_cols: set[str] = set()
+        for feature_name in _VECN:
+            normalized = _normalize(feature_name)
+            if normalized:
+                requested_cols.add(normalized)
+
+        factor_sources = getattr(cfg, "factor_penalty_factors", ())
+        if isinstance(factor_sources, str):
+            factor_sources = [part.strip() for part in factor_sources.split(",")]
+        for name in factor_sources or ():
+            normalized = _normalize(name)
+            if normalized:
+                requested_cols.add(normalized)
+
+        regime_sources = getattr(cfg, "regime_diagnostic_factors", ())
+        for name in regime_sources or ():
+            normalized = _normalize(name)
+            if normalized:
+                requested_cols.add(normalized)
+
+        # Multiprocessing workers benefit from having the derived feature matrices
+        # pre-baked; fall back to None if anything goes wrong so we preserve
+        # legacy behaviour.
+        cols = sorted(requested_cols) if requested_cols else None
     except Exception:
         cols = None
     ctx = make_eval_context_from_dir(
