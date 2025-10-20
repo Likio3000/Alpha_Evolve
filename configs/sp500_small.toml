@@ -1,0 +1,28 @@
+[evolution]
+data_dir = "data_sp500_small"
+max_lookback_data_option = "full_overlap"
+min_common_points = 500
+eval_lag = 1
+generations = 6
+hof_size = 12
+seed = 42
+sector_neutralize = false
+winsor_p = 0.02
+selection_metric = "auto"
+ramp_fraction = 0.33
+ramp_min_gens = 4
+
+[backtest]
+data_dir = "data_sp500_small"
+max_lookback_data_option = "full_overlap"
+min_common_points = 500
+eval_lag = 1
+top_to_backtest = 5
+fee = 0.5
+hold = 1
+scale = "zscore"
+winsor_p = 0.02
+long_short_n = 0
+annualization_factor = 252
+stop_loss_pct = 0.0
+sector_neutralize_positions = false

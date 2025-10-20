@@ -23,3 +23,8 @@ This project runs inside a constrained sandbox where Python's `multiprocessing` 
 - From the CLI you can inspect the slot with `ls artifacts/now_ui` and open the PNGs in your viewer of choice (`xdg-open artifacts/now_ui/pipeline-controls.png` on Linux).
 - If you need fresh shots, rerun `npm run capture:screens` inside `dashboard-ui/`; the helper rotates previous captures into `artifacts/past_ui/` and `artifacts/past_ui2/` automatically.
 - Share these PNGs with other agents or humans when you need to illustrate the current dashboard state without rebuilding the app.
+
+## Frontend / backend coordination tips
+- Dataset and config presets surface via `/api/config/presets`. When you add a new preset, update both `_DATASET_PRESETS` (and any aliases) in `src/alpha_evolve/dashboard/api/helpers.py` and the labels/options in `dashboard-ui/src/modules/components/PipelineControls.tsx`.
+- Always rebuild the UI bundle after frontend changes so `dashboard-ui/dist/` stays in sync: `npm --prefix dashboard-ui run lint && npm --prefix dashboard-ui run build`.
+- API edits that introduce new response fields should be mirrored in the TypeScript types under `dashboard-ui/src/modules/types.ts` to keep the dashboard compiling cleanly.

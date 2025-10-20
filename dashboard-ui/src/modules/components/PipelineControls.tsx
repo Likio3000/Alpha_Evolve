@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useState } from "react";
-import { fetchConfigList } from "../api";
+import { fetchConfigList, fetchConfigPresets } from "../api";
 import { ConfigListItem, PipelineRunRequest } from "../types";
 
 interface PipelineControlsProps {
@@ -14,8 +14,14 @@ export function PipelineControls({
   defaultDataset = "sp500",
 }: PipelineControlsProps): React.ReactElement {
   const formId = useId();
-  const dataset = defaultDataset;
-  const datasetLabel = dataset === "sp500" ? "S&P 500 (daily)" : dataset;
+  const datasetLabels: Record<string, string> = {
+    sp500: "S&P 500 (daily)",
+    sp500_small: "S&P 500 (subset)",
+  };
+  const [dataset, setDataset] = useState(defaultDataset);
+  const [datasetOptions, setDatasetOptions] = useState<string[]>(defaultDataset ? [defaultDataset] : []);
+  const [datasetLoading, setDatasetLoading] = useState(false);
+  const [datasetError, setDatasetError] = useState<string | null>(null);
   const [generationInput, setGenerationInput] = useState("5");
   const [popSizeInput, setPopSizeInput] = useState("100");
   const [configPath, setConfigPath] = useState("");
@@ -23,6 +29,46 @@ export function PipelineControls({
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDataset(defaultDataset);
+  }, [defaultDataset]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadDatasets = async () => {
+      setDatasetLoading(true);
+      setDatasetError(null);
+      try {
+        const presets = await fetchConfigPresets();
+        if (cancelled) return;
+        const keys = Object.keys(presets).sort((a, b) => a.localeCompare(b));
+        setDatasetOptions(keys);
+        setDataset((prev) => {
+          if (prev && keys.includes(prev)) {
+            return prev;
+          }
+          if (defaultDataset && keys.includes(defaultDataset)) {
+            return defaultDataset;
+          }
+          return keys[0] ?? "";
+        });
+      } catch (error) {
+        if (!cancelled) {
+          const detail = error instanceof Error ? error.message : String(error);
+          setDatasetError(detail);
+        }
+      } finally {
+        if (!cancelled) {
+          setDatasetLoading(false);
+        }
+      }
+    };
+    void loadDatasets();
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultDataset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,7 +130,7 @@ export function PipelineControls({
     const overrides = { pop_size: parsedPopSize };
     const payload: PipelineRunRequest = {
       generations: parsedGenerations,
-      dataset: configPath ? undefined : dataset,
+      dataset: configPath ? undefined : dataset || undefined,
       config: configPath || undefined,
       overrides,
     };
@@ -116,7 +162,20 @@ export function PipelineControls({
       <form id={formId} className="form-grid" onSubmit={handleSubmit}>
         <label className="form-field">
           <span className="form-label">Dataset preset</span>
-          <input type="text" value={datasetLabel} readOnly />
+          <select
+            value={dataset}
+            onChange={(event) => setDataset(event.target.value)}
+            disabled={busy || datasetLoading}
+          >
+            {datasetOptions.length === 0 ? (
+              <option value="">No presets found</option>
+            ) : null}
+            {datasetOptions.map((value) => (
+              <option key={value} value={value}>
+                {datasetLabels[value] ?? value}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="form-field">
@@ -159,6 +218,9 @@ export function PipelineControls({
 
         {configLoading ? <p className="muted">Loading configuration presets…</p> : null}
         {configError ? <p className="muted error-text">{configError}</p> : null}
+        {datasetLoading ? <p className="muted">Loading dataset presets…</p> : null}
+        {datasetError ? <p className="muted error-text">{datasetError}</p> : null}
+        {configPath ? <p className="muted">Selected config overrides dataset defaults.</p> : null}
 
         {inlineNotice ? <p className="form-warning">{inlineNotice}</p> : null}
         {message ? <div className="form-message">{message}</div> : null}

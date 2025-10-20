@@ -363,6 +363,45 @@ uv run python -m alpha_evolve.cli.pipeline 5 --config configs/sp500.toml --selec
 By default SP500 runs don’t use a custom sector mapping; you can disable sector
 neutralization explicitly if desired.
 
+### Quickstart: SP500 (small subset)
+
+If you want a lighter bundle for faster local iterations, slice the Yahoo dump
+down to 30 symbols and ~3 years of history. This keeps enough overlap for the
+default scoring metrics while trimming alignment time and memory pressure.
+
+```bash
+# Creates ./data_sp500_small with 30 CSVs (default filters shown explicitly)
+uv run python scripts/make_sp500_subset.py --out data_sp500_small --tickers 30 \
+  --start-date 2020-01-01 --max-rows 756 --min-rows 504
+
+# Example pipeline run targeting the subset
+uv run python -m alpha_evolve.cli.pipeline 5 --config configs/sp500_small.toml \
+  --selection_metric auto --disable-align-cache --debug_prints
+```
+
+Feel free to tweak the thresholds (e.g., keep fewer tickers or a shorter window)
+to trade off runtime versus sample size.
+If your environment sandboxes writes outside the workspace, point `UV_CACHE_DIR`
+to a writable folder (e.g., `UV_CACHE_DIR=.uv_cache uv run …`).
+In the dashboard controls tab, pick the dataset preset `S&P 500 (subset)` for the
+trimmed bundle.
+
+### Dashboard presets integration
+
+The dashboard reads dataset/config presets from the backend endpoint
+`/api/config/presets`. To add or tweak a preset that the UI can select:
+
+- Register the preset path in `src/alpha_evolve/dashboard/api/helpers.py`
+  (`_DATASET_PRESETS`) and ensure any aliases resolve correctly.
+- Update UI selection labels or behaviour in
+  `dashboard-ui/src/modules/components/PipelineControls.tsx`.
+- Rebuild the frontend bundle so `/dashboard-ui/dist/*` matches the new code:
+  ```bash
+  npm --prefix dashboard-ui run lint
+  npm --prefix dashboard-ui run build
+  ```
+  Commit the updated `dist/` assets alongside the source changes.
+
 ## Limitations and Future Work
 
 The current implementation handles datasets without volume information. While the pipeline runs end-to-end, both the parameters and helper code are tuned to the author's private dataset (e.g. a numeric sector column) and fall short of the low alpha correlations reported in the paper. Increasing the quantity and diversity of data is a focus for future iterations.

@@ -30,6 +30,19 @@ uv run scripts/fetch_sp500_data.py --out data_sp500 --years 5
 
 Point future runs at the generated directory with `--data_dir data_sp500` or by setting it in a config preset.
 
+Prefer a leaner dataset for smoke tests? Trim the Yahoo bundle to 30 symbols and
+~3 years of history:
+
+```bash
+uv run python scripts/make_sp500_subset.py --out data_sp500_small --tickers 30 \
+  --start-date 2020-01-01 --max-rows 756 --min-rows 504
+```
+
+The preset `configs/sp500_small.toml` picks up that directory and lowers the
+alignment horizon to 500 shared bars so runs finish quickly.
+Inside the dashboard’s Controls tab you can also select the dataset preset
+named `S&P 500 (subset)` for the same configuration.
+
 ## 3. Launch the Dashboard Server
 Set the pipeline output directory (defaults to `pipeline_runs_cs/` relative to the repo) and start the ASGI app:
 

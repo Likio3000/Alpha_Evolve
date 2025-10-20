@@ -77,6 +77,37 @@ def resolve_latest_run_dir() -> Optional[Path]:
     return None
 
 
+_DATASET_PRESETS: Dict[str, Path] = {
+    "sp500": ROOT / "configs" / "sp500.toml",
+    "sp500_small": ROOT / "configs" / "sp500_small.toml",
+}
+_DATASET_ALIASES: Dict[str, str] = {
+    "s&p500": "sp500",
+    "snp500": "sp500",
+    "sp500-small": "sp500_small",
+    "sp500subset": "sp500_small",
+}
+
+
+def resolve_dataset_preset(name: str) -> Optional[Path]:
+    key = name.strip().lower()
+    canonical = _DATASET_ALIASES.get(key, key)
+    path = _DATASET_PRESETS.get(canonical)
+    if path and path.exists():
+        return path
+    return None
+
+
+def dataset_presets() -> Dict[str, Path]:
+    return {key: path for key, path in _DATASET_PRESETS.items() if path.exists()}
+
+
+def known_dataset_names() -> set[str]:
+    names = set(_DATASET_PRESETS.keys())
+    names.update(_DATASET_ALIASES.keys())
+    return names
+
+
 def build_pipeline_args(payload: Dict[str, Any], include_runner: bool = True) -> list[str]:
     """Map JSON payload to a run_pipeline invocation args list.
 
@@ -93,8 +124,9 @@ def build_pipeline_args(payload: Dict[str, Any], include_runner: bool = True) ->
     dataset = str(payload.get("dataset", "")).strip().lower()
     cfg_path = payload.get("config")
     if not cfg_path and dataset:
-        if dataset in ("sp500", "s&p500", "snp500"):
-            cfg_path = str(ROOT / "configs" / "sp500.toml")
+        preset = resolve_dataset_preset(dataset)
+        if preset:
+            cfg_path = str(preset)
     if cfg_path:
         args += ["--config", str(cfg_path)]
     if payload.get("data_dir"):

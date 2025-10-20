@@ -9,7 +9,7 @@ from django.http import HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from ..helpers import ROOT
+from ..helpers import ROOT, dataset_presets, resolve_dataset_preset
 from ..http import json_error, json_response
 from alpha_evolve.config import BacktestConfig, EvolutionConfig
 
@@ -126,12 +126,12 @@ def list_configs(request: HttpRequest):
 
 def _preset_map() -> Dict[str, str]:
     presets: Dict[str, str] = {}
-    cand = {
-        "sp500": "configs/sp500.toml",
-    }
-    for key, rel in cand.items():
-        if (ROOT / rel).exists():
-            presets[key] = rel
+    for key, path in dataset_presets().items():
+        try:
+            rel = path.relative_to(ROOT)
+        except ValueError:
+            rel = path
+        presets[key] = str(rel)
     return presets
 
 
@@ -148,10 +148,9 @@ def get_preset_values(request: HttpRequest):
         return json_error("Provide dataset or path", 400)
     target: Optional[Path] = None
     if dataset:
-        rel = _preset_map().get(dataset.strip().lower())
-        if not rel:
+        target = resolve_dataset_preset(dataset)
+        if not target:
             return json_error("Unknown dataset preset", 404)
-        target = ROOT / rel
     elif path_param:
         p = Path(path_param)
         if p.is_absolute():

@@ -32,6 +32,8 @@ logs/
 # S&P 500 data (keep README tracked)
 data_sp500/*
 !data_sp500/README.md
+data_sp500_small/*
+!data_sp500_small/README.md
 # Legacy UI (deprecated)
 UI_alphas_lab/logs
 UI_alphas_lab/*.log
