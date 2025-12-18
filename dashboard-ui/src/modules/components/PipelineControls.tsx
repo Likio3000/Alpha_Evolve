@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface PipelineControlsProps {
   onSubmit: (payload: PipelineRunRequest) => Promise<void> | void;
@@ -169,42 +176,50 @@ export function PipelineControls({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label htmlFor="dataset">Dataset preset</Label>
-              <select
-                id="dataset"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              <Select
                 value={dataset}
-                onChange={(event) => setDataset(event.target.value)}
+                onValueChange={(value) => setDataset(value)}
                 disabled={busy || datasetLoading}
               >
-                {datasetOptions.length === 0 ? (
-                  <option value="">No presets found</option>
-                ) : null}
-                {datasetOptions.map((value) => (
-                  <option key={value} value={value}>
-                    {datasetLabels[value] ?? value}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="dataset">
+                  <SelectValue placeholder="Select dataset" />
+                </SelectTrigger>
+                <SelectContent>
+                  {datasetOptions.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      No presets found
+                    </SelectItem>
+                  ) : null}
+                  {datasetOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {datasetLabels[value] ?? value}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {datasetLoading && <p className="text-xs text-muted-foreground">Loading dataset presets…</p>}
               {datasetError && <p className="text-xs text-destructive">{datasetError}</p>}
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="config">Config preset</Label>
-              <select
-                id="config"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              <Select
                 value={configPath}
-                onChange={(event) => setConfigPath(event.target.value)}
+                onValueChange={(value) => setConfigPath(value === "none" ? "" : value)}
                 disabled={busy || configLoading}
               >
-                <option value="">None (use dataset defaults)</option>
-                {configs.map((cfg) => (
-                  <option key={cfg.path} value={cfg.path}>
-                    {cfg.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="config">
+                  <SelectValue placeholder="Select config" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None (use dataset defaults)</SelectItem>
+                  {configs.map((cfg) => (
+                    <SelectItem key={cfg.path} value={cfg.path}>
+                      {cfg.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {configLoading && <p className="text-xs text-muted-foreground">Loading configs…</p>}
               {configError && <p className="text-xs text-destructive">{configError}</p>}
               {configPath && <p className="text-xs text-muted-foreground">Overrides dataset defaults</p>}
@@ -236,17 +251,20 @@ export function PipelineControls({
 
             <div className="grid gap-2 md:col-span-2">
               <Label htmlFor="runnerMode">Runner mode</Label>
-              <select
-                id="runnerMode"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              <Select
                 value={runnerMode ?? "auto"}
-                onChange={(event) => setRunnerMode(event.target.value as PipelineRunRequest["runner_mode"])}
+                onValueChange={(value) => setRunnerMode(value as PipelineRunRequest["runner_mode"])}
                 disabled={busy}
               >
-                <option value="auto">Auto (recommended)</option>
-                <option value="subprocess">Subprocess (sandbox-safe)</option>
-                <option value="multiprocessing">Multiprocessing (fastest)</option>
-              </select>
+                <SelectTrigger id="runnerMode">
+                  <SelectValue placeholder="Select runner mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (recommended)</SelectItem>
+                  <SelectItem value="subprocess">Subprocess (sandbox-safe)</SelectItem>
+                  <SelectItem value="multiprocessing">Multiprocessing (fastest)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

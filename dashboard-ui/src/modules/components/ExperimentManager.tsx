@@ -24,6 +24,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 function formatError(error: unknown): string {
@@ -234,19 +241,23 @@ export function ExperimentManager({ onNotify, onReplayPipeline }: ExperimentMana
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Search Space</Label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                <Select
                   value={startSearchSpace}
-                  onChange={(e) => setStartSearchSpace(e.target.value)}
+                  onValueChange={(value) => setStartSearchSpace(value)}
                   disabled={startBusy}
                 >
-                  {searchSpaces.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                  {!searchSpaces.length ? <option value={startSearchSpace}>Enter manually</option> : null}
-                </select>
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select search space" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {searchSpaces.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                    {!searchSpaces.length ? <SelectItem value={startSearchSpace}>Enter manually</SelectItem> : null}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2">
@@ -310,18 +321,22 @@ export function ExperimentManager({ onNotify, onReplayPipeline }: ExperimentMana
 
               <div className="space-y-2">
                 <Label>Active Session</Label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                <Select
                   value={selectedSessionId ?? ""}
-                  onChange={(e) => setSelectedSessionId(e.target.value)}
+                  onValueChange={(value) => setSelectedSessionId(value)}
                 >
-                  {sessions.map((s) => (
-                    <option key={s.session_id} value={s.session_id}>
-                      {s.session_id.slice(0, 8)}… ({s.status})
-                    </option>
-                  ))}
-                  {!sessions.length ? <option value="">No sessions</option> : null}
-                </select>
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select session" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sessions.map((s) => (
+                      <SelectItem key={s.session_id} value={s.session_id}>
+                        {s.session_id.slice(0, 8)}… ({s.status})
+                      </SelectItem>
+                    ))}
+                    {!sessions.length ? <SelectItem value="none" disabled>No sessions</SelectItem> : null}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="flex gap-2">

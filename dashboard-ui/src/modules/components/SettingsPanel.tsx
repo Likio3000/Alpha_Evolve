@@ -18,6 +18,13 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type PresetKey = string;
 
@@ -179,16 +186,24 @@ function ConfigTable({
                       const current = String(valueForType ?? "");
                       const uniqueOptions = Array.from(new Set([current, ...choiceList]));
                       return (
-                        <select
-                          className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        <Select
                           value={current}
-                          onChange={handleTextChange}
+                          onValueChange={(value) => {
+                            onChange(key, value);
+                          }}
                           disabled={disabled}
                         >
-                          {uniqueOptions.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                          <SelectTrigger className="h-8 w-full text-xs">
+                            <SelectValue placeholder="Select value" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {uniqueOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       );
                     })()
                   ) : (

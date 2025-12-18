@@ -14,6 +14,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface RunForensicsPanelProps {
   runDir: string | null;
@@ -226,17 +233,21 @@ export function RunForensicsPanel({ runDir }: RunForensicsPanelProps): React.Rea
 
               {assets.length ? (
                 <div className="flex gap-2">
-                  <select
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  <Select
                     value={selectedAsset}
-                    onChange={(event) => setSelectedAsset(event.target.value)}
+                    onValueChange={(value) => setSelectedAsset(value)}
                   >
-                    {assets.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="h-9 w-full">
+                      <SelectValue placeholder="Select artefact" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {assets.map((item) => (
+                        <SelectItem key={item} value={item}>
+                          {item}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   {selectedAsset ? (
                     <Button variant="outline" size="sm" asChild>
                       <a href={buildRunAssetUrl(runDir, selectedAsset)} target="_blank" rel="noreferrer">
