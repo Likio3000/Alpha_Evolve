@@ -6,12 +6,13 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from django.http import FileResponse, HttpRequest, HttpResponseNotAllowed
+from django.http import HttpRequest, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
 
 from ..helpers import (
     ROOT,
     PIPELINE_DIR,
+    file_response,
     read_best_sharpe_from_run,
     resolve_latest_run_dir,
 )
@@ -84,7 +85,9 @@ def _resolve_run_dir(run_dir: str) -> Path:
     else:
         stripped = candidate
         if stripped.parts and stripped.parts[0] == pipeline_root.name:
-            stripped = Path(*stripped.parts[1:]) if len(stripped.parts) > 1 else Path(".")
+            stripped = (
+                Path(*stripped.parts[1:]) if len(stripped.parts) > 1 else Path(".")
+            )
         base_candidates.append((pipeline_root / stripped).resolve())
         base_candidates.append((PIPELINE_DIR.parent / candidate).resolve())
         base_candidates.append((ROOT / candidate).resolve())
@@ -112,12 +115,14 @@ def list_runs(request: HttpRequest):
         display_name = _read_codename(p) or dir_name
         label = labels.get(dir_name)
         sharpe = read_best_sharpe_from_run(p)
-        items.append({
-            "path": rel,
-            "name": display_name,
-            "label": label,
-            "sharpe_best": None if sharpe is None else float(sharpe),
-        })
+        items.append(
+            {
+                "path": rel,
+                "name": display_name,
+                "label": label,
+                "sharpe_best": None if sharpe is None else float(sharpe),
+            }
+        )
     return json_response(items)
 
 
@@ -126,7 +131,12 @@ def get_last_run(request: HttpRequest):
     if p is None:
         return json_response({"run_dir": None, "sharpe_best": None})
     sharpe = read_best_sharpe_from_run(p)
-    return json_response({"run_dir": _format_path_for_ui(p), "sharpe_best": None if sharpe is None else float(sharpe)})
+    return json_response(
+        {
+            "run_dir": _format_path_for_ui(p),
+            "sharpe_best": None if sharpe is None else float(sharpe),
+        }
+    )
 
 
 def _summary_csv(run_dir: Path) -> Optional[Path]:
@@ -155,31 +165,39 @@ def backtest_summary(request: HttpRequest):
         with csv_path.open(newline="", encoding="utf-8") as fh:
             rdr = csv.DictReader(fh)
             for r in rdr:
+
                 def _f(k: str) -> Optional[float]:
                     try:
                         return float(r.get(k, ""))
                     except Exception:
                         return None
 
-                rows.append({
-                    "AlphaID": r.get("AlphaID") or r.get("alpha_id"),
-                    "TS": Path(r.get("TS") or r.get("TimeseriesFile") or "").name,
-                    "TimeseriesFile": r.get("TimeseriesFile") or r.get("TS"),
-                    "Sharpe": _f("Sharpe") or 0.0,
-                    "AnnReturn": _f("AnnReturn") or 0.0,
-                    "AnnVol": _f("AnnVol") or 0.0,
-                    "MaxDD": _f("MaxDD") or 0.0,
-                    "Turnover": _f("Turnover") or 0.0,
-                    "Ops": r.get("Ops"),
-                    "OriginalMetric": _f("OriginalMetric") or _f("original_metric") or _f("IC") or 0.0,
-                    "Program": r.get("Program") or r.get("PROGRAM"),
-                })
+                rows.append(
+                    {
+                        "AlphaID": r.get("AlphaID") or r.get("alpha_id"),
+                        "TS": Path(r.get("TS") or r.get("TimeseriesFile") or "").name,
+                        "TimeseriesFile": r.get("TimeseriesFile") or r.get("TS"),
+                        "Sharpe": _f("Sharpe") or 0.0,
+                        "AnnReturn": _f("AnnReturn") or 0.0,
+                        "AnnVol": _f("AnnVol") or 0.0,
+                        "MaxDD": _f("MaxDD") or 0.0,
+                        "Turnover": _f("Turnover") or 0.0,
+                        "Ops": r.get("Ops"),
+                        "OriginalMetric": _f("OriginalMetric")
+                        or _f("original_metric")
+                        or _f("IC")
+                        or 0.0,
+                        "Program": r.get("Program") or r.get("PROGRAM"),
+                    }
+                )
     except FileNotFoundError:
         return json_response([])
     return json_response(rows)
 
 
-def _resolve_ts_file(run_dir: Path, file: Optional[str], alpha_id: Optional[str]) -> Path:
+def _resolve_ts_file(
+    run_dir: Path, file: Optional[str], alpha_id: Optional[str]
+) -> Path:
     bt_dir = run_dir / "backtest_portfolio_csvs"
     if file:
         return bt_dir / Path(file).name
@@ -216,11 +234,15 @@ def alpha_timeseries(request: HttpRequest):
         ts_path = _resolve_ts_file(p, file, alpha_id)
     except FileNotFoundError:
         if not summary_exists:
-            return json_response({"date": [], "equity": [], "ret_net": [], "pending": True}, status=202)
+            return json_response(
+                {"date": [], "equity": [], "ret_net": [], "pending": True}, status=202
+            )
         return json_error("Timeseries CSV not found", 404)
     if not ts_path.exists():
         if not summary_exists:
-            return json_response({"date": [], "equity": [], "ret_net": [], "pending": True}, status=202)
+            return json_response(
+                {"date": [], "equity": [], "ret_net": [], "pending": True}, status=202
+            )
         return json_error("Timeseries CSV not found", 404)
     dates: List[str] = []
     equity: List[float] = []
@@ -332,16 +354,15 @@ def run_asset(request: HttpRequest):
     sub = request.GET.get("sub")
     if not run_dir or not file:
         return json_error("run_dir and file are required", 400)
-    run_path = (ROOT / run_dir).resolve()
     try:
-        run_path.relative_to(PIPELINE_DIR.resolve())
-    except Exception:
-        return json_error("run_dir must be under pipeline_runs_cs/", 400)
+        run_path = _resolve_run_dir(run_dir)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
 
     fpath = Path(file)
     if fpath.is_absolute():
         return json_error("file must be relative", 400)
-    if sub and fpath.parent == Path('.'):
+    if sub and fpath.parent == Path("."):
         fpath = Path(sub) / fpath
     full = (run_path / fpath).resolve()
     try:
@@ -350,10 +371,63 @@ def run_asset(request: HttpRequest):
         return json_error("Invalid file path", 400)
     if not full.exists():
         return json_error("File not found", 404)
-    media = "image/png" if full.suffix.lower() in (".png",) else None
-    response = FileResponse(open(full, "rb"), content_type=media)
-    response["Content-Disposition"] = f'inline; filename="{full.name}"'
-    return response
+    return file_response(
+        request.method, full, content_disposition="inline", filename=full.name
+    )
+
+
+def run_assets(request: HttpRequest):
+    """List previewable artefacts under a run directory.
+
+    This powers the dashboard artefact browser; returned paths are relative to the run root.
+    """
+
+    run_dir = request.GET.get("run_dir")
+    prefix = request.GET.get("prefix", "")
+    limit_param = request.GET.get("limit", "500")
+    if not run_dir:
+        return json_error("run_dir is required", 400)
+    try:
+        limit = max(1, min(5000, int(limit_param)))
+    except Exception:
+        return json_error("limit must be an integer", 400)
+    try:
+        resolved = _resolve_run_dir(run_dir)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+
+    base = resolved
+    if prefix:
+        candidate = (resolved / prefix).resolve()
+        try:
+            candidate.relative_to(resolved)
+        except Exception:
+            return json_error("prefix must stay within run_dir", 400)
+        base = candidate
+
+    if not base.exists():
+        return json_response({"items": []})
+
+    allowed = {".csv", ".json", ".jsonl", ".log", ".md", ".png", ".txt"}
+    items: List[str] = []
+    try:
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in allowed:
+                continue
+            try:
+                rel = path.relative_to(resolved)
+            except ValueError:
+                continue
+            items.append(str(rel))
+            if len(items) >= limit:
+                break
+    except Exception:
+        return json_error("Failed to list artefacts", 500)
+
+    items.sort()
+    return json_response({"items": items})
 
 
 def run_details(request: HttpRequest):

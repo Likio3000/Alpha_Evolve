@@ -4,15 +4,27 @@ from alpha_evolve.evolution import moea
 from alpha_evolve.evolution.evaluation import EvalResult
 
 
-def make_result(*, fitness: float, mean_ic: float, sharpe: float, turnover: float, parsimony: float,
-                drawdown: float, factor_sum: float, robustness: float,
-                sortino: float = 0.0, downside: float = 0.0, cvar: float = -0.01) -> EvalResult:
+def make_result(
+    *,
+    fitness: float,
+    mean_ic: float,
+    sharpe: float,
+    turnover: float,
+    parsimony: float,
+    drawdown: float,
+    factor_sum: float,
+    robustness: float,
+    corr_penalty: float = 0.0,
+    sortino: float = 0.0,
+    downside: float = 0.0,
+    cvar: float = -0.01,
+) -> EvalResult:
     return EvalResult(
         fitness=fitness,
         mean_ic=mean_ic,
         sharpe_proxy=sharpe,
         parsimony_penalty=parsimony,
-        correlation_penalty=0.0,
+        correlation_penalty=corr_penalty,
         processed_predictions=None,
         turnover_proxy=turnover,
         max_drawdown=drawdown,
@@ -34,6 +46,7 @@ def test_default_objectives_negate_penalties():
         parsimony=0.08,
         drawdown=0.03,
         factor_sum=0.11,
+        corr_penalty=0.12,
         robustness=0.07,
         sortino=1.4,
         downside=0.05,
@@ -47,8 +60,9 @@ def test_default_objectives_negate_penalties():
     assert objectives[4] == pytest.approx(-res.parsimony_penalty)
     assert objectives[5] == pytest.approx(-res.max_drawdown)
     assert objectives[6] == pytest.approx(-res.factor_exposure_sum)
-    assert objectives[7] == pytest.approx(-res.robustness_penalty)
-    assert objectives[8] == pytest.approx(-max(0.0, -res.cvar))
+    assert objectives[7] == pytest.approx(-res.correlation_penalty)
+    assert objectives[8] == pytest.approx(-res.robustness_penalty)
+    assert objectives[9] == pytest.approx(-max(0.0, -res.cvar))
 
 
 def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure():
@@ -89,11 +103,13 @@ def test_compute_pareto_analysis_penalises_turnover_drawdown_and_factor_exposure
         sortino=1.0,
         cvar=-0.015,
     )
-    analysis = moea.compute_pareto_analysis([
-        (0, dominant),
-        (1, dominated),
-        (2, tradeoff),
-    ])
+    analysis = moea.compute_pareto_analysis(
+        [
+            (0, dominant),
+            (1, dominated),
+            (2, tradeoff),
+        ]
+    )
 
     assert analysis.ranks[0] == 0
     assert analysis.ranks[1] > analysis.ranks[0]

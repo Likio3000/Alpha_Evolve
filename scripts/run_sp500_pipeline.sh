@@ -16,6 +16,9 @@
 
 set -eu
 
+here=$(cd "$(dirname "$0")" && pwd -P)
+root="$here/.."
+
 GENS="${GENS:-5}"
 DATA_DIR="${DATA_DIR:-data_sp500}"
 # Use maximum compatible overlap across all symbols by default for daily SP500
@@ -25,6 +28,7 @@ ANNUAL="${ANNUAL:-252}"
 echo "[run_sp500_pipeline] gens=${GENS} data_dir=${DATA_DIR} lookback=${LOOKBACK} annual=${ANNUAL}" >&2
 
 if command -v uv >/dev/null 2>&1; then
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$root/.uv_cache}"
   uv run python -m alpha_evolve.cli.pipeline "${GENS}" \
     --data_dir "${DATA_DIR}" \
     --max_lookback_data_option "${LOOKBACK}" \

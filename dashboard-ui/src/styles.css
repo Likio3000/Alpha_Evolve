@@ -942,6 +942,33 @@ body {
   border: 1px solid rgba(90, 180, 240, 0.3);
 }
 
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  border: 1px solid rgba(90, 180, 240, 0.3);
+}
+
+.connection-badge--connected {
+  color: var(--success);
+  border-color: rgba(110, 231, 183, 0.35);
+}
+
+.connection-badge--retrying {
+  color: var(--warning);
+  border-color: rgba(246, 197, 96, 0.35);
+}
+
+.connection-badge--stale {
+  color: rgba(246, 197, 96, 0.9);
+  border-color: rgba(246, 197, 96, 0.3);
+}
+
 .status-badge--running {
   color: var(--accent);
 }
@@ -1262,6 +1289,124 @@ body {
 
 .settings-panel {
   width: 100%;
+}
+
+.experiment-panel {
+  width: 100%;
+}
+
+.experiment-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.experiment-col {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.experiment-section {
+  background: rgba(14, 19, 26, 0.85);
+  border: 1px solid rgba(36, 52, 66, 0.7);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.experiment-section h3 {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.experiment-form {
+  display: grid;
+  gap: 12px;
+}
+
+.experiment-field span {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(166, 173, 179, 0.85);
+  margin-bottom: 6px;
+}
+
+.experiment-field input,
+.experiment-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(52, 72, 90, 0.6);
+  background: rgba(14, 20, 27, 0.85);
+  color: inherit;
+  font-size: 14px;
+}
+
+.experiment-field input:focus,
+.experiment-field select:focus {
+  outline: none;
+  border-color: rgba(90, 180, 240, 0.7);
+  box-shadow: 0 0 0 3px rgba(90, 180, 240, 0.2);
+}
+
+.experiment-checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.experiment-card {
+  background: rgba(9, 15, 21, 0.84);
+  border: 1px solid rgba(28, 44, 60, 0.6);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.experiment-table-wrap {
+  overflow-x: auto;
+}
+
+.experiment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 520px;
+}
+
+.experiment-table th,
+.experiment-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(38, 56, 70, 0.55);
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.experiment-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .experiment-grid {
+    grid-template-columns: 1fr;
+  }
+  .experiment-table {
+    min-width: 0;
+  }
 }
 
 .settings-grid {

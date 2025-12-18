@@ -16,6 +16,9 @@
 
 set -eu
 
+here=$(cd "$(dirname "$0")" && pwd -P)
+root="$here/.."
+
 OUT_DIR="${OUT_DIR:-data_sp500}"
 YEARS="${YEARS:-20}"
 PAUSE="${PAUSE:-0.2}"
@@ -23,6 +26,7 @@ PAUSE="${PAUSE:-0.2}"
 echo "[run_sp500_data] Fetching S&P 500 daily OHLC -> ${OUT_DIR} (years=${YEARS}, pause=${PAUSE})" >&2
 
 if command -v uv >/dev/null 2>&1; then
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$root/.uv_cache}"
   uv run python scripts/fetch_sp500_data.py --out "${OUT_DIR}" --years "${YEARS}" --pause "${PAUSE}" "$@"
 else
   python scripts/fetch_sp500_data.py --out "${OUT_DIR}" --years "${YEARS}" --pause "${PAUSE}" "$@"

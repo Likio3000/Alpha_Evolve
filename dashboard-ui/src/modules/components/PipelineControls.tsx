@@ -24,6 +24,7 @@ export function PipelineControls({
   const [datasetError, setDatasetError] = useState<string | null>(null);
   const [generationInput, setGenerationInput] = useState("5");
   const [popSizeInput, setPopSizeInput] = useState("100");
+  const [runnerMode, setRunnerMode] = useState<PipelineRunRequest["runner_mode"]>("auto");
   const [configPath, setConfigPath] = useState("");
   const [configs, setConfigs] = useState<ConfigListItem[]>([]);
   const [configLoading, setConfigLoading] = useState(false);
@@ -133,6 +134,7 @@ export function PipelineControls({
       dataset: configPath ? undefined : dataset || undefined,
       config: configPath || undefined,
       overrides,
+      runner_mode: runnerMode || undefined,
     };
     try {
       setMessage(null);
@@ -198,6 +200,15 @@ export function PipelineControls({
             onChange={(event) => setPopSizeInput(event.target.value)}
             disabled={busy}
           />
+        </label>
+
+        <label className="form-field">
+          <span className="form-label">Runner mode</span>
+          <select value={runnerMode ?? "auto"} onChange={(event) => setRunnerMode(event.target.value as PipelineRunRequest["runner_mode"])} disabled={busy}>
+            <option value="auto">Auto (recommended)</option>
+            <option value="subprocess">Subprocess (sandbox-safe)</option>
+            <option value="multiprocessing">Multiprocessing (fastest)</option>
+          </select>
         </label>
 
         <label className="form-field">

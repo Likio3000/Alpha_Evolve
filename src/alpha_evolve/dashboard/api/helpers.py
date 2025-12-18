@@ -8,8 +8,10 @@ import json
 import time
 from queue import Empty
 import asyncio
+import mimetypes
+from concurrent.futures import ThreadPoolExecutor
 
-from django.http import StreamingHttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
 
 
 # Resolve project root relative to this file (now within src/alpha_evolve/dashboard/api)
@@ -39,6 +41,7 @@ def read_best_sharpe_from_run(run_dir: Path) -> Optional[float]:
     csv_path = candidates[-1]
     try:
         import csv
+
         best = None
         with open(csv_path, newline="") as fh:
             rdr = csv.DictReader(fh)
@@ -108,7 +111,9 @@ def known_dataset_names() -> set[str]:
     return names
 
 
-def build_pipeline_args(payload: Dict[str, Any], include_runner: bool = True) -> list[str]:
+def build_pipeline_args(
+    payload: Dict[str, Any], include_runner: bool = True
+) -> list[str]:
     """Map JSON payload to a run_pipeline invocation args list.
 
     When ``include_runner`` is ``True`` (default) the returned list is suitable for
@@ -139,7 +144,15 @@ def build_pipeline_args(payload: Dict[str, Any], include_runner: bool = True) ->
     except Exception:
         pass
     overrides.pop("sector_mapping", None)
-    reserved = {"generations", "dataset", "config", "data_dir", "overrides"}
+    reserved = {
+        "generations",
+        "dataset",
+        "config",
+        "data_dir",
+        "overrides",
+        "runner_mode",
+        "job_runner",
+    }
     for k, v in payload.items():
         if k in reserved:
             continue
@@ -196,7 +209,76 @@ class _SSEStream:
 
 
 def make_sse_response(queue, keepalive_seconds: float = 10.0) -> StreamingHttpResponse:
-    response = StreamingHttpResponse(_SSEStream(queue, keepalive_seconds), content_type="text/event-stream")
+    stream = _SSEStream(queue, keepalive_seconds)
+    # Django's ASGI handler will treat objects that also implement __iter__ as synchronous
+    # iterables, so pass the async generator directly to preserve streaming semantics.
+    response = StreamingHttpResponse(
+        stream.__aiter__(), content_type="text/event-stream"
+    )
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
+
+
+def _content_type_for_path(path: Path) -> str:
+    ctype, _ = mimetypes.guess_type(str(path))
+    if not ctype:
+        return "application/octet-stream"
+    if ctype.startswith("text/") and "charset=" not in ctype:
+        return f"{ctype}; charset=utf-8"
+    if ctype in {"application/javascript", "application/json"}:
+        return f"{ctype}; charset=utf-8"
+    return ctype
+
+
+def file_response(
+    request_method: str,
+    path: Path,
+    *,
+    content_type: str | None = None,
+    content_disposition: str = "inline",
+    filename: str | None = None,
+    chunk_size: int = 64 * 1024,
+) -> HttpResponse:
+    """Return an ASGI-friendly file response without Django's sync-stream buffering warnings."""
+
+    if request_method.upper() == "HEAD":
+        resp = HttpResponse(
+            b"", content_type=content_type or _content_type_for_path(path)
+        )
+        try:
+            resp["Content-Length"] = str(path.stat().st_size)
+        except Exception:
+            pass
+        return resp
+
+    async def _stream() -> Any:
+        loop = asyncio.get_running_loop()
+        executor = ThreadPoolExecutor(max_workers=1)
+        f = None
+        try:
+            f = await loop.run_in_executor(executor, open, path, "rb")
+            while True:
+                chunk = await loop.run_in_executor(executor, f.read, int(chunk_size))
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            if f is not None:
+                try:
+                    await asyncio.shield(loop.run_in_executor(executor, f.close))
+                except Exception:
+                    pass
+            executor.shutdown(wait=False)
+
+    resp = StreamingHttpResponse(
+        _stream(), content_type=content_type or _content_type_for_path(path)
+    )
+    try:
+        resp["Content-Length"] = str(path.stat().st_size)
+    except Exception:
+        pass
+    if filename is None:
+        filename = path.name
+    resp["Content-Disposition"] = f'{content_disposition}; filename="{filename}"'
+    return resp

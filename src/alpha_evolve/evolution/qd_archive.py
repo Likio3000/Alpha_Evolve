@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import numpy as np
 
 from alpha_evolve.programs import AlphaProgram
 from .evaluation import EvalResult
@@ -48,7 +47,9 @@ class QualityDiversityArchive:
                 return idx
         return len(edges)
 
-    def _descriptor(self, metrics: EvalResult, prog: AlphaProgram, max_ops: int) -> Tuple[int, int]:
+    def _descriptor(
+        self, metrics: EvalResult, prog: AlphaProgram, max_ops: int
+    ) -> Tuple[int, int]:
         turnover = float(metrics.turnover_proxy)
         size = int(getattr(prog, "size", 0) or 0)
         max_ops = max(1, max_ops)
@@ -149,7 +150,9 @@ def add_candidate(
 ) -> Optional[QDArchiveEntry]:
     if _ARCHIVE is None:
         return None
-    return _ARCHIVE.add(prog=prog, metrics=metrics, generation=generation, max_ops=max_ops)
+    return _ARCHIVE.add(
+        prog=prog, metrics=metrics, generation=generation, max_ops=max_ops
+    )
 
 
 def get_elites() -> List[QDArchiveEntry]:

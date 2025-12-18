@@ -4,9 +4,11 @@
 set -euo pipefail
 
 if command -v uv >/dev/null 2>&1; then
+  here=$(cd "$(dirname "$0")" && pwd -P)
+  root="$here/.."
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$root/.uv_cache}"
   uv run -m pytest -q "$@"
 else
   echo "uv not found; falling back to python -m pytest" >&2
   python -m pytest -q "$@"
 fi
-

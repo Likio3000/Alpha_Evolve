@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 
 from alpha_evolve.evolution import qd_archive
 from alpha_evolve.evolution.evaluation import EvalResult
@@ -33,7 +32,9 @@ def _eval_result(fitness: float, turnover: float) -> EvalResult:
 
 def test_qd_archive_keeps_best_per_cell():
     """Ensure the QD archive retains only the top candidate per discretized cell."""
-    qd_archive.initialize_archive(turnover_bins=(0.1, 0.3), complexity_bins=(0.5,), max_entries=10)
+    qd_archive.initialize_archive(
+        turnover_bins=(0.1, 0.3), complexity_bins=(0.5,), max_entries=10
+    )
 
     prog_a = _dummy_program(size=10, fingerprint="A")
     prog_b = _dummy_program(size=40, fingerprint="B")

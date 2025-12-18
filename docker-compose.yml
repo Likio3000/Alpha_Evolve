@@ -1,0 +1,19 @@
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      LOG_LEVEL: "INFO"
+      AE_PIPELINE_DIR: "/app/pipeline_runs_cs"
+      AE_EXPERIMENTS_DB: "/app/artifacts/experiments/experiments.sqlite"
+    volumes:
+      - ./pipeline_runs_cs:/app/pipeline_runs_cs
+      - ./logs:/app/logs
+      - ./artifacts:/app/artifacts
+      - ./configs:/app/configs
+      - ./data_sp500:/app/data_sp500:ro
+      - ./data_sp500_small:/app/data_sp500_small:ro
+      - ./data:/app/data:ro

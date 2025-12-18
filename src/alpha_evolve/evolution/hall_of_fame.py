@@ -1,8 +1,8 @@
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, List, Tuple, Dict, Set, Any # Added Set
+from typing import TYPE_CHECKING, List, Tuple, Dict, Set, Any  # Added Set
 from dataclasses import dataclass
-import textwrap # For printing HoF
+import textwrap  # For printing HoF
 import logging
 from . import data
 
@@ -10,39 +10,55 @@ if TYPE_CHECKING:
     from alpha_evolve.programs import AlphaProgram
     from .evaluation import EvalResult
 
+
 @dataclass
 class HOFEntry:
     fingerprint: str
-    metrics: 'EvalResult'
-    program: 'AlphaProgram'
+    metrics: "EvalResult"
+    program: "AlphaProgram"
     generation: int
+
 
 # Module-level state for Hall of Fame
 _hof_programs_data: List[HOFEntry] = []  # Store HOF entries with generation
 _hof_max_size: int = 20
-_hof_fingerprints_set: Set[str] = set() # For quick check of existence
-_keep_dupes_in_hof_config: bool = False # Corresponds to KEEP_DUPES_IN_HOF_CONFIG
+_hof_fingerprints_set: Set[str] = set()  # For quick check of existence
+_keep_dupes_in_hof_config: bool = False  # Corresponds to KEEP_DUPES_IN_HOF_CONFIG
 _hof_min_fill: int = 0
 
 # For correlation penalty
 # Store rank-transformed prediction vectors for correlation checks
 _hof_rank_pred_matrix: List[np.ndarray] = []
 _hof_corr_fingerprints: List[str] = []  # keep order to manage eviction
-_hof_raw_pred_matrix: List[np.ndarray] = []  # store raw flattened predictions for exact-match fast path
+_hof_raw_pred_matrix: List[
+    np.ndarray
+] = []  # store raw flattened predictions for exact-match fast path
 # Default correlation penalty configuration mirrors Section 9
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 
 
-def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, corr_cutoff: float, *, min_fill: int = 0):
-    global _hof_programs_data, _hof_max_size, _hof_fingerprints_set, _keep_dupes_in_hof_config, _hof_min_fill
+def initialize_hof(
+    max_size: int,
+    keep_dupes: bool,
+    corr_penalty_weight: float,
+    corr_cutoff: float,
+    *,
+    min_fill: int = 0,
+):
+    global \
+        _hof_programs_data, \
+        _hof_max_size, \
+        _hof_fingerprints_set, \
+        _keep_dupes_in_hof_config, \
+        _hof_min_fill
     global _hof_rank_pred_matrix, _corr_penalty_config, _hof_corr_fingerprints
-    
+
     _hof_programs_data = []
     _hof_max_size = max_size
     _hof_fingerprints_set = set()
-    _keep_dupes_in_hof_config = keep_dupes # Though original was hardcoded False
+    _keep_dupes_in_hof_config = keep_dupes  # Though original was hardcoded False
     _hof_min_fill = max(0, int(min_fill))
-    
+
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _hof_raw_pred_matrix = []
@@ -56,7 +72,10 @@ def initialize_hof(max_size: int, keep_dupes: bool, corr_penalty_weight: float, 
         _hof_min_fill,
     )
 
-def set_correlation_penalty(weight: float | None = None, cutoff: float | None = None) -> None:
+
+def set_correlation_penalty(
+    weight: float | None = None, cutoff: float | None = None
+) -> None:
     """Dynamically update correlation-penalty configuration during evolution.
 
     Useful for annealing: e.g., start with zero correlation penalty for a few
@@ -68,7 +87,10 @@ def set_correlation_penalty(weight: float | None = None, cutoff: float | None = 
     if cutoff is not None:
         _corr_penalty_config["cutoff"] = float(cutoff)
 
-def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Stable, finite-safe Spearman/Pearson helper
+
+def _safe_corr(
+    a: np.ndarray, b: np.ndarray
+) -> float:  # Stable, finite-safe Spearman/Pearson helper
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
         return 0.0
     if len(a) != len(b) or len(a) < 2:
@@ -84,6 +106,7 @@ def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:  # Stable, finite-safe Sp
     if not np.isfinite(corr):
         return 0.0
     return max(-1.0, min(1.0, corr))
+
 
 def _rank_vector(vec: np.ndarray) -> np.ndarray:
     """Return zero-mean average-tie ranks for ``vec`` used in Spearman correlation."""
@@ -110,7 +133,9 @@ def _rank_vector(vec: np.ndarray) -> np.ndarray:
     return ranks
 
 
-def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray) -> float:
+def get_correlation_penalty_with_hof(
+    current_prog_flat_processed_ts: np.ndarray,
+) -> float:
     if not _hof_rank_pred_matrix or current_prog_flat_processed_ts.std(ddof=0) < 1e-9:
         return 0.0
 
@@ -118,7 +143,8 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
     # Fast-path: if an identical or numerically equal raw vector exists, full penalty
     for raw in _hof_raw_pred_matrix:
         if raw.shape == current_prog_flat_processed_ts.shape and (
-            np.array_equal(raw, current_prog_flat_processed_ts) or np.allclose(raw, current_prog_flat_processed_ts, rtol=0, atol=1e-8)
+            np.array_equal(raw, current_prog_flat_processed_ts)
+            or np.allclose(raw, current_prog_flat_processed_ts, rtol=0, atol=1e-8)
         ):
             return _corr_penalty_config["weight"]
     corrs: List[float] = []
@@ -132,6 +158,7 @@ def get_correlation_penalty_with_hof(current_prog_flat_processed_ts: np.ndarray)
     if not corrs:
         return 0.0
     return _corr_penalty_config["weight"] * float(np.mean(corrs))
+
 
 def get_correlation_penalty_per_bar(processed_preds_matrix: np.ndarray) -> float:
     """Compute correlation penalty by averaging per-bar Spearman correlations.
@@ -173,7 +200,10 @@ def get_correlation_penalty_per_bar(processed_preds_matrix: np.ndarray) -> float
     except Exception:
         return 0.0
 
-def get_mean_corr_component_with_hof(current_prog_flat_processed_ts: np.ndarray, cutoff: float | None = None) -> float:
+
+def get_mean_corr_component_with_hof(
+    current_prog_flat_processed_ts: np.ndarray, cutoff: float | None = None
+) -> float:
     """Return the mean absolute Spearman correlation (above cutoff) with HOF entries.
 
     This mirrors get_correlation_penalty_with_hof but returns the unweighted
@@ -195,15 +225,77 @@ def get_mean_corr_component_with_hof(current_prog_flat_processed_ts: np.ndarray,
         return 0.0
     return float(np.mean(corrs))
 
-def get_correlation_penalty_with_weight(current_prog_flat_processed_ts: np.ndarray, *, weight: float, cutoff: float | None = None) -> float:
+
+def get_min_prediction_distance_with_hof(
+    processed_preds_matrix: np.ndarray, *, probe_bars: int = 64
+) -> float:
+    """Return the minimum normalized L2 distance vs HOF prediction vectors.
+
+    This is a cheap behavioral novelty proxy. Distances are computed on a probe
+    window from the *end* of the series (``probe_bars`` rows) and normalized by
+    the sum of vector norms so the result is roughly in [0, 1].
+    """
+    if processed_preds_matrix is None:
+        return 0.0
+    if not _hof_raw_pred_matrix:
+        return 0.0
+    try:
+        mat = np.asarray(processed_preds_matrix, dtype=float)
+    except Exception:
+        return 0.0
+    if mat.size == 0:
+        return 0.0
+    if mat.ndim == 1:
+        mat = mat.reshape(-1, 1)
+    if mat.ndim != 2:
+        return 0.0
+    t, n = mat.shape
+    if t <= 0 or n <= 0:
+        return 0.0
+    pb = max(1, min(int(probe_bars), t))
+    cand = np.nan_to_num(mat[-pb:, :].ravel(), nan=0.0, posinf=0.0, neginf=0.0)
+    if cand.size < 2:
+        return 0.0
+    cand_norm = float(np.linalg.norm(cand))
+    if not np.isfinite(cand_norm) or cand_norm < 1e-12:
+        return 0.0
+
+    best = None
+    for hof_raw in _hof_raw_pred_matrix:
+        if hof_raw.size != mat.size:
+            continue
+        try:
+            hof_probe = hof_raw[-cand.size :]
+        except Exception:
+            continue
+        hof_probe = np.nan_to_num(hof_probe, nan=0.0, posinf=0.0, neginf=0.0)
+        hof_norm = float(np.linalg.norm(hof_probe))
+        denom = cand_norm + hof_norm + 1e-12
+        d = float(np.linalg.norm(cand - hof_probe) / denom)
+        if not np.isfinite(d):
+            continue
+        if best is None or d < best:
+            best = d
+    return float(best) if best is not None else 0.0
+
+
+def get_correlation_penalty_with_weight(
+    current_prog_flat_processed_ts: np.ndarray,
+    *,
+    weight: float,
+    cutoff: float | None = None,
+) -> float:
     """Compute correlation penalty at a provided weight and optional cutoff.
 
     Useful for computing a fixed-weight fitness alongside the dynamic ramped one.
     """
-    mean_corr = get_mean_corr_component_with_hof(current_prog_flat_processed_ts, cutoff=cutoff)
+    mean_corr = get_mean_corr_component_with_hof(
+        current_prog_flat_processed_ts, cutoff=cutoff
+    )
     if mean_corr <= 0:
         return 0.0
     return float(weight) * mean_corr
+
 
 def get_rank_corr_matrix(limit: int = 10, *, absolute: bool = True):
     """Return (fingerprints, correlation-matrix) for the latest up to ``limit`` HOF rank vectors.
@@ -231,7 +323,10 @@ def get_rank_corr_matrix(limit: int = 10, *, absolute: bool = True):
             out[i][j] = float(c)
     return fps, out
 
-def get_correlation_penalty_with_weight_per_bar(processed_preds_matrix: np.ndarray, *, weight: float, cutoff: float | None = None) -> float:
+
+def get_correlation_penalty_with_weight_per_bar(
+    processed_preds_matrix: np.ndarray, *, weight: float, cutoff: float | None = None
+) -> float:
     """Per-bar variant mirroring get_correlation_penalty_per_bar with custom weight."""
     if processed_preds_matrix.ndim != 2 or processed_preds_matrix.shape[0] == 0:
         return 0.0
@@ -251,7 +346,11 @@ def get_correlation_penalty_with_weight_per_bar(processed_preds_matrix: np.ndarr
                     if seg_len == v.size:
                         seg = hof_rank[bar * seg_len : (bar + 1) * seg_len]
                         c = abs(_safe_corr(vr, seg))
-                        co = _corr_penalty_config["cutoff"] if cutoff is None else float(cutoff)
+                        co = (
+                            _corr_penalty_config["cutoff"]
+                            if cutoff is None
+                            else float(cutoff)
+                        )
                         if not np.isnan(c) and c > co:
                             corrs.append(c)
         if not corrs:
@@ -259,6 +358,7 @@ def get_correlation_penalty_with_weight_per_bar(processed_preds_matrix: np.ndarr
         return float(weight) * float(np.mean(corrs))
     except Exception:
         return 0.0
+
 
 def add_program_to_hof(
     program: AlphaProgram,
@@ -276,14 +376,19 @@ def add_program_to_hof(
     penalties.  Duplicate fingerprints are ignored in the correlation list and
     the size of both structures is capped at ``_hof_max_size``.
     """
-    global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints
+    global \
+        _hof_programs_data, \
+        _hof_fingerprints_set, \
+        _hof_rank_pred_matrix, \
+        _hof_corr_fingerprints
 
     logger = logging.getLogger(__name__)
 
     fp = program.fingerprint
     was_known_fp = fp in _hof_fingerprints_set
-    prev_best_fp = _hof_programs_data[0].fingerprint if _hof_programs_data else None
-    prev_best_fitness = _hof_programs_data[0].metrics.fitness if _hof_programs_data else float("-inf")
+    prev_best_fitness = (
+        _hof_programs_data[0].metrics.fitness if _hof_programs_data else float("-inf")
+    )
 
     # Reject if the new program's predictions are highly correlated with any
     # existing HOF entry.  Skip comparison against entries that share the same
@@ -313,7 +418,11 @@ def add_program_to_hof(
                     _corr_penalty_config["cutoff"],
                 )
                 return  # Too correlated – do not add to the HOF
-            elif not enforce_cutoff and not np.isnan(corr) and corr > _corr_penalty_config["cutoff"]:
+            elif (
+                not enforce_cutoff
+                and not np.isnan(corr)
+                and corr > _corr_penalty_config["cutoff"]
+            ):
                 logger.debug(
                     "HOF relaxed fill %s vs %s | corr=%.3f > %.3f (current=%d < min_fill=%d)",
                     fp[:8],
@@ -324,7 +433,7 @@ def add_program_to_hof(
                     _hof_min_fill,
                 )
                 break
-    
+
     # Logic for adding to _hof_programs_data (main HOF for output)
     inserted = False
     if not _keep_dupes_in_hof_config and fp in _hof_fingerprints_set:
@@ -333,8 +442,13 @@ def add_program_to_hof(
             if entry.fingerprint == fp:
                 existing_idx = i
                 break
-        if existing_idx != -1 and metrics.fitness > _hof_programs_data[existing_idx].metrics.fitness:
-            _hof_programs_data[existing_idx] = HOFEntry(fp, metrics, program, generation)
+        if (
+            existing_idx != -1
+            and metrics.fitness > _hof_programs_data[existing_idx].metrics.fitness
+        ):
+            _hof_programs_data[existing_idx] = HOFEntry(
+                fp, metrics, program, generation
+            )
             inserted = True
         elif existing_idx == -1:
             _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
@@ -349,9 +463,11 @@ def add_program_to_hof(
         # If we remove a unique program, ensure its fingerprint is also removed from the set
         # This needs care if multiple entries could share an fp (if _keep_dupes_in_hof_config was true)
         # For now, assuming if _keep_dupes_in_hof_config is false, fingerprints in _hof_programs_data are unique.
-        if not any(item.fingerprint == removed_prog_data.fingerprint for item in _hof_programs_data):
+        if not any(
+            item.fingerprint == removed_prog_data.fingerprint
+            for item in _hof_programs_data
+        ):
             _hof_fingerprints_set.discard(removed_prog_data.fingerprint)
-
 
     # Logic for maintaining the list used for correlation penalty.
     if processed_preds_matrix is not None and metrics.fitness > -float("inf"):
@@ -371,7 +487,9 @@ def add_program_to_hof(
         top_entry = _hof_programs_data[0] if _hof_programs_data else None
         still_in_hof = any(entry.fingerprint == fp for entry in _hof_programs_data)
         new_best_fp = top_entry.fingerprint if top_entry is not None else None
-        new_best_fitness = top_entry.metrics.fitness if top_entry is not None else float("-inf")
+        new_best_fitness = (
+            top_entry.metrics.fitness if top_entry is not None else float("-inf")
+        )
         new_fp_added = (not was_known_fp) and still_in_hof
         best_beaten = (
             top_entry is not None
@@ -409,7 +527,7 @@ def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
     """Returns the final HOF (program, mean_ic) for output/pickling."""
     # Current HOF stores (fp, fitness, ic, prog, preds_matrix)
     # The original evolve() returned List[Tuple[AlphaProgram, float]] where float was mean_ic.
-    
+
     final_list: List[Tuple[AlphaProgram, float]] = []
     if _keep_dupes_in_hof_config:
         for entry in _hof_programs_data:
@@ -421,21 +539,29 @@ def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
         # (or best version of duplicate FPs)
         unique_output_progs: Dict[str, Tuple[AlphaProgram, float]] = {}
         for entry in _hof_programs_data:
-            if entry.fingerprint not in unique_output_progs:  # Add first encountered (best fitness)
-                unique_output_progs[entry.fingerprint] = (entry.program, entry.metrics.mean_ic)
+            if (
+                entry.fingerprint not in unique_output_progs
+            ):  # Add first encountered (best fitness)
+                unique_output_progs[entry.fingerprint] = (
+                    entry.program,
+                    entry.metrics.mean_ic,
+                )
             if len(unique_output_progs) >= _hof_max_size:
                 break
         final_list = list(unique_output_progs.values())
-        
+
     return final_list
 
 
-_TOP_TO_SHOW_PRINT = 10 # From original _update_and_print_hof
+_TOP_TO_SHOW_PRINT = 10  # From original _update_and_print_hof
 
-def print_generation_summary(generation: int, population: List[AlphaProgram], eval_results_sorted: list): # eval_results_sorted contains (idx_in_pop, EvalResult)
+
+def print_generation_summary(
+    generation: int, population: List[AlphaProgram], eval_results_sorted: list
+):  # eval_results_sorted contains (idx_in_pop, EvalResult)
     """Prints the HOF summary like _update_and_print_hof."""
     # This function will use the current state of _hof_programs_data
-    
+
     # First, ensure _hof_programs_data is up-to-date with the current generation's best if they qualify
     # This logic was part of the original _update_and_print_hof
     # For each of the top N (e.g., _TOP_TO_SHOW_PRINT) from eval_results_sorted of current gen:
@@ -450,16 +576,18 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
     logger = logging.getLogger(__name__)
     hdr = " Rank | Fitness | Fixed |  IC  | Ops | Gen | Finger  | First 90 chars"
     lines = [
-        f"\n★ Generation {generation+1} – Top (up to) {_TOP_TO_SHOW_PRINT} overall from HOF ★",
+        f"\n★ Generation {generation + 1} – Top (up to) {_TOP_TO_SHOW_PRINT} overall from HOF ★",
         hdr,
         "─" * len(hdr),
     ]
 
     # Print from the managed _hof_programs_data
     for rk, entry in enumerate(_hof_programs_data[:_TOP_TO_SHOW_PRINT], 1):
-        head = textwrap.shorten(entry.program.to_string(max_len=300), width=90, placeholder="…")
+        head = textwrap.shorten(
+            entry.program.to_string(max_len=300), width=90, placeholder="…"
+        )
         fx = getattr(entry.metrics, "fitness_static", None)
-        fx_val = fx if fx is not None else float('nan')
+        fx_val = fx if fx is not None else float("nan")
         lines.append(
             " %4d | %+7.4f | %+7.4f | %+5.3f | %3d | %3d | %s | %s"
             % (
@@ -474,9 +602,16 @@ def print_generation_summary(generation: int, population: List[AlphaProgram], ev
             )
         )
     logger.info("\n".join(lines))
+
+
 def clear_hof():
     """Clears all HOF state."""
-    global _hof_programs_data, _hof_fingerprints_set, _hof_rank_pred_matrix, _hof_corr_fingerprints, _hof_raw_pred_matrix
+    global \
+        _hof_programs_data, \
+        _hof_fingerprints_set, \
+        _hof_rank_pred_matrix, \
+        _hof_corr_fingerprints, \
+        _hof_raw_pred_matrix
     _hof_programs_data = []
     _hof_fingerprints_set = set()
     _hof_rank_pred_matrix = []
@@ -493,20 +628,27 @@ def snapshot(limit: int | None = None) -> List[Dict[str, Any]]:
     short program string. ``limit`` limits the number of items returned.
     """
     out: List[Dict[str, Any]] = []
-    n = len(_hof_programs_data) if limit is None else min(limit, len(_hof_programs_data))
+    n = (
+        len(_hof_programs_data)
+        if limit is None
+        else min(limit, len(_hof_programs_data))
+    )
     for entry in _hof_programs_data[:n]:
         try:
-            out.append({
-                "fp": entry.fingerprint,
-                "gen": int(entry.generation) + 1,
-                "fitness": float(getattr(entry.metrics, "fitness", float("nan"))),
-                "mean_ic": float(getattr(entry.metrics, "mean_ic", float("nan"))),
-                "ops": int(getattr(entry.program, "size", 0)),
-                "program": entry.program.to_string(max_len=180),
-            })
+            out.append(
+                {
+                    "fp": entry.fingerprint,
+                    "gen": int(entry.generation) + 1,
+                    "fitness": float(getattr(entry.metrics, "fitness", float("nan"))),
+                    "mean_ic": float(getattr(entry.metrics, "mean_ic", float("nan"))),
+                    "ops": int(getattr(entry.program, "size", 0)),
+                    "program": entry.program.to_string(max_len=180),
+                }
+            )
         except Exception:
             continue
     return out
+
 
 def get_hof_opcode_sets(limit: int | None = None) -> List[Set[str]]:
     """Return a list of opcode sets for programs currently in HOF.
@@ -514,12 +656,20 @@ def get_hof_opcode_sets(limit: int | None = None) -> List[Set[str]]:
     Useful for computing simple structural similarity/novelty proxies.
     """
     out: List[Set[str]] = []
-    n = len(_hof_programs_data) if limit is None else min(limit, len(_hof_programs_data))
+    n = (
+        len(_hof_programs_data)
+        if limit is None
+        else min(limit, len(_hof_programs_data))
+    )
     for entry in _hof_programs_data[:n]:
         try:
             prog = entry.program
-            ops = [*getattr(prog, 'setup', []), *getattr(prog, 'predict_ops', []), *getattr(prog, 'update_ops', [])]
-            opcodes = {getattr(o, 'opcode', '') for o in ops if hasattr(o, 'opcode')}
+            ops = [
+                *getattr(prog, "setup", []),
+                *getattr(prog, "predict_ops", []),
+                *getattr(prog, "update_ops", []),
+            ]
+            opcodes = {getattr(o, "opcode", "") for o in ops if hasattr(o, "opcode")}
             out.append(opcodes)
         except Exception:
             continue

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType, Callable
+from typing import Dict, List, Optional, OrderedDict as OrderedDictType, Callable
 from collections import OrderedDict
 import pandas as pd
 from .errors import DataLoadError
@@ -23,6 +23,7 @@ class DataBundle:
     symbols: List[str]
     diagnostics: DataDiagnostics
 
+
 REQUIRED_OHLC = ("open", "high", "low", "close")
 
 
@@ -42,7 +43,9 @@ def prepare_ohlcv_df(df: pd.DataFrame) -> pd.DataFrame:
         if pd.api.types.is_numeric_dtype(time_col):
             parsed = pd.to_datetime(time_col, unit="s", errors="coerce")
         else:
-            parsed = pd.to_datetime(time_col, errors="coerce", utc=False, infer_datetime_format=True)
+            parsed = pd.to_datetime(
+                time_col, errors="coerce", utc=False, infer_datetime_format=True
+            )
     except Exception:
         parsed = pd.to_datetime(time_col, errors="coerce")
     df["time"] = parsed
@@ -64,8 +67,10 @@ def load_symbol_dfs_from_dir(
     Returns a mapping {symbol -> prepared_dataframe}. Skips invalid files; if none
     valid, raises DataLoadError.
     """
-    import os, glob
+    import os
+    import glob
     from pathlib import Path
+
     out: Dict[str, pd.DataFrame] = {}
     for csv_file in glob.glob(os.path.join(data_dir, "*.csv")):
         try:
@@ -101,11 +106,17 @@ def align_and_prune(
     for sym_name, df_sym in raw_dfs.items():
         if df_sym.index.has_duplicates:
             logger.warning("Duplicate timestamps found in %s. Keeping first.", sym_name)
-            df_sym = df_sym[~df_sym.index.duplicated(keep='first')]
+            df_sym = df_sym[~df_sym.index.duplicated(keep="first")]
             raw_dfs[sym_name] = df_sym
-        common_index = df_sym.index if common_index is None else common_index.intersection(df_sym.index)
+        common_index = (
+            df_sym.index
+            if common_index is None
+            else common_index.intersection(df_sym.index)
+        )
 
-    required_len = min_common_points_param + (eval_lag if include_lag_in_required_length else 0)
+    required_len = min_common_points_param + (
+        eval_lag if include_lag_in_required_length else 0
+    )
 
     # Prune until we have enough common length
     dropped: List[str] = []
@@ -157,7 +168,9 @@ def align_and_prune(
         df_sym = raw_dfs[sym].reindex(common_index).ffill().bfill()
         if recompute_ret_fwd:
             try:
-                df_sym["ret_fwd"] = df_sym["close"].pct_change(periods=eval_lag).shift(-eval_lag)
+                df_sym["ret_fwd"] = (
+                    df_sym["close"].pct_change(periods=eval_lag).shift(-eval_lag)
+                )
             except Exception:
                 df_sym["ret_fwd"] = df_sym["close"].pct_change(periods=1).shift(-1)
         aligned[sym] = df_sym

@@ -8,12 +8,15 @@ import math
 import multiprocessing as mp
 import os
 import re
+import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import queue as queue_mod
 from queue import Queue
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from django.http import HttpRequest, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
@@ -77,9 +80,12 @@ def _line_to_event(line: str) -> Dict[str, Any]:
         try:
             data = json.loads(m.group(1), parse_constant=_parse_constant)
             data = _sanitize_json_data(data)
+            subtype = data.get("type") if isinstance(data, dict) else None
+            if subtype == "gen_summary":
+                return {"type": "gen_summary", "data": data, "raw": line}
             event = {"type": "progress", "data": data, "raw": line}
-            if isinstance(data, dict) and isinstance(data.get("type"), str):
-                event["subtype"] = data["type"]
+            if isinstance(subtype, str):
+                event["subtype"] = subtype
             return event
         except Exception:
             return {"type": "log", "raw": line}
@@ -124,9 +130,13 @@ def _pipeline_worker(
             extras.append(candidate)
 
     if event_queue is None:
-        raise TypeError("_pipeline_worker expected at least one queue argument for event dispatching")
+        raise TypeError(
+            "_pipeline_worker expected at least one queue argument for event dispatching"
+        )
     if extras:
-        logging.getLogger(__name__).warning("Ignoring unexpected pipeline worker arguments: %r", extras)
+        logging.getLogger(__name__).warning(
+            "Ignoring unexpected pipeline worker arguments: %r", extras
+        )
 
     if job_id:
         os.environ.setdefault("PIPELINE_JOB_ID", job_id)
@@ -213,6 +223,7 @@ def _pipeline_worker(
     sys.stderr = tee_stderr
 
     from alpha_evolve.cli.pipeline import parse_args, run_pipeline_programmatic
+
     try:
         from alpha_evolve.cli.pipeline import options_from_namespace  # type: ignore[attr-defined]
     except ImportError:
@@ -270,9 +281,128 @@ def _pipeline_worker(
 _PIPELINE_WORKER_DEFAULT = _pipeline_worker
 
 
+_ARTEFACTS_PATH_RE = re.compile(r"artefacts in\s+(?P<path>.+)$", re.IGNORECASE)
+
+
+def _build_subprocess_command(cli_args: list[str]) -> list[str]:
+    """Return the command used for the sandbox-safe subprocess runner.
+
+    Defined as a function so tests can monkeypatch it.
+    """
+
+    return [sys.executable, "-u", "-m", "alpha_evolve.cli.pipeline", *cli_args]
+
+
+def _normalize_runner_mode(value: str | None) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return "auto"
+    if raw in {"auto", "default"}:
+        return "auto"
+    if raw in {"mp", "multiprocessing", "process", "proc"}:
+        return "multiprocessing"
+    if raw in {"subprocess", "subproc", "spawn"}:
+        return "subprocess"
+    return raw
+
+
+def _multiprocessing_available() -> bool:
+    try:
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
+        try:
+            q.put_nowait({"type": "__probe__"})
+        except Exception:
+            q.put({"type": "__probe__"})
+        close = getattr(q, "close", None)
+        if callable(close):
+            close()
+        join_thread = getattr(q, "join_thread", None)
+        if callable(join_thread):
+            try:
+                join_thread()
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_run_dir_hint(line: str) -> Optional[str]:
+    """Best-effort extraction of a run directory from a log line."""
+
+    if not line:
+        return None
+    match = _ARTEFACTS_PATH_RE.search(line)
+    if match is None:
+        return None
+    path = match.group("path").strip()
+    return path or None
+
+
+def _pump_subprocess_output(
+    *,
+    job_id: str,
+    proc: subprocess.Popen[str],
+    event_queue: "queue_mod.Queue[dict[str, Any]]",
+) -> None:
+    run_dir_hint: Optional[str] = None
+    try:
+        stdout = proc.stdout
+        if stdout is None:
+            raise RuntimeError("subprocess runner missing stdout pipe")
+        for line in stdout:
+            if run_dir_hint is None:
+                run_dir_hint = _resolve_run_dir_hint(line)
+            event_queue.put(_line_to_event(line))
+    except Exception as exc:
+        event_queue.put({"type": "error", "code": 1, "detail": str(exc)})
+    finally:
+        try:
+            code = proc.wait()
+        except Exception:
+            try:
+                code = proc.poll()
+            except Exception:
+                code = 1
+        if code is None:
+            code = 1
+
+        run_dir: Optional[Path] = None
+        if run_dir_hint:
+            try:
+                candidate = Path(run_dir_hint).expanduser()
+                run_dir = (
+                    candidate.resolve()
+                    if candidate.is_absolute()
+                    else (ROOT / candidate).resolve()
+                )
+            except Exception:
+                run_dir = None
+
+        if code == 0 and run_dir is None:
+            try:
+                run_dir = resolve_latest_run_dir()
+            except Exception:
+                run_dir = None
+
+        if code == 0 and run_dir is not None:
+            best = read_best_sharpe_from_run(run_dir) if run_dir is not None else None
+            event_queue.put(
+                {
+                    "type": "final",
+                    "run_dir": str(run_dir.resolve()),
+                    "sharpe_best": None if best is None else float(best),
+                }
+            )
+
+        event_queue.put({"type": "status", "msg": "exit", "code": int(code)})
+        event_queue.put({"type": "__complete__"})
+
+
 async def _forward_events(
     job_id: str,
-    event_queue: mp.Queue,
+    event_queue: Any,
     client_queue: Queue,
 ) -> None:
     loop = asyncio.get_running_loop()
@@ -318,7 +448,9 @@ async def _forward_events(
                         _touch_activity(last_message=text)
             elif event_type == "progress":
                 data = item.get("data")
-                subtype = item.get("subtype") or (data.get("type") if isinstance(data, dict) else None)
+                subtype = item.get("subtype") or (
+                    data.get("type") if isinstance(data, dict) else None
+                )
                 if subtype == "gen_progress" and isinstance(data, dict):
                     _touch_activity(progress=data)
                 elif subtype == "gen_summary" and isinstance(data, dict):
@@ -327,6 +459,17 @@ async def _forward_events(
                         history = meta.setdefault("gen_history", [])
                         history.append(data)
                         # keep history bounded to avoid runaway memory use
+                        if len(history) > 2000:
+                            del history[0 : len(history) - 2000]
+                    STATE.append_activity_summary(job_id, data)
+                    _touch_activity(progress=data)
+            elif event_type == "gen_summary":
+                data = item.get("data")
+                if isinstance(data, dict):
+                    meta = STATE.meta.get(job_id)
+                    if isinstance(meta, dict):
+                        history = meta.setdefault("gen_history", [])
+                        history.append(data)
                         if len(history) > 2000:
                             del history[0 : len(history) - 2000]
                     STATE.append_activity_summary(job_id, data)
@@ -349,7 +492,9 @@ async def _forward_events(
                     success = code == 0
                     _touch_activity(
                         status="complete" if success else "error",
-                        last_message="Pipeline finished." if success else "Pipeline stopped.",
+                        last_message="Pipeline finished."
+                        if success
+                        else "Pipeline stopped.",
                     )
                     if not success:
                         STATE.pop_meta(job_id)
@@ -376,10 +521,14 @@ async def _forward_events(
                         meta_dir.mkdir(exist_ok=True)
                         context_out = dict(context)
                         context_out["run_dir"] = str(run_path)
-                        with open(meta_dir / "ui_context.json", "w", encoding="utf-8") as fh:
+                        with open(
+                            meta_dir / "ui_context.json", "w", encoding="utf-8"
+                        ) as fh:
                             json.dump(context_out, fh, indent=2)
                         if history:
-                            with open(meta_dir / "gen_summary.jsonl", "w", encoding="utf-8") as fh_hist:
+                            with open(
+                                meta_dir / "gen_summary.jsonl", "w", encoding="utf-8"
+                            ) as fh_hist:
                                 for entry in history:
                                     fh_hist.write(json.dumps(entry))
                                     fh_hist.write("\n")
@@ -432,7 +581,10 @@ async def start_pipeline_run(request: HttpRequest):
         if not path_obj.exists():
             return json_error(f"Config not found: {path_obj}", 404)
     elif dataset and not resolve_dataset_preset(dataset):
-        return json_error("Unknown dataset; use dataset=sp500, dataset=sp500_small, or provide a config path", 400)
+        return json_error(
+            "Unknown dataset; use dataset=sp500, dataset=sp500_small, or provide a config path",
+            400,
+        )
 
     cli_args = build_pipeline_args(payload_dict, include_runner=False)
     full_args = build_pipeline_args(payload_dict, include_runner=True)
@@ -462,39 +614,138 @@ async def start_pipeline_run(request: HttpRequest):
         },
     )
 
-    client_queue.put_nowait(json.dumps({"type": "status", "msg": "started", "args": full_args}))
+    client_queue.put_nowait(
+        json.dumps({"type": "status", "msg": "started", "args": full_args})
+    )
 
     log_dir = ROOT / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file_path = log_dir / f"pipeline_{job_id}.log"
     STATE.update_activity(job_id, log_path=str(log_file_path))
 
-    ctx = mp.get_context("spawn")
-    event_queue: mp.Queue = ctx.Queue()
-    worker_fn = _pipeline_worker
-    worker_args: tuple[Any, ...] = (cli_args, str(ROOT), event_queue)
-    if worker_fn is _PIPELINE_WORKER_DEFAULT:
-        worker_args += (job_id,)
-    proc = ctx.Process(target=worker_fn, args=worker_args)
-    proc.start()
+    requested_mode = _normalize_runner_mode(
+        payload_dict.get("runner_mode") or os.environ.get("AE_DASHBOARD_RUNNER_MODE")
+    )
+    resolved_mode = requested_mode
+    if requested_mode == "auto":
+        resolved_mode = (
+            "multiprocessing" if _multiprocessing_available() else "subprocess"
+        )
+    if resolved_mode not in {"multiprocessing", "subprocess"}:
+        return json_error(
+            "runner_mode must be one of: auto, multiprocessing, subprocess", 400
+        )
 
-    forward_task = asyncio.create_task(_forward_events(job_id, event_queue, client_queue))
+    STATE.update_activity(job_id, runner_mode=resolved_mode)
+
+    def _mark_stop_requested() -> None:
+        STATE.update_activity(
+            job_id, updated_at=time.time(), last_message="Stop requested…"
+        )
+
+    proc: Any
+    event_queue: Any
+
+    def _start_subprocess_runner() -> tuple[
+        subprocess.Popen[str], "queue_mod.Queue[dict[str, Any]]"
+    ]:
+        q: "queue_mod.Queue[dict[str, Any]]" = queue_mod.Queue()
+        cmd = _build_subprocess_command(cli_args)
+        env = os.environ.copy()
+        env.setdefault("PIPELINE_JOB_ID", job_id)
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        p = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=env,
+        )
+        t = threading.Thread(
+            target=_pump_subprocess_output,
+            kwargs={"job_id": job_id, "proc": p, "event_queue": q},
+            daemon=True,
+        )
+        t.start()
+        return p, q
+
+    try:
+        if resolved_mode == "multiprocessing":
+            try:
+                ctx = mp.get_context("spawn")
+                event_queue = ctx.Queue()
+                worker_fn = _pipeline_worker
+                worker_args: tuple[Any, ...] = (cli_args, str(ROOT), event_queue)
+                if worker_fn is _PIPELINE_WORKER_DEFAULT:
+                    worker_args += (job_id,)
+                proc = ctx.Process(target=worker_fn, args=worker_args)
+                proc.start()
+            except Exception as exc:
+                if requested_mode != "auto":
+                    raise
+                STATE.update_activity(
+                    job_id,
+                    runner_mode="subprocess",
+                    last_message=f"Falling back to subprocess runner ({exc}).",
+                )
+                resolved_mode = "subprocess"
+                proc, event_queue = _start_subprocess_runner()
+        else:
+            proc, event_queue = _start_subprocess_runner()
+    except Exception as exc:
+        # Fail fast but keep a JSON error payload for the UI.
+        STATE.clear_handle(job_id)
+        STATE.activity.pop(job_id, None)
+        STATE.meta.pop(job_id, None)
+        STATE.logs.pop(job_id, None)
+        STATE.queues.pop(job_id, None)
+        return json_error(
+            f"Failed to start pipeline runner ({resolved_mode}): {exc}", 500
+        )
+
+    forward_task = asyncio.create_task(
+        _forward_events(job_id, event_queue, client_queue)
+    )
 
     def _stop() -> None:
+        _mark_stop_requested()
         try:
-            if proc.is_alive():
+            if resolved_mode == "multiprocessing":
+                if getattr(proc, "is_alive", lambda: False)():
+                    proc.terminate()
+                try:
+                    event_queue.put_nowait({"type": "status", "msg": "exit", "code": 1})
+                    event_queue.put_nowait({"type": "__complete__"})
+                except Exception:
+                    pass
+                return
+            # subprocess runner
+            if hasattr(proc, "poll") and proc.poll() is None:
                 proc.terminate()
+
+                def _kill_after_timeout(p: subprocess.Popen[str]) -> None:
+                    time.sleep(5)
+                    try:
+                        if p.poll() is None:
+                            p.kill()
+                    except Exception:
+                        pass
+
+                threading.Thread(
+                    target=_kill_after_timeout, args=(proc,), daemon=True
+                ).start()
         except Exception:
             pass
-        try:
-            event_queue.put_nowait({"type": "__complete__"})
-        except Exception:
-            pass
-        forward_task.cancel()
 
     STATE.set_handle(job_id, JobHandle(proc=proc, task=forward_task, stop_cb=_stop))
 
     return json_response({"job_id": job_id})
+
 
 def sse_events(request: HttpRequest, job_id: str):
     queue = STATE.get_queue(job_id)
@@ -512,4 +763,10 @@ async def stop(request: HttpRequest, job_id: str):
     ok = STATE.stop(job_id)
     if not ok:
         return json_error("Unknown job id or already stopped", 404)
+    q = STATE.get_queue(job_id)
+    if q is not None:
+        try:
+            q.put_nowait(json.dumps({"type": "status", "msg": "stop_requested"}))
+        except Exception:
+            pass
     return json_response({"stopped": True})

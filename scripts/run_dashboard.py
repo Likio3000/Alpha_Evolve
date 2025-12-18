@@ -60,9 +60,11 @@ def main() -> None:
     access_log = os.environ.get("ACCESS_LOG", "0") in ("1", "true", "True")
 
     logger = logging.getLogger("dashboard.server")
-    ui_url = f"http://{host}:{port}/ui"
+    ui_url = f"http://{host}:{port}/ui/"
     logger.info("Dashboard ready → %s", ui_url)
-    logger.debug("Host=%s | Port=%d | Access log=%s", host, port, "on" if access_log else "off")
+    logger.debug(
+        "Host=%s | Port=%d | Access log=%s", host, port, "on" if access_log else "off"
+    )
 
     uvicorn.run(
         app,

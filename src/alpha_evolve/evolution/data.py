@@ -1,11 +1,19 @@
 from __future__ import annotations
-from pathlib import Path
 from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
 from collections import OrderedDict
 
 from alpha_evolve.config import DEFAULT_SECTOR_MAPPING, DataConfig
-from alpha_evolve.utils.data_loading import DataDiagnostics, DataLoadError, align_and_prune, load_symbol_dfs_from_dir
-from alpha_evolve.utils.cache import compute_align_cache_key, load_aligned_bundle_from_cache, save_aligned_bundle_to_cache
+from alpha_evolve.utils.data_loading import (
+    DataDiagnostics,
+    DataLoadError,
+    align_and_prune,
+    load_symbol_dfs_from_dir,
+)
+from alpha_evolve.utils.cache import (
+    compute_align_cache_key,
+    load_aligned_bundle_from_cache,
+    save_aligned_bundle_to_cache,
+)
 import numpy as np
 import pandas as pd
 import logging
@@ -34,10 +42,11 @@ _ALIGNED_DFS: Optional[OrderedDictType[str, pd.DataFrame]] = None
 _COMMON_TIME_INDEX: Optional[pd.DatetimeIndex] = None
 _STOCK_SYMBOLS: Optional[List[str]] = None
 _N_STOCKS: Optional[int] = None
-_EVAL_LAG_CACHE: int = 1 # Default, will be set by initialize_data
+_EVAL_LAG_CACHE: int = 1  # Default, will be set by initialize_data
 _FEATURE_CACHE: Dict[pd.Timestamp, Dict[str, np.ndarray]] = {}
 _DATA_DIAGNOSTICS: Optional[DataDiagnostics] = None
 _DEPRECATION_WARNED = False
+
 
 def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     """Compatibility wrapper that delegates to the shared feature builder.
@@ -46,7 +55,13 @@ def _rolling_features_individual_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     return compute_basic_features(df)
 
-def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_common_points_param: int, eval_lag: int) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
+
+def _load_and_align_data_internal(
+    data_dir_param: str,
+    strategy_param: str,
+    min_common_points_param: int,
+    eval_lag: int,
+) -> Tuple[OrderedDictType[str, pd.DataFrame], pd.DatetimeIndex, List[str]]:
     # Try cache first
     key = compute_align_cache_key(
         data_dir=data_dir_param,
@@ -62,13 +77,19 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
         raw_dfs: Dict[str, pd.DataFrame] = load_symbol_dfs_from_dir(
             data_dir_param, _rolling_features_individual_df
         )
-        if strategy_param == 'specific_long_10k':
+        if strategy_param == "specific_long_10k":
             min_len_for_long = min_common_points_param
-            raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_len_for_long}
+            raw_dfs = {
+                sym: df for sym, df in raw_dfs.items() if len(df) >= min_len_for_long
+            }
             if len(raw_dfs) < 2:
-                 raise DataLoadError(f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}")
+                raise DataLoadError(
+                    f"Not enough long files (>= {min_len_for_long} data points) found for 'specific_long_10k' strategy. Found: {len(raw_dfs)}"
+                )
         # Use shared alignment + pruning
-        bundle = align_and_prune(raw_dfs, strategy_param, min_common_points_param, eval_lag, logger)
+        bundle = align_and_prune(
+            raw_dfs, strategy_param, min_common_points_param, eval_lag, logger
+        )
         save_aligned_bundle_to_cache(key, bundle)
     aligned_dfs_ordered = bundle.aligned_dfs
     common_index = bundle.common_index
@@ -76,12 +97,17 @@ def _load_and_align_data_internal(data_dir_param: str, strategy_param: str, min_
     global _DATA_DIAGNOSTICS
     _DATA_DIAGNOSTICS = bundle.diagnostics
 
-    if len(stock_symbols) < 2: # Need at least 2 for cross-sectional
-        raise DataLoadError("Need at least two stock symbols after alignment for cross-sectional evolution.")
-    
+    if len(stock_symbols) < 2:  # Need at least 2 for cross-sectional
+        raise DataLoadError(
+            "Need at least two stock symbols after alignment for cross-sectional evolution."
+        )
+
     return aligned_dfs_ordered, common_index, stock_symbols
 
-def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_lag: int):
+
+def initialize_data(
+    data_dir: str, strategy: str, min_common_points: int, eval_lag: int
+):
     global _ALIGNED_DFS, _COMMON_TIME_INDEX, _STOCK_SYMBOLS, _N_STOCKS, _EVAL_LAG_CACHE
     if _ALIGNED_DFS is not None:
         logger.info("Data already initialized.")
@@ -94,7 +120,7 @@ def initialize_data(data_dir: str, strategy: str, min_common_points: int, eval_l
         min_common_points,
         eval_lag,
     )
-    
+
     _ALIGNED_DFS, _COMMON_TIME_INDEX, _STOCK_SYMBOLS = _load_and_align_data_internal(
         data_dir, strategy, min_common_points, eval_lag
     )
@@ -145,26 +171,28 @@ def get_aligned_dfs() -> OrderedDictType[str, pd.DataFrame]:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     return _ALIGNED_DFS
 
+
 def get_common_time_index() -> pd.DatetimeIndex:
     if _COMMON_TIME_INDEX is None:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     return _COMMON_TIME_INDEX
+
 
 def get_stock_symbols() -> List[str]:
     if _STOCK_SYMBOLS is None:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     return _STOCK_SYMBOLS
 
+
 def get_n_stocks() -> int:
     if _N_STOCKS is None:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     return _N_STOCKS
 
+
 def get_eval_lag() -> int:
     # _EVAL_LAG_CACHE is set during initialize_data
     return _EVAL_LAG_CACHE
-
-
 
 
 def _extract_token(sym: str) -> str:
@@ -210,7 +238,9 @@ def get_sector_groups(
     return np.array(groups, dtype=int)
 
 
-def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tuple[
+def get_data_splits(
+    train_points: int, val_points: int, test_points: int
+) -> Tuple[
     OrderedDictType[str, pd.DataFrame],
     OrderedDictType[str, pd.DataFrame],
     OrderedDictType[str, pd.DataFrame],
@@ -236,11 +266,14 @@ def get_data_splits(train_points: int, val_points: int, test_points: int) -> Tup
     start = 0
     for size in (train_points, val_points, test_points):
         idx_slice = _COMMON_TIME_INDEX[start : start + size + _EVAL_LAG_CACHE]
-        split_dfs = OrderedDict({sym: df.loc[idx_slice] for sym, df in _ALIGNED_DFS.items()})
+        split_dfs = OrderedDict(
+            {sym: df.loc[idx_slice] for sym, df in _ALIGNED_DFS.items()}
+        )
         slices.append(split_dfs)
         start += size
 
     return tuple(slices)  # type: ignore[return-value]
+
 
 def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_vec):
     """Return feature dict for a given timestamp."""
@@ -283,29 +316,41 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
             rel_close = (close_vec / mean_close) - 1.0
         else:
             rel_close = np.zeros_like(close_vec)
-        derived_vectors["market_rel_close_t"] = np.nan_to_num(rel_close, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["market_rel_close_t"] = np.nan_to_num(
+            rel_close, nan=0.0, posinf=0.0, neginf=0.0
+        )
 
         std_close = float(np.std(close_vec, ddof=0))
         if std_close > eps:
             zclose = (close_vec - mean_close) / std_close
         else:
             zclose = np.zeros_like(close_vec)
-        derived_vectors["market_zclose_t"] = np.nan_to_num(zclose, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["market_zclose_t"] = np.nan_to_num(
+            zclose, nan=0.0, posinf=0.0, neginf=0.0
+        )
 
-        ref_close = float(close_vec[reference_idx]) if close_vec.size > reference_idx else 0.0
+        ref_close = (
+            float(close_vec[reference_idx]) if close_vec.size > reference_idx else 0.0
+        )
         if abs(ref_close) > eps:
             btc_ratio = (close_vec / ref_close) - 1.0
         else:
             btc_ratio = np.zeros_like(close_vec)
-        derived_vectors["btc_ratio_proxy_t"] = np.nan_to_num(btc_ratio, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["btc_ratio_proxy_t"] = np.nan_to_num(
+            btc_ratio, nan=0.0, posinf=0.0, neginf=0.0
+        )
 
         median_close = float(np.median(close_vec))
         dispersion = close_vec - median_close
-        derived_vectors["market_dispersion_t"] = np.nan_to_num(dispersion, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["market_dispersion_t"] = np.nan_to_num(
+            dispersion, nan=0.0, posinf=0.0, neginf=0.0
+        )
 
     if ret_vec.size:
         mean_ret = float(np.mean(ret_vec))
-        derived_vectors["market_rel_ret1d_t"] = np.nan_to_num(ret_vec - mean_ret, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["market_rel_ret1d_t"] = np.nan_to_num(
+            ret_vec - mean_ret, nan=0.0, posinf=0.0, neginf=0.0
+        )
     else:
         derived_vectors["market_rel_ret1d_t"] = zeros
 
@@ -315,26 +360,39 @@ def get_features_at_time(timestamp, aligned_dfs, stock_symbols, sector_groups_ve
             rel_vol = (vol20_vec / mean_vol20) - 1.0
         else:
             rel_vol = np.zeros_like(vol20_vec)
-        derived_vectors["regime_volatility_t"] = np.nan_to_num(rel_vol, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["regime_volatility_t"] = np.nan_to_num(
+            rel_vol, nan=0.0, posinf=0.0, neginf=0.0
+        )
     else:
         derived_vectors["regime_volatility_t"] = zeros
 
     if trend_vec.size:
         mean_trend = float(np.mean(trend_vec))
-        derived_vectors["regime_momentum_t"] = np.nan_to_num(trend_vec - mean_trend, nan=0.0, posinf=0.0, neginf=0.0)
-        ref_trend = float(trend_vec[reference_idx]) if trend_vec.size > reference_idx else 0.0
+        derived_vectors["regime_momentum_t"] = np.nan_to_num(
+            trend_vec - mean_trend, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        ref_trend = (
+            float(trend_vec[reference_idx]) if trend_vec.size > reference_idx else 0.0
+        )
         cross_btc = trend_vec - ref_trend
-        derived_vectors["cross_btc_momentum_t"] = np.nan_to_num(cross_btc, nan=0.0, posinf=0.0, neginf=0.0)
+        derived_vectors["cross_btc_momentum_t"] = np.nan_to_num(
+            cross_btc, nan=0.0, posinf=0.0, neginf=0.0
+        )
         try:
             sector_diff = np.zeros_like(trend_vec)
-            if sector_groups_vec is not None and sector_groups_vec.size == trend_vec.size:
+            if (
+                sector_groups_vec is not None
+                and sector_groups_vec.size == trend_vec.size
+            ):
                 for sector_id in np.unique(sector_groups_vec):
                     mask = sector_groups_vec == sector_id
                     if not np.any(mask):
                         continue
                     sector_mean = float(np.mean(trend_vec[mask]))
                     sector_diff[mask] = trend_vec[mask] - sector_mean
-            derived_vectors["sector_momentum_diff_t"] = np.nan_to_num(sector_diff, nan=0.0, posinf=0.0, neginf=0.0)
+            derived_vectors["sector_momentum_diff_t"] = np.nan_to_num(
+                sector_diff, nan=0.0, posinf=0.0, neginf=0.0
+            )
         except Exception:
             derived_vectors["sector_momentum_diff_t"] = zeros
     else:
@@ -370,7 +428,9 @@ def get_features_cached(timestamp) -> Dict[str, np.ndarray]:
     if _ALIGNED_DFS is None or _STOCK_SYMBOLS is None:
         raise RuntimeError("Data not initialized. Call initialize_data() first.")
     sector_groups_vec = get_sector_groups(_STOCK_SYMBOLS)
-    features = get_features_at_time(timestamp, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec)
+    features = get_features_at_time(
+        timestamp, _ALIGNED_DFS, _STOCK_SYMBOLS, sector_groups_vec
+    )
     _FEATURE_CACHE[timestamp] = features
     return features
 

@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from alpha_evolve.config import BacktestConfig
@@ -14,13 +13,18 @@ def test_end_to_end_small(tmp_path: Path):
         predict_ops=[
             Op("twos", "add", ("const_1", "const_1")),
             Op("scaled", "vec_mul_scalar", ("opens_t", "twos")),
-            Op(FINAL_PREDICTION_VECTOR_NAME, "vec_add_scalar", ("scaled", "const_neg_1")),
+            Op(
+                FINAL_PREDICTION_VECTOR_NAME,
+                "vec_add_scalar",
+                ("scaled", "const_neg_1"),
+            ),
         ]
     )
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
     pkl = run_dir / "dummy.pkl"
     import pickle
+
     with open(pkl, "wb") as fh:
         pickle.dump([(prog, 0.0)], fh)
 

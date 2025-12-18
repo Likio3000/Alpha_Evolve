@@ -8,11 +8,14 @@ from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
 
-from alpha_evolve.programs import AlphaProgram, TypeId, CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+from alpha_evolve.programs import (
+    AlphaProgram,
+    TypeId,
+    CROSS_SECTIONAL_FEATURE_VECTOR_NAMES,
+)
 from alpha_evolve.programs.utils import EvolutionParams
 import alpha_evolve.programs.logic_generation as plg
 import alpha_evolve.programs.logic_variation as plv
-from alpha_evolve.evolution.data import initialize_data
 from alpha_evolve.evolution.evaluation import (
     evaluate_program,
     initialize_evaluation_cache,
@@ -32,7 +35,12 @@ from alpha_evolve.evolution import hall_of_fame as hof_module
 from alpha_evolve.evolution import evaluation as el_module
 from alpha_evolve.evolution import moea as moea_module
 from alpha_evolve.evolution.utils import pbar
-from alpha_evolve.utils.context import make_eval_context_from_globals, EvalContext, make_eval_context_from_dir
+from alpha_evolve.utils.context import (
+    EvalContext,
+    make_eval_context_from_dir,
+    slice_eval_context,
+)
+from alpha_evolve.utils import stats as ae_stats
 
 from alpha_evolve.config import EvoConfig  # New import
 
@@ -47,10 +55,18 @@ _CTX: EvalContext | None = None
 _WORKER_CTX: EvalContext | None = None
 _QD_ENABLED = False
 
-def _pool_init(data_dir: str, strategy: str, min_common_points: int, eval_lag: int, sector_mapping: dict):
+
+def _pool_init(
+    data_dir: str,
+    strategy: str,
+    min_common_points: int,
+    eval_lag: int,
+    sector_mapping: dict,
+):
     """Initializer for worker processes to build an EvalContext once per worker."""
     from alpha_evolve.utils.context import make_eval_context_from_dir as _mk
     from alpha_evolve.evolution import data as _dh
+
     global _WORKER_CTX
     try:
         # Precompute column matrices in each worker for vector features so we avoid
@@ -76,7 +92,9 @@ def _pool_init(data_dir: str, strategy: str, min_common_points: int, eval_lag: i
         _WORKER_CTX = None
 
 
-def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signature changed
+def _sync_evolution_configs_from_config(
+    cfg: EvoConfig,
+):  # Renamed and signature changed
     global _RNG
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
@@ -103,6 +121,7 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         use_train_val_splits=cfg.use_train_val_splits,
         train_points=cfg.train_points,
         val_points=cfg.val_points,
+        split_weighting=getattr(cfg, "split_weighting", "equal"),
         sector_neutralize=cfg.sector_neutralize,
         winsor_p=cfg.winsor_p,
         parsimony_jitter_pct=cfg.parsimony_jitter_pct,
@@ -116,6 +135,8 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
         temporal_decay_half_life=getattr(cfg, "temporal_decay_half_life", 0.0),
         cv_k_folds=getattr(cfg, "cv_k_folds", 0),
         cv_embargo=getattr(cfg, "cv_embargo", 0),
+        cv_agg_mode=getattr(cfg, "cv_agg_mode", "mean"),
+        cv_trim_frac=getattr(cfg, "cv_trim_frac", 0.1),
     )
     _initialize_qd_archive(cfg)
     initialize_hof(
@@ -128,19 +149,22 @@ def _sync_evolution_configs_from_config(cfg: EvoConfig):  # Renamed and signatur
     initialize_evaluation_cache(cfg.eval_cache_size)
 
 
-FEATURE_VARS: Dict[str, TypeId] = {name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES}
+FEATURE_VARS: Dict[str, TypeId] = {
+    name: "vector" for name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
+}
 # Constant scalar features are deliberately excluded to align with the
 # reference paper.  They remain accessible via SCALAR_FEATURE_NAMES if needed.
 
 INITIAL_STATE_VARS: Dict[str, TypeId] = {
     "prev_s1_vec": "vector",
-    "rolling_mean_custom": "vector"
+    "rolling_mean_custom": "vector",
 }
 
 # ─── bias random generation and mutation towards vector-returning ops ───
 VECTOR_OPS_BIAS = 0.3
-plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS   # legacy module-level fallback
+plg.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS  # legacy module-level fallback
 plv.VECTOR_OPS_BIAS = VECTOR_OPS_BIAS
+
 
 def _build_evo_params(cfg: EvoConfig) -> EvolutionParams:
     return EvolutionParams(
@@ -186,14 +210,20 @@ def _initialize_qd_archive(cfg: EvoConfig) -> None:
     if not enabled:
         qd_archive.clear_archive()
         return
+
     def _coerce_bins(raw, fallback):
         try:
             items = tuple(float(x) for x in raw)
             return items if items else fallback
         except Exception:
             return fallback
-    turnover_bins = _coerce_bins(getattr(cfg, "qd_turnover_bins", (0.1, 0.3, 0.6)), (0.1, 0.3, 0.6))
-    complexity_bins = _coerce_bins(getattr(cfg, "qd_complexity_bins", (0.25, 0.5, 0.75)), (0.25, 0.5, 0.75))
+
+    turnover_bins = _coerce_bins(
+        getattr(cfg, "qd_turnover_bins", (0.1, 0.3, 0.6)), (0.1, 0.3, 0.6)
+    )
+    complexity_bins = _coerce_bins(
+        getattr(cfg, "qd_complexity_bins", (0.25, 0.5, 0.75)), (0.25, 0.5, 0.75)
+    )
     max_entries = int(getattr(cfg, "qd_max_entries", 256) or 256)
     qd_archive.initialize_archive(
         turnover_bins=turnover_bins,
@@ -210,6 +240,7 @@ def _program_feature_usage(prog: AlphaProgram) -> Set[str]:
             if name in feature_names:
                 used.add(name)
     return used
+
 
 def _random_prog(cfg: EvoConfig) -> AlphaProgram:
     params = _build_evo_params(cfg)
@@ -239,6 +270,7 @@ def _mutate_prog(p: AlphaProgram, cfg: EvoConfig) -> AlphaProgram:
         params=params,
     )
 
+
 def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
     idx, prog = args
     try:
@@ -262,7 +294,7 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
         )
         # Return a sentinel EvalResult with -inf fitness so it is ignored
         return idx, el_module.EvalResult(
-            fitness=float('-inf'),
+            fitness=float("-inf"),
             mean_ic=0.0,
             sharpe_proxy=0.0,
             parsimony_penalty=0.0,
@@ -274,11 +306,15 @@ def _eval_worker(args) -> Tuple[int, el_module.EvalResult]:
             fitness_static=None,
         )
 
+
 ###############################################################################
 # EVOLVE LOOP ##############################################################
 ###############################################################################
 
-def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaProgram, float]]:
+
+def evolve_with_context(
+    cfg: EvoConfig, ctx: EvalContext
+) -> List[Tuple[AlphaProgram, float]]:
     """Evolve using an explicit EvalContext (context-first API).
 
     This avoids any implicit module-level data. The traditional evolve() helper
@@ -307,7 +343,7 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
     gen_eval_times_history: List[float] = []
 
     try:
-        prev_best_fit: float = float('-inf')
+        prev_best_fit: float = float("-inf")
         no_improve_gens: int = 0
         prev_q25: float | None = None
         q25_deteriorate_streak: int = 0
@@ -315,13 +351,23 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             # Anneal correlation penalty and optional eval weights to encourage exploration early
             # Ramp linearly over a configurable portion of the run
             try:
-                ramp_gens_cfg = int(max(1, round(cfg.generations * float(getattr(cfg, "ramp_fraction", 1.0/3.0)))))
+                ramp_gens_cfg = int(
+                    max(
+                        1,
+                        round(
+                            cfg.generations
+                            * float(getattr(cfg, "ramp_fraction", 1.0 / 3.0))
+                        ),
+                    )
+                )
             except Exception:
                 ramp_gens_cfg = cfg.generations // 3 if cfg.generations > 0 else 5
             ramp_gens = max(getattr(cfg, "ramp_min_gens", 5), ramp_gens_cfg)
             ramp = min(1.0, (gen + 1) / ramp_gens)
             try:
-                hof_module.set_correlation_penalty(weight=cfg.corr_penalty_w * ramp, cutoff=cfg.corr_cutoff)
+                hof_module.set_correlation_penalty(
+                    weight=cfg.corr_penalty_w * ramp, cutoff=cfg.corr_cutoff
+                )
             except Exception:
                 pass
             try:
@@ -343,10 +389,17 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     use_train_val_splits=cfg.use_train_val_splits,
                     train_points=cfg.train_points,
                     val_points=cfg.val_points,
+                    split_weighting=getattr(cfg, "split_weighting", "equal"),
                     sector_neutralize=cfg.sector_neutralize,
                     winsor_p=cfg.winsor_p,
                     hof_corr_mode=getattr(cfg, "hof_corr_mode", "flat"),
-                    temporal_decay_half_life=getattr(cfg, "temporal_decay_half_life", 0.0),
+                    temporal_decay_half_life=getattr(
+                        cfg, "temporal_decay_half_life", 0.0
+                    ),
+                    cv_k_folds=getattr(cfg, "cv_k_folds", 0),
+                    cv_embargo=getattr(cfg, "cv_embargo", 0),
+                    cv_agg_mode=getattr(cfg, "cv_agg_mode", "mean"),
+                    cv_trim_frac=getattr(cfg, "cv_trim_frac", 0.1),
                     parsimony_jitter_pct=cfg.parsimony_jitter_pct,
                     # Fixed weights stay at targets
                     fixed_sharpe_proxy_weight=cfg.sharpe_proxy_w,
@@ -358,11 +411,19 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     stress_fee_bps=cfg.stress_fee_bps,
                     stress_slippage_bps=cfg.stress_slippage_bps,
                     stress_shock_scale=cfg.stress_shock_scale,
-                    stress_tail_fee_bps=getattr(cfg, "stress_tail_fee_bps", cfg.stress_fee_bps * 2.0),
-                    stress_tail_slippage_bps=getattr(cfg, "stress_tail_slippage_bps", cfg.stress_slippage_bps * 1.5),
-                    stress_tail_shock_scale=getattr(cfg, "stress_tail_shock_scale", cfg.stress_shock_scale * 1.5),
+                    stress_tail_fee_bps=getattr(
+                        cfg, "stress_tail_fee_bps", cfg.stress_fee_bps * 2.0
+                    ),
+                    stress_tail_slippage_bps=getattr(
+                        cfg, "stress_tail_slippage_bps", cfg.stress_slippage_bps * 1.5
+                    ),
+                    stress_tail_shock_scale=getattr(
+                        cfg, "stress_tail_shock_scale", cfg.stress_shock_scale * 1.5
+                    ),
                     transaction_cost_bps=getattr(cfg, "transaction_cost_bps", 0.0),
-                    regime_diagnostic_factors=getattr(cfg, "regime_diagnostic_factors", None),
+                    regime_diagnostic_factors=getattr(
+                        cfg, "regime_diagnostic_factors", None
+                    ),
                 )
             except Exception:
                 pass
@@ -380,7 +441,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             t_start_gen = time.perf_counter()
             eval_results: List[Tuple[int, el_module.EvalResult]] = []
             pop_fitness_scores = np.full(cfg.pop_size, -np.inf)
-            progress_total = max(1, int(cfg.pop_size) if getattr(cfg, "pop_size", None) else len(pop))
+            progress_total = max(
+                1, int(cfg.pop_size) if getattr(cfg, "pop_size", None) else len(pop)
+            )
             progress_step = max(1, int(math.ceil(progress_total / 20)))
             last_progress_completed = -progress_step
             last_progress_best = float("-inf")
@@ -402,7 +465,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 elapsed_sec: float,
                 eta_sec: float | None,
             ) -> None:
-                nonlocal last_progress_completed, last_progress_best, last_progress_median
+                nonlocal \
+                    last_progress_completed, \
+                    last_progress_best, \
+                    last_progress_median
                 if completed < 0:
                     return
                 should_emit = False
@@ -410,7 +476,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     should_emit = True
                 elif completed - last_progress_completed >= progress_step:
                     should_emit = True
-                elif _value_changed(best_score, last_progress_best) or _value_changed(median_score, last_progress_median):
+                elif _value_changed(best_score, last_progress_best) or _value_changed(
+                    median_score, last_progress_median
+                ):
                     should_emit = True
                 if not should_emit:
                     return
@@ -435,29 +503,90 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             # Helper to choose selection score based on configuration
             def _sel_score(res: el_module.EvalResult) -> float:
                 sel = getattr(cfg, "selection_metric", "ramped")
+                # Never promote invalid candidates, regardless of selection metric.
+                try:
+                    if not np.isfinite(res.fitness):
+                        return float(res.fitness)
+                except Exception:
+                    return float("-inf")
                 base_score: float
                 # Auto strategy: ramped early, fixed after ramp completes
                 if sel == "auto":
-                    use_fixed = (ramp >= 0.999)
+                    use_fixed = ramp >= 0.999
                     if use_fixed:
                         fs = getattr(res, "fitness_static", None)
-                        base_score = float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                        base_score = (
+                            float(fs)
+                            if fs is not None and np.isfinite(fs)
+                            else float(res.fitness)
+                        )
                     else:
                         base_score = float(res.fitness)
                 elif sel == "fixed":
                     fs = getattr(res, "fitness_static", None)
-                    base_score = float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                    base_score = (
+                        float(fs)
+                        if fs is not None and np.isfinite(fs)
+                        else float(res.fitness)
+                    )
                 elif sel == "ic":
                     base_score = float(res.mean_ic)
+                elif sel == "lcb":
+                    z = float(getattr(cfg, "selection_lcb_z", 1.645))
+                    sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
+                    n = int(getattr(res, "sharpe_n", 0) or 0)
+                    skew = float(getattr(res, "pnl_skew", 0.0))
+                    kurt = float(getattr(res, "pnl_kurt", 3.0))
+                    if np.isfinite(sharpe) and n > 1:
+                        se = ae_stats.sharpe_std_error(sharpe, n, skew=skew, kurt=kurt)
+                        base_score = (
+                            float(sharpe - z * se)
+                            if np.isfinite(se) and se > 0.0
+                            else float(sharpe)
+                        )
+                    else:
+                        ic_n = int(getattr(res, "ic_n", 0) or 0)
+                        base_score = float(
+                            ae_stats.lcb_mean(
+                                float(res.mean_ic),
+                                float(getattr(res, "ic_std", 0.0)),
+                                ic_n,
+                                z=z,
+                            )
+                        )
+                elif sel == "psr":
+                    sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
+                    n = int(getattr(res, "sharpe_n", 0) or 0)
+                    skew = float(getattr(res, "pnl_skew", 0.0))
+                    kurt = float(getattr(res, "pnl_kurt", 3.0))
+                    if np.isfinite(sharpe) and n > 1:
+                        base_score = float(
+                            ae_stats.probabilistic_sharpe_z(
+                                sharpe, n, skew=skew, kurt=kurt, benchmark=0.0
+                            )
+                        )
+                    else:
+                        ic_n = int(getattr(res, "ic_n", 0) or 0)
+                        ic_std = float(getattr(res, "ic_std", 0.0))
+                        if ic_n > 1 and np.isfinite(ic_std) and ic_std > 1e-12:
+                            base_score = (
+                                float(res.mean_ic) * float(math.sqrt(ic_n)) / ic_std
+                            )
+                        else:
+                            base_score = float(res.mean_ic)
                 elif sel == "phased":
                     # Early phase: pure IC, mid: ramped, late: fixed
-                    if (gen < int(getattr(cfg, "ic_phase_gens", 0))):
+                    if gen < int(getattr(cfg, "ic_phase_gens", 0)):
                         base_score = float(res.mean_ic)
                     elif ramp < 0.999:
                         base_score = float(res.fitness)
                     else:
                         fs = getattr(res, "fitness_static", None)
-                        base_score = float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
+                        base_score = (
+                            float(fs)
+                            if fs is not None and np.isfinite(fs)
+                            else float(res.fitness)
+                        )
                 else:
                     # default ramped fitness
                     base_score = float(res.fitness)
@@ -469,7 +598,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         proc = getattr(res, "processed_predictions", None)
                         if proc is not None and proc.size > 0:
                             flat = proc.ravel()
-                            mean_corr = hof_module.get_mean_corr_component_with_hof(flat)
+                            mean_corr = hof_module.get_mean_corr_component_with_hof(
+                                flat
+                            )
                             # Boost by (1 - corr); if HOF empty, mean_corr=0 → neutral boost
                             base_score = base_score + nb_w * float(1.0 - mean_corr)
                     except Exception:
@@ -479,8 +610,16 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 if ns_w > 0.0:
                     try:
                         # Candidate opcode set
-                        ops = [*getattr(pop[i], 'setup', []), *getattr(pop[i], 'predict_ops', []), *getattr(pop[i], 'update_ops', [])]
-                        cand_set = {getattr(o, 'opcode', '') for o in ops if hasattr(o, 'opcode')}
+                        ops = [
+                            *getattr(pop[i], "setup", []),
+                            *getattr(pop[i], "predict_ops", []),
+                            *getattr(pop[i], "update_ops", []),
+                        ]
+                        cand_set = {
+                            getattr(o, "opcode", "")
+                            for o in ops
+                            if hasattr(o, "opcode")
+                        }
                         hof_sets = hof_module.get_hof_opcode_sets(None)
                         if hof_sets:
                             # Jaccard distance vs closest HOF program
@@ -497,13 +636,32 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             base_score = base_score + ns_w * novelty_struct
                     except Exception:
                         pass
+                # Optional behavioral novelty boost: reward prediction-distance vs HOF
+                nd_w = float(getattr(cfg, "novelty_pred_dist_w", 0.0))
+                if nd_w > 0.0:
+                    try:
+                        proc = getattr(res, "processed_predictions", None)
+                        if proc is not None and proc.size > 0:
+                            novelty_dist = (
+                                hof_module.get_min_prediction_distance_with_hof(
+                                    proc, probe_bars=64
+                                )
+                            )
+                            base_score = base_score + nd_w * float(novelty_dist)
+                    except Exception:
+                        pass
                 return base_score
 
             # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1.
             # If multi-fidelity is enabled and we're not using a pool, perform a cheap pass then promote top-K for full eval.
             if mf_ctx is not None and (cfg.workers or 0) <= 1:
                 # Sequential multi-fidelity evaluation
-                iterator = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations} [mf-cheap]", disable=cfg.quiet, total=cfg.pop_size)
+                iterator = pbar(
+                    range(len(pop)),
+                    desc=f"Gen {gen + 1}/{cfg.generations} [mf-cheap]",
+                    disable=cfg.quiet,
+                    total=cfg.pop_size,
+                )
                 _CTX = mf_ctx  # type: ignore
                 tmp_results: List[Tuple[int, el_module.EvalResult]] = []
                 for i in iterator:
@@ -511,23 +669,103 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     tmp_results.append((i, result))
                 try:
                     promote_frac = float(getattr(cfg, "mf_promote_fraction", 0.3))
-                    promote_n = max(int(round(cfg.pop_size * promote_frac)), int(getattr(cfg, "mf_min_promote", 8)))
+                    promote_n = max(
+                        int(round(cfg.pop_size * promote_frac)),
+                        int(getattr(cfg, "mf_min_promote", 8)),
+                    )
                 except Exception:
                     promote_n = max(8, cfg.pop_size // 3)
+
                 def _sel_score_local(res: el_module.EvalResult) -> float:
                     sel = getattr(cfg, "selection_metric", "ramped")
+                    try:
+                        if not np.isfinite(res.fitness):
+                            return float(res.fitness)
+                    except Exception:
+                        return float("-inf")
+                    if sel == "auto":
+                        use_fixed = ramp >= 0.999
+                        if use_fixed:
+                            fs = getattr(res, "fitness_static", None)
+                            return (
+                                float(fs)
+                                if fs is not None and np.isfinite(fs)
+                                else float(res.fitness)
+                            )
+                        return float(res.fitness)
                     if sel == "ic":
                         return float(res.mean_ic)
                     if sel == "fixed":
                         fs = getattr(res, "fitness_static", None)
-                        return float(fs) if fs is not None and np.isfinite(fs) else float(res.fitness)
-                    if sel == "phased" and (gen < int(getattr(cfg, "ic_phase_gens", 0))):
+                        return (
+                            float(fs)
+                            if fs is not None and np.isfinite(fs)
+                            else float(res.fitness)
+                        )
+                    if sel == "lcb":
+                        z = float(getattr(cfg, "selection_lcb_z", 1.645))
+                        sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
+                        n = int(getattr(res, "sharpe_n", 0) or 0)
+                        skew = float(getattr(res, "pnl_skew", 0.0))
+                        kurt = float(getattr(res, "pnl_kurt", 3.0))
+                        if np.isfinite(sharpe) and n > 1:
+                            se = ae_stats.sharpe_std_error(
+                                sharpe, n, skew=skew, kurt=kurt
+                            )
+                            return (
+                                float(sharpe - z * se)
+                                if np.isfinite(se) and se > 0.0
+                                else float(sharpe)
+                            )
+                        ic_n = int(getattr(res, "ic_n", 0) or 0)
+                        return float(
+                            ae_stats.lcb_mean(
+                                float(res.mean_ic),
+                                float(getattr(res, "ic_std", 0.0)),
+                                ic_n,
+                                z=z,
+                            )
+                        )
+                    if sel == "psr":
+                        sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
+                        n = int(getattr(res, "sharpe_n", 0) or 0)
+                        skew = float(getattr(res, "pnl_skew", 0.0))
+                        kurt = float(getattr(res, "pnl_kurt", 3.0))
+                        if np.isfinite(sharpe) and n > 1:
+                            return float(
+                                ae_stats.probabilistic_sharpe_z(
+                                    sharpe, n, skew=skew, kurt=kurt, benchmark=0.0
+                                )
+                            )
+                        ic_n = int(getattr(res, "ic_n", 0) or 0)
+                        ic_std = float(getattr(res, "ic_std", 0.0))
+                        if ic_n > 1 and np.isfinite(ic_std) and ic_std > 1e-12:
+                            return float(res.mean_ic) * float(math.sqrt(ic_n)) / ic_std
                         return float(res.mean_ic)
+                    if sel == "phased" and (
+                        gen < int(getattr(cfg, "ic_phase_gens", 0))
+                    ):
+                        return float(res.mean_ic)
+                    if sel == "phased":
+                        if ramp < 0.999:
+                            return float(res.fitness)
+                        fs = getattr(res, "fitness_static", None)
+                        return (
+                            float(fs)
+                            if fs is not None and np.isfinite(fs)
+                            else float(res.fitness)
+                        )
                     return float(res.fitness)
+
                 tmp_results.sort(key=lambda t: _sel_score_local(t[1]), reverse=True)
                 promote_idx = {i for (i, _) in tmp_results[:promote_n]}
                 _CTX = ctx  # type: ignore
-                iterator2 = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations} [mf-full]", disable=cfg.quiet, total=cfg.pop_size)
+                iterator2 = pbar(
+                    range(len(pop)),
+                    desc=f"Gen {gen + 1}/{cfg.generations} [mf-full]",
+                    disable=cfg.quiet,
+                    total=cfg.pop_size,
+                )
                 for i in iterator2:
                     if i in promote_idx:
                         _, result = _eval_worker((i, pop[i]))
@@ -560,7 +798,12 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     ),
                 ) as pool:
                     results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
-                    bar = pbar(results_iter, desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
+                    bar = pbar(
+                        results_iter,
+                        desc=f"Gen {gen + 1}/{cfg.generations}",
+                        disable=cfg.quiet,
+                        total=cfg.pop_size,
+                    )
                     completed = 0
                     for i, result in bar:
                         eval_results.append((i, result))
@@ -585,20 +828,41 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             pop[i].size,
                         )
                         try:
-                            valid_scores = pop_fitness_scores[np.isfinite(pop_fitness_scores)]
-                            best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float("-inf")
+                            valid_scores = pop_fitness_scores[
+                                np.isfinite(pop_fitness_scores)
+                            ]
+                            best_score_so_far = (
+                                float(np.max(valid_scores))
+                                if valid_scores.size > 0
+                                else float("-inf")
+                            )
                             if not cfg.quiet and hasattr(bar, "set_postfix_str"):
                                 bar.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
-                            median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float("nan")
+                            median_so_far = (
+                                float(np.median(valid_scores))
+                                if valid_scores.size > 0
+                                else float("nan")
+                            )
                             elapsed = float(time.perf_counter() - t_start_gen)
                             frac = completed / float(progress_total)
                             eta = (elapsed / frac - elapsed) if frac > 1e-6 else None
-                            _maybe_emit_progress(int(completed), best_score_so_far, median_so_far, elapsed, eta)
+                            _maybe_emit_progress(
+                                int(completed),
+                                best_score_so_far,
+                                median_so_far,
+                                elapsed,
+                                eta,
+                            )
                         except Exception:
                             pass
             else:
                 # Sequential evaluation
-                iterator = pbar(range(len(pop)), desc=f"Gen {gen+1}/{cfg.generations}", disable=cfg.quiet, total=cfg.pop_size)
+                iterator = pbar(
+                    range(len(pop)),
+                    desc=f"Gen {gen + 1}/{cfg.generations}",
+                    disable=cfg.quiet,
+                    total=cfg.pop_size,
+                )
                 for idx_in_seq, i in enumerate(iterator, start=1):
                     _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
@@ -622,18 +886,36 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                         pop[i].size,
                     )
                     try:
-                        valid_scores = pop_fitness_scores[np.isfinite(pop_fitness_scores)]
-                        best_score_so_far = float(np.max(valid_scores)) if valid_scores.size > 0 else float("-inf")
+                        valid_scores = pop_fitness_scores[
+                            np.isfinite(pop_fitness_scores)
+                        ]
+                        best_score_so_far = (
+                            float(np.max(valid_scores))
+                            if valid_scores.size > 0
+                            else float("-inf")
+                        )
                         if not cfg.quiet and hasattr(iterator, "set_postfix_str"):
-                            iterator.set_postfix_str(f"BestFit: {best_score_so_far:.4f}")
-                        median_so_far = float(np.median(valid_scores)) if valid_scores.size > 0 else float("nan")
+                            iterator.set_postfix_str(
+                                f"BestFit: {best_score_so_far:.4f}"
+                            )
+                        median_so_far = (
+                            float(np.median(valid_scores))
+                            if valid_scores.size > 0
+                            else float("nan")
+                        )
                         elapsed = float(time.perf_counter() - t_start_gen)
                         frac = idx_in_seq / float(progress_total)
                         eta = (elapsed / frac - elapsed) if frac > 1e-6 else None
-                        _maybe_emit_progress(int(idx_in_seq), best_score_so_far, median_so_far, elapsed, eta)
+                        _maybe_emit_progress(
+                            int(idx_in_seq),
+                            best_score_so_far,
+                            median_so_far,
+                            elapsed,
+                            eta,
+                        )
                     except Exception:
                         pass
-            
+
             gen_eval_time = time.perf_counter() - t_start_gen
             if gen_eval_time > 0:
                 gen_eval_times_history.append(gen_eval_time)
@@ -674,10 +956,29 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 try:
                     # Per-gen population distribution and a snapshot of top-K
                     K = 5
-                    events = el_module.get_eval_events() if hasattr(el_module, "get_eval_events") else []
+                    try:
+                        events = (
+                            el_module.get_eval_events()
+                            if hasattr(el_module, "get_eval_events")
+                            else []
+                        )
+                    except Exception:
+                        events = []
+                    # Always record a base entry so downstream reports have per-gen rows,
+                    # even if some optional enrichment fails.
+                    diag.record_generation(
+                        generation=gen + 1,
+                        eval_stats=stats,
+                        eval_events=events,
+                        best={},
+                    )
                     # Sort a copy for diagnostics to reflect current selection metric
-                    tmp_sorted = sorted(eval_results, key=lambda x: _sel_score(x[1]), reverse=True)
-                    valid_scores = [r[1].fitness for r in tmp_sorted if np.isfinite(r[1].fitness)]
+                    tmp_sorted = sorted(
+                        eval_results, key=lambda x: _sel_score(x[1]), reverse=True
+                    )
+                    valid_scores = [
+                        r[1].fitness for r in tmp_sorted if np.isfinite(r[1].fitness)
+                    ]
                     q = None
                     if valid_scores:
                         arr = np.array(valid_scores)
@@ -694,37 +995,62 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     population_size = max(1, len(pop))
                     for idx_in_pop, res in tmp_sorted[:K]:
                         prog = pop[idx_in_pop]
-                        top_summary.append({
-                            "fingerprint": prog.fingerprint,
-                            "fitness": float(res.fitness),
-                            "fitness_fixed": float(getattr(res, "fitness_static", float("nan"))),
-                            "mean_ic": float(res.mean_ic),
-                            "ic_std": float(getattr(res, "ic_std", 0.0)),
-                            "turnover": float(getattr(res, "turnover_proxy", 0.0)),
-                            "drawdown": float(getattr(res, "max_drawdown", 0.0)),
-                            "sharpe": float(getattr(res, "sharpe_proxy", 0.0)),
-                            "parsimony": float(res.parsimony_penalty),
-                            "corr_pen": float(res.correlation_penalty),
-                            "factor_exposure_sum": float(getattr(res, "factor_exposure_sum", 0.0)),
-                            "robustness_penalty": float(getattr(res, "robustness_penalty", 0.0)),
-                            "ops": int(prog.size),
-                            "factor_exposures": {k: float(v) for k, v in res.factor_exposures.items()},
-                            "regime_exposures": {k: float(v) for k, v in getattr(res, "regime_exposures", {}).items()},
-                            "stress_metrics": {k: float(v) for k, v in getattr(res, "stress_metrics", {}).items()},
-                            "transaction_costs": {k: float(v) for k, v in getattr(res, "transaction_costs", {}).items()},
-                            "horizon_metrics": {int(h): {mk: float(mv) for mk, mv in metrics.items()} for h, metrics in res.horizon_metrics.items()},
-                            "program": prog.to_string(max_len=180),
-                        })
+                        top_summary.append(
+                            {
+                                "fingerprint": prog.fingerprint,
+                                "fitness": float(res.fitness),
+                                "fitness_fixed": float(
+                                    getattr(res, "fitness_static", float("nan"))
+                                ),
+                                "mean_ic": float(res.mean_ic),
+                                "ic_std": float(getattr(res, "ic_std", 0.0)),
+                                "turnover": float(getattr(res, "turnover_proxy", 0.0)),
+                                "drawdown": float(getattr(res, "max_drawdown", 0.0)),
+                                "sharpe": float(getattr(res, "sharpe_proxy", 0.0)),
+                                "parsimony": float(res.parsimony_penalty),
+                                "corr_pen": float(res.correlation_penalty),
+                                "factor_exposure_sum": float(
+                                    getattr(res, "factor_exposure_sum", 0.0)
+                                ),
+                                "robustness_penalty": float(
+                                    getattr(res, "robustness_penalty", 0.0)
+                                ),
+                                "ops": int(prog.size),
+                                "factor_exposures": {
+                                    k: float(v) for k, v in res.factor_exposures.items()
+                                },
+                                "regime_exposures": {
+                                    k: float(v)
+                                    for k, v in getattr(
+                                        res, "regime_exposures", {}
+                                    ).items()
+                                },
+                                "stress_metrics": {
+                                    k: float(v)
+                                    for k, v in getattr(
+                                        res, "stress_metrics", {}
+                                    ).items()
+                                },
+                                "transaction_costs": {
+                                    k: float(v)
+                                    for k, v in getattr(
+                                        res, "transaction_costs", {}
+                                    ).items()
+                                },
+                                "horizon_metrics": {
+                                    int(h): {
+                                        mk: float(mv) for mk, mv in metrics.items()
+                                    }
+                                    for h, metrics in res.horizon_metrics.items()
+                                },
+                                "program": prog.to_string(max_len=180),
+                            }
+                        )
                     for idx_in_pop, _ in eval_results:
                         for feat in _program_feature_usage(pop[idx_in_pop]):
                             if feat in feature_counts:
                                 feature_counts[feat] += 1
-                    diag.record_generation(
-                        generation=gen + 1,
-                        eval_stats=stats,
-                        eval_events=events,
-                        best=(top_summary[0] if top_summary else {}),
-                    )
+                    diag.enrich_last(best=(top_summary[0] if top_summary else {}))
                     # Enrich entry with additional optional fields for downstream reporting
                     diag.enrich_last(
                         pop_quantiles=(q or {}),
@@ -743,31 +1069,48 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     )
                     # Optional Pareto front summary for diagnostics
                     try:
-                        if getattr(cfg, "moea_enabled", False) and moea_analysis is not None:
+                        if (
+                            getattr(cfg, "moea_enabled", False)
+                            and moea_analysis is not None
+                        ):
                             front_zero = moea_analysis.front(0)
                             pf: List[Dict[str, object]] = []
                             for idx_in_pop in front_zero[: min(10, len(front_zero))]:
                                 objectives = moea_analysis.objectives.get(idx_in_pop)
                                 if objectives is None:
                                     continue
-                                pf.append({
-                                    "idx": int(idx_in_pop),
-                                    "fp": pop[idx_in_pop].fingerprint,
-                                    "obj": moea_module.to_objective_dict(objectives, moea_analysis.labels),
-                                    "ops": int(pop[idx_in_pop].size),
-                                })
-                            diag.enrich_last(pareto_front=pf, pareto_size=len(front_zero))
+                                pf.append(
+                                    {
+                                        "idx": int(idx_in_pop),
+                                        "fp": pop[idx_in_pop].fingerprint,
+                                        "obj": moea_module.to_objective_dict(
+                                            objectives, moea_analysis.labels
+                                        ),
+                                        "ops": int(pop[idx_in_pop].size),
+                                    }
+                                )
+                            diag.enrich_last(
+                                pareto_front=pf, pareto_size=len(front_zero)
+                            )
                     except Exception:
                         pass
                     # Novelty vs HOF for best-of-gen (mean Spearman component)
                     try:
                         if tmp_sorted:
                             best_res = tmp_sorted[0][1]
-                            pp = getattr(best_res, 'processed_predictions', None)
+                            pp = getattr(best_res, "processed_predictions", None)
                             mean_corr = None
                             if pp is not None and pp.size > 0:
-                                mean_corr = hof_module.get_mean_corr_component_with_hof(pp.ravel())
-                            diag.enrich_last(novelty={"hof_mean_corr_best": float(mean_corr) if mean_corr is not None else 0.0})
+                                mean_corr = hof_module.get_mean_corr_component_with_hof(
+                                    pp.ravel()
+                                )
+                            diag.enrich_last(
+                                novelty={
+                                    "hof_mean_corr_best": float(mean_corr)
+                                    if mean_corr is not None
+                                    else 0.0
+                                }
+                            )
                     except Exception:
                         pass
                     # Include a compact HOF snapshot for provenance
@@ -782,8 +1125,12 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                             pass
                         # Include correlation matrix among HOF rank prediction vectors (latest up to limit)
                         try:
-                            fps, corr_mat = hof_module.get_rank_corr_matrix(limit=10, absolute=True)
-                            diag.enrich_last(hof_rank_corr={"fps": fps, "matrix": corr_mat})
+                            fps, corr_mat = hof_module.get_rank_corr_matrix(
+                                limit=10, absolute=True
+                            )
+                            diag.enrich_last(
+                                hof_rank_corr={"fps": fps, "matrix": corr_mat}
+                            )
                         except Exception:
                             pass
                     except Exception:
@@ -798,14 +1145,25 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                                 hi = lo + 1e-6
                             bins = np.linspace(lo, hi, 21)
                             counts, edges = np.histogram(arr, bins=bins)
-                            diag.enrich_last(pop_hist={"edges": edges.tolist(), "counts": counts.astype(int).tolist()})
+                            diag.enrich_last(
+                                pop_hist={
+                                    "edges": edges.tolist(),
+                                    "counts": counts.astype(int).tolist(),
+                                }
+                            )
                     except Exception:
                         pass
                     # Emit a structured per-generation diagnostic line for live dashboards
                     try:
-                        last_entry = diag.get_all()[-1] if hasattr(diag, "get_all") and diag.get_all() else None
+                        last_entry = (
+                            diag.get_all()[-1]
+                            if hasattr(diag, "get_all") and diag.get_all()
+                            else None
+                        )
                         if last_entry is not None:
-                            logging.getLogger(__name__).info("DIAG %s", _json.dumps(last_entry))
+                            logging.getLogger(__name__).info(
+                                "DIAG %s", _json.dumps(last_entry)
+                            )
                     except Exception:
                         pass
                 except Exception:
@@ -824,11 +1182,18 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     try:
                         prog_k = pop[prog_idx_k]
                         metrics_k = el_module.evaluate_program(
-                            prog_k, dh_module, hof_module, INITIAL_STATE_VARS, return_preds=True, ctx=_CTX
+                            prog_k,
+                            dh_module,
+                            hof_module,
+                            INITIAL_STATE_VARS,
+                            return_preds=True,
+                            ctx=_CTX,
                         )
                         add_program_to_hof(prog_k, metrics_k, gen)
                         if metrics_k.processed_predictions is not None:
-                            update_correlation_hof(prog_k.fingerprint, metrics_k.processed_predictions)
+                            update_correlation_hof(
+                                prog_k.fingerprint, metrics_k.processed_predictions
+                            )
                         added += 1
                         if added >= k:
                             break
@@ -837,7 +1202,7 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
 
             print_generation_summary(gen, pop, eval_results)
 
-            if not eval_results or eval_results[0][1].fitness <= -float('inf'):
+            if not eval_results or eval_results[0][1].fitness <= -float("inf"):
                 logger.info(
                     "Gen %s | No valid programs. Restarting population and HOF.",
                     gen + 1,
@@ -858,8 +1223,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 remaining_gens = cfg.generations - (gen + 1)
                 if avg_gen_time > 0 and remaining_gens > 0:
                     eta_seconds = float(remaining_gens * avg_gen_time)
-                    eta_str = f" | ETA {time.strftime('%Hh%Mm%Ss', time.gmtime(eta_seconds))}"
-            
+                    eta_str = (
+                        f" | ETA {time.strftime('%Hh%Mm%Ss', time.gmtime(eta_seconds))}"
+                    )
+
             best_prog_idx, best_metrics = eval_results[0]
             best_fit = best_metrics.fitness
             best_ic = best_metrics.mean_ic
@@ -899,10 +1266,18 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             # Emit a structured per-generation summary for SSE/dashboard consumption
             try:
                 gen_fraction = float((gen + 1) / max(1, cfg.generations))
-                sharpe_w = float(getattr(cfg, "sharpe_proxy_w", 0.0)) * float(min(1.0, ramp))
-                ic_std_w = float(getattr(cfg, "ic_std_penalty_w", 0.0)) * float(min(1.0, ramp))
-                turnover_w = float(getattr(cfg, "turnover_penalty_w", 0.0)) * float(min(1.0, ramp))
-                ic_tstat_w = float(getattr(cfg, "ic_tstat_w", 0.0)) * float(min(1.0, ramp))
+                sharpe_w = float(getattr(cfg, "sharpe_proxy_w", 0.0)) * float(
+                    min(1.0, ramp)
+                )
+                ic_std_w = float(getattr(cfg, "ic_std_penalty_w", 0.0)) * float(
+                    min(1.0, ramp)
+                )
+                turnover_w = float(getattr(cfg, "turnover_penalty_w", 0.0)) * float(
+                    min(1.0, ramp)
+                )
+                ic_tstat_w = float(getattr(cfg, "ic_tstat_w", 0.0)) * float(
+                    min(1.0, ramp)
+                )
                 stress_w = float(getattr(cfg, "stress_penalty_w", 0.0))
                 drawdown_w = float(getattr(cfg, "drawdown_penalty_w", 0.0))
                 downside_w = float(getattr(cfg, "downside_penalty_w", 0.0))
@@ -911,12 +1286,22 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 sharpe_bonus = sharpe_w * float(best_metrics.sharpe_proxy)
                 ic_std_penalty = ic_std_w * float(best_metrics.ic_std)
                 turnover_penalty = turnover_w * float(best_metrics.turnover_proxy)
-                stress_penalty = stress_w * float(getattr(best_metrics, "robustness_penalty", 0.0))
-                drawdown_penalty = drawdown_w * max(0.0, float(getattr(best_metrics, "max_drawdown", 0.0)))
-                downside_penalty = downside_w * max(0.0, float(getattr(best_metrics, "downside_deviation", 0.0)))
-                cvar_penalty = cvar_w * max(0.0, -float(getattr(best_metrics, "cvar", 0.0)))
+                stress_penalty = stress_w * float(
+                    getattr(best_metrics, "robustness_penalty", 0.0)
+                )
+                drawdown_penalty = drawdown_w * max(
+                    0.0, float(getattr(best_metrics, "max_drawdown", 0.0))
+                )
+                downside_penalty = downside_w * max(
+                    0.0, float(getattr(best_metrics, "downside_deviation", 0.0))
+                )
+                cvar_penalty = cvar_w * max(
+                    0.0, -float(getattr(best_metrics, "cvar", 0.0))
+                )
                 factor_penalty = float(getattr(best_metrics, "factor_penalty", 0.0))
-                parsimony_penalty = float(getattr(best_metrics, "parsimony_penalty", 0.0))
+                parsimony_penalty = float(
+                    getattr(best_metrics, "parsimony_penalty", 0.0)
+                )
                 corr_penalty = float(getattr(best_metrics, "correlation_penalty", 0.0))
 
                 fitness_static = getattr(best_metrics, "fitness_static", None)
@@ -925,7 +1310,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     ic_tstat_component = float(getattr(best_metrics, "ic_tstat", 0.0))
                 except Exception:
                     ic_tstat_component = 0.0
-                ic_tstat_bonus = ic_tstat_w * ic_tstat_component if ic_tstat_component else 0.0
+                ic_tstat_bonus = (
+                    ic_tstat_w * ic_tstat_component if ic_tstat_component else 0.0
+                )
 
                 fitness_breakdown = {
                     "base_ic": float(best_metrics.mean_ic),
@@ -941,7 +1328,9 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     "cvar_penalty": cvar_penalty,
                     "ic_tstat_bonus": ic_tstat_bonus,
                     "result": float(best_fit),
-                    "fitness_static": float(fitness_static) if (fitness_static is not None and math.isfinite(fitness_static)) else None,
+                    "fitness_static": float(fitness_static)
+                    if (fitness_static is not None and math.isfinite(fitness_static))
+                    else None,
                 }
 
                 penalties = {
@@ -958,14 +1347,18 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
 
                 best_summary = {
                     "fitness": float(best_fit),
-                    "fitness_static": float(fitness_static) if (fitness_static is not None and math.isfinite(fitness_static)) else None,
+                    "fitness_static": float(fitness_static)
+                    if (fitness_static is not None and math.isfinite(fitness_static))
+                    else None,
                     "mean_ic": float(best_metrics.mean_ic),
                     "ic_std": float(best_metrics.ic_std),
                     "turnover": float(best_metrics.turnover_proxy),
                     "sharpe_proxy": float(best_metrics.sharpe_proxy),
                     "sortino": float(getattr(best_metrics, "sortino_ratio", 0.0)),
                     "drawdown": float(getattr(best_metrics, "max_drawdown", 0.0)),
-                    "downside_deviation": float(getattr(best_metrics, "downside_deviation", 0.0)),
+                    "downside_deviation": float(
+                        getattr(best_metrics, "downside_deviation", 0.0)
+                    ),
                     "cvar": float(getattr(best_metrics, "cvar", 0.0)),
                     "factor_penalty": factor_penalty,
                     "fingerprint": getattr(best_program_obj, "fingerprint", None),
@@ -985,8 +1378,12 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
 
                 timing_snapshot = {
                     "generation_seconds": float(gen_eval_time),
-                    "average_seconds": float(avg_gen_time) if (avg_gen_time is not None) else None,
-                    "eta_seconds": float(eta_seconds) if (eta_seconds is not None) else None,
+                    "average_seconds": float(avg_gen_time)
+                    if (avg_gen_time is not None)
+                    else None,
+                    "eta_seconds": float(eta_seconds)
+                    if (eta_seconds is not None)
+                    else None,
                 }
 
                 summary_payload = {
@@ -1013,13 +1410,30 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             new_pop: List[AlphaProgram] = []
             # Optional Pareto-based elite selection (NSGA-II style fronts)
             if getattr(cfg, "moea_enabled", False):
-                elite_cap = max(0, min(cfg.pop_size, int(round(cfg.pop_size * float(getattr(cfg, "moea_elite_frac", 0.2))))))
+                elite_cap = max(
+                    0,
+                    min(
+                        cfg.pop_size,
+                        int(
+                            round(
+                                cfg.pop_size
+                                * float(getattr(cfg, "moea_elite_frac", 0.2))
+                            )
+                        ),
+                    ),
+                )
                 picked = 0
                 if moea_analysis is None:
                     moea_analysis = moea_module.compute_pareto_analysis(eval_results)
                 fronts_local = moea_analysis.fronts if moea_analysis else []
                 for front in fronts_local:
-                    for idx_in_pop in sorted(front, key=lambda idx: moea_analysis.crowding.get(idx, 0.0) if moea_analysis else 0.0, reverse=True):
+                    for idx_in_pop in sorted(
+                        front,
+                        key=lambda idx: moea_analysis.crowding.get(idx, 0.0)
+                        if moea_analysis
+                        else 0.0,
+                        reverse=True,
+                    ):
                         new_pop.append(pop[idx_in_pop].copy())
                         picked += 1
                         if picked >= elite_cap:
@@ -1042,10 +1456,14 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
 
             # Increase exploration when stagnating or when diversity is low
             p_mut_eff = max(0.0, min(1.0, cfg.p_mut * (1.0 + 0.5 * stagnation_factor)))
-            fresh_rate_eff = max(0.0, min(1.0, cfg.fresh_rate * (1.0 + (1.0 - diversity_ratio))))
+            fresh_rate_eff = max(
+                0.0, min(1.0, cfg.fresh_rate * (1.0 + (1.0 - diversity_ratio)))
+            )
 
             # Soft-restart heuristic: boost fresh intake if lower quartile deteriorates over gens
-            valid_scores_for_q = [r[1].fitness for r in eval_results if np.isfinite(r[1].fitness)]
+            valid_scores_for_q = [
+                r[1].fitness for r in eval_results if np.isfinite(r[1].fitness)
+            ]
             if valid_scores_for_q:
                 arrq = np.array(valid_scores_for_q)
                 q25 = float(np.quantile(arrq, 0.25))
@@ -1055,13 +1473,17 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     q25_deteriorate_streak = 0
                 prev_q25 = q25
                 # Up to +0.2 extra fresh when deteriorating for several gens
-                fresh_rate_eff = min(1.0, fresh_rate_eff + 0.05 * q25_deteriorate_streak)
+                fresh_rate_eff = min(
+                    1.0, fresh_rate_eff + 0.05 * q25_deteriorate_streak
+                )
 
             # Anneal crossover upwards to recombine mature building blocks
             p_cross_eff = max(0.0, min(1.0, cfg.p_cross + 0.5 * ramp))
 
             # Rank-based sampling weights for tournaments (softmax over normalized ranks)
-            valid_indices_for_tournament = [k_idx for k_idx, s_k in enumerate(pop_fitness_scores) if s_k > -np.inf]
+            valid_indices_for_tournament = [
+                k_idx for k_idx, s_k in enumerate(pop_fitness_scores) if s_k > -np.inf
+            ]
             valid_scores = [pop_fitness_scores[i] for i in valid_indices_for_tournament]
             rank_weights = None
             if valid_indices_for_tournament:
@@ -1071,69 +1493,105 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                 ranks[order] = np.arange(len(valid_scores))
                 rank_norm = ranks / max(1, len(valid_scores) - 1)
                 # Temperature schedule: floor + (target - floor) * ramp
-                beta_floor = float(getattr(cfg, 'rank_softmax_beta_floor', 0.0))
-                beta_target = float(getattr(cfg, 'rank_softmax_beta_target', 2.0))
+                beta_floor = float(getattr(cfg, "rank_softmax_beta_floor", 0.0))
+                beta_target = float(getattr(cfg, "rank_softmax_beta_target", 2.0))
                 beta = beta_floor + (beta_target - beta_floor) * float(ramp)
                 # Use exp(beta * rank_norm) so top ranks dominate as beta grows
                 w = np.exp(beta * rank_norm)
                 # Guard against inf/nan
                 if np.all(np.isfinite(w)) and np.any(w > 0):
                     rank_weights = w.tolist()
-            
+
             # Legacy scalar elites when MOEA is disabled
             if not getattr(cfg, "moea_enabled", False):
                 elites_added_fingerprints = set()
                 for res_idx, res_metrics in eval_results:
-                    if res_metrics.fitness <= -float('inf'):
+                    if res_metrics.fitness <= -float("inf"):
                         continue
                     prog_candidate = pop[res_idx]
                     fp_cand = prog_candidate.fingerprint
-                    if fp_cand not in elites_added_fingerprints or cfg.keep_dupes_in_hof: 
+                    if (
+                        fp_cand not in elites_added_fingerprints
+                        or cfg.keep_dupes_in_hof
+                    ):
                         new_pop.append(prog_candidate.copy())
                         elites_added_fingerprints.add(fp_cand)
                     if len(new_pop) >= cfg.elite_keep:
                         break
-            
-            if not new_pop and eval_results and eval_results[0][1].fitness > -float('inf'):
-                 new_pop.append(pop[eval_results[0][0]].copy())
+
+            if (
+                not new_pop
+                and eval_results
+                and eval_results[0][1].fitness > -float("inf")
+            ):
+                new_pop.append(pop[eval_results[0][0]].copy())
 
             while len(new_pop) < cfg.pop_size:
                 if _RNG.random() < fresh_rate_eff:
                     new_pop.append(_random_prog(cfg))
                     continue
-                
-                valid_indices_for_tournament = [k_idx for k_idx, s_k in enumerate(pop_fitness_scores) if s_k > -np.inf]
-                if not valid_indices_for_tournament: 
-                    new_pop.extend([_random_prog(cfg) for _ in range(cfg.pop_size - len(new_pop))])
+
+                valid_indices_for_tournament = [
+                    k_idx
+                    for k_idx, s_k in enumerate(pop_fitness_scores)
+                    if s_k > -np.inf
+                ]
+                if not valid_indices_for_tournament:
+                    new_pop.extend(
+                        [_random_prog(cfg) for _ in range(cfg.pop_size - len(new_pop))]
+                    )
                     break
 
                 num_to_sample = cfg.tournament_k * 2
                 if len(valid_indices_for_tournament) > 0:
                     if rank_weights is not None:
                         # Weighted sampling (with replacement) by rank-based weights
-                        tournament_indices_pool = random.choices(valid_indices_for_tournament, weights=rank_weights, k=num_to_sample)
+                        tournament_indices_pool = random.choices(
+                            valid_indices_for_tournament,
+                            weights=rank_weights,
+                            k=num_to_sample,
+                        )
                     else:
                         # Fallback to uniform sampling
                         if len(valid_indices_for_tournament) < num_to_sample:
-                            tournament_indices_pool = random.choices(valid_indices_for_tournament, k=num_to_sample)
+                            tournament_indices_pool = random.choices(
+                                valid_indices_for_tournament, k=num_to_sample
+                            )
                         else:
-                            tournament_indices_pool = random.sample(valid_indices_for_tournament, num_to_sample)
+                            tournament_indices_pool = random.sample(
+                                valid_indices_for_tournament, num_to_sample
+                            )
                 else:
                     new_pop.append(_random_prog(cfg))
                     continue
 
-                if getattr(cfg, "moea_enabled", False) and moea_analysis is not None and moea_analysis.ranks:
+                if (
+                    getattr(cfg, "moea_enabled", False)
+                    and moea_analysis is not None
+                    and moea_analysis.ranks
+                ):
                     # Binary tournament using (rank, crowding) ordering
                     def _score_for_tour(i_tour: int) -> tuple[float, float]:
                         rank = float(moea_analysis.ranks.get(i_tour, math.inf))
                         crowd = moea_analysis.crowding.get(i_tour, -math.inf)
-                        crowd_adj = crowd if math.isfinite(crowd) else float('inf')
+                        crowd_adj = crowd if math.isfinite(crowd) else float("inf")
                         return (-rank, crowd_adj)
-                    parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=_score_for_tour)
-                    parent2_idx = max(tournament_indices_pool[cfg.tournament_k:], key=_score_for_tour)
+
+                    parent1_idx = max(
+                        tournament_indices_pool[: cfg.tournament_k], key=_score_for_tour
+                    )
+                    parent2_idx = max(
+                        tournament_indices_pool[cfg.tournament_k :], key=_score_for_tour
+                    )
                 else:
-                    parent1_idx = max(tournament_indices_pool[:cfg.tournament_k], key=lambda i_tour: pop_fitness_scores[i_tour])
-                    parent2_idx = max(tournament_indices_pool[cfg.tournament_k:], key=lambda i_tour: pop_fitness_scores[i_tour])
+                    parent1_idx = max(
+                        tournament_indices_pool[: cfg.tournament_k],
+                        key=lambda i_tour: pop_fitness_scores[i_tour],
+                    )
+                    parent2_idx = max(
+                        tournament_indices_pool[cfg.tournament_k :],
+                        key=lambda i_tour: pop_fitness_scores[i_tour],
+                    )
                 parent_a, parent_b = pop[parent1_idx], pop[parent2_idx]
 
                 child: AlphaProgram
@@ -1149,10 +1607,10 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
                     )
                 else:
                     child = parent_a.copy() if _RNG.random() < 0.5 else parent_b.copy()
-                
+
                 if _RNG.random() < p_mut_eff:
                     child = _mutate_prog(child, cfg)
-                
+
                 new_pop.append(child)
             pop = new_pop
 
@@ -1163,10 +1621,8 @@ def evolve_with_context(cfg: EvoConfig, ctx: EvalContext) -> List[Tuple[AlphaPro
             )
 
     except KeyboardInterrupt:
-        logger.info(
-            "[Ctrl‑C] Evolution stopped early. Processing current HOF..."
-        )
-    
+        logger.info("[Ctrl‑C] Evolution stopped early. Processing current HOF...")
+
     final_top_programs_with_ic = get_final_hof_programs()
     if _QD_ENABLED:
         try:
@@ -1190,7 +1646,9 @@ def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
     """Compatibility helper: build EvalContext from disk and delegate to context API."""
     # Precompute column matrices for all cross-sectional vector features (strip _t)
     try:
-        from alpha_evolve.programs.types import CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN
+        from alpha_evolve.programs.types import (
+            CROSS_SECTIONAL_FEATURE_VECTOR_NAMES as _VECN,
+        )
 
         def _normalize(name: str | None) -> str | None:
             if not name:

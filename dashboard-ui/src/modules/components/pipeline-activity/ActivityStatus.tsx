@@ -4,6 +4,7 @@ import { formatDuration, timeAgo } from "./utils";
 
 interface ActivityStatusProps {
   status: PipelineJobState["status"];
+  connectionState?: "connected" | "retrying" | "stale" | null;
   pctComplete: number | null;
   generationLabel: string | null;
   etaLabel: string | null;
@@ -14,6 +15,7 @@ interface ActivityStatusProps {
 
 export function ActivityStatus({
   status,
+  connectionState,
   pctComplete,
   generationLabel,
   etaLabel,
@@ -31,6 +33,9 @@ export function ActivityStatus({
     <>
       <div className="pipeline-activity__status-row">
         <div className={`status-badge status-badge--${status}`}>{status}</div>
+        {connectionState ? (
+          <div className={`connection-badge connection-badge--${connectionState}`}>SSE {connectionState}</div>
+        ) : null}
         {generationLabel ? <span className="pipeline-activity__status-meta">{generationLabel}</span> : null}
         {etaDisplay ? <span className="pipeline-activity__status-meta muted">{etaDisplay}</span> : null}
         {elapsedDisplay ? (

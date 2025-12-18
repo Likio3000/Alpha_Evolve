@@ -57,6 +57,124 @@ export interface PipelineRunRequest {
   config?: string;
   data_dir?: string;
   overrides?: Record<string, Scalar>;
+  runner_mode?: "auto" | "multiprocessing" | "subprocess";
+}
+
+export interface ExperimentSearchSpacesResponse {
+  items: string[];
+}
+
+export interface ExperimentStartRequest {
+  search_space: string;
+  config?: string | null;
+  iterations?: number;
+  seed?: number;
+  objective?: string;
+  minimize?: boolean;
+  exploration_prob?: number;
+  auto_approve?: boolean;
+  approval_poll_interval?: number;
+  approval_timeout?: number | null;
+  pipeline_output_dir?: string | null;
+  pipeline_log_level?: string | null;
+  pipeline_log_file?: string | null;
+  debug_prints?: boolean;
+  run_baselines?: boolean;
+  retrain_baselines?: boolean;
+  disable_align_cache?: boolean;
+  align_cache_dir?: string | null;
+  corr_gate_sharpe?: number;
+  sharpe_close_epsilon?: number;
+  max_sharpe_sacrifice?: number;
+  min_corr_improvement?: number;
+}
+
+export interface ExperimentStartResponse {
+  session_id: string;
+  db_path: string;
+}
+
+export interface ExperimentSession {
+  session_id: string;
+  created_at: string;
+  updated_at: string;
+  status: string;
+  base_config_path?: string | null;
+  search_space_path?: string | null;
+  max_iterations?: number | null;
+  seed?: number | null;
+  exploration_probability?: number | null;
+  objective_metric?: string | null;
+  maximize?: number | null;
+  corr_gate_sharpe?: number | null;
+  sharpe_close_epsilon?: number | null;
+  max_sharpe_sacrifice?: number | null;
+  min_corr_improvement?: number | null;
+  dataset_dir?: string | null;
+  dataset_hash?: string | null;
+  git_sha?: string | null;
+  best_iteration_id?: number | null;
+  best_sharpe?: number | null;
+  best_corr?: number | null;
+  last_error?: string | null;
+  running_task?: boolean;
+}
+
+export interface ExperimentSessionListResponse {
+  items: ExperimentSession[];
+  db_path: string;
+}
+
+export interface ExperimentIteration {
+  id: number;
+  session_id: string;
+  iteration_index: number;
+  started_at: string;
+  finished_at?: string | null;
+  status: string;
+  run_dir?: string | null;
+  summary_path?: string | null;
+  updates_json?: Record<string, Scalar> | null;
+  evolution_json?: Record<string, Scalar> | null;
+  backtest_json?: Record<string, Scalar> | null;
+  pipeline_options_json?: Record<string, Scalar> | null;
+  metrics_json?: Record<string, unknown> | null;
+  objective_sharpe?: number | null;
+  objective_corr?: number | null;
+}
+
+export interface ExperimentIterationsResponse {
+  items: ExperimentIteration[];
+}
+
+export interface ExperimentProposal {
+  id: number;
+  session_id: string;
+  iteration_completed: number;
+  next_iteration: number;
+  created_at: string;
+  decided_at?: string | null;
+  status: string;
+  decided_by?: string | null;
+  notes?: string | null;
+  proposed_updates_json: Record<string, Scalar>;
+  base_snapshot_json?: Record<string, unknown> | null;
+  candidate_snapshot_json?: Record<string, unknown> | null;
+}
+
+export interface ExperimentProposalsResponse {
+  items: ExperimentProposal[];
+}
+
+export interface ExperimentProposalDecisionRequest {
+  decision: "approved" | "rejected";
+  decided_by?: string | null;
+  notes?: string | null;
+}
+
+export interface ExperimentExportBestConfigResponse {
+  config_path: string;
+  generations: number;
 }
 
 export interface PipelineJobState {

@@ -2,9 +2,7 @@ import pickle
 
 import pytest
 
-from alpha_evolve.backtesting import engine as bt_engine
-parse_args = bt_engine.parse_args
-load_programs_from_pickle = bt_engine.load_programs_from_pickle
+from alpha_evolve.backtesting.engine import load_programs_from_pickle, parse_args
 from alpha_evolve.utils.errors import BacktestError
 
 
@@ -23,11 +21,16 @@ def test_parse_args_defaults():
 def test_parse_args_overrides():
     """Check explicit overrides correctly propagate into the parsed backtest config."""
     argv = [
-        "--top_to_backtest", "3",
-        "--fee", "0.5",
-        "--scale", "rank",
-        "--data_dir", "data_dir",
-        "--long_short_n", "2",
+        "--top_to_backtest",
+        "3",
+        "--fee",
+        "0.5",
+        "--scale",
+        "rank",
+        "--data_dir",
+        "data_dir",
+        "--long_short_n",
+        "2",
     ]
     cfg, _ = parse_args(argv)
     assert cfg.top_to_backtest == 3

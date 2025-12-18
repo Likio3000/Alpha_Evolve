@@ -7,6 +7,15 @@ import {
   ConfigPresetValues,
   ConfigPresetsResponse,
   ConfigSavePayload,
+  ExperimentExportBestConfigResponse,
+  ExperimentIterationsResponse,
+  ExperimentProposalsResponse,
+  ExperimentProposalDecisionRequest,
+  ExperimentSearchSpacesResponse,
+  ExperimentSession,
+  ExperimentSessionListResponse,
+  ExperimentStartRequest,
+  ExperimentStartResponse,
   JobActivityResponse,
   JobLogResponse,
   JobStatusResponse,
@@ -128,6 +137,19 @@ export async function fetchRunDetails(runDir: string): Promise<RunDetails> {
   };
 }
 
+interface RunAssetsResponse {
+  items: string[];
+}
+
+export async function fetchRunAssets(runDir: string, prefix?: string): Promise<string[]> {
+  const params = new URLSearchParams({ run_dir: runDir });
+  if (prefix) {
+    params.set("prefix", prefix);
+  }
+  const payload = await request<RunAssetsResponse>(`/api/run-assets?${params.toString()}`);
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
 export async function fetchConfigDefaults(): Promise<ConfigDefaultsResponse> {
   return request<ConfigDefaultsResponse>("/api/config/defaults");
 }
@@ -176,4 +198,66 @@ export async function fetchPipelineParamsMeta(): Promise<ParamMetaResponse> {
 
 export async function fetchEvolutionParamsMeta(): Promise<ParamMetaResponse> {
   return request<ParamMetaResponse>("/ui-meta/evolution-params");
+}
+
+export async function fetchExperimentSearchSpaces(): Promise<string[]> {
+  const payload = await request<ExperimentSearchSpacesResponse>("/api/experiments/search-spaces");
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
+export async function startExperimentSession(payload: ExperimentStartRequest): Promise<ExperimentStartResponse> {
+  return request<ExperimentStartResponse>("/api/experiments/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchExperimentSessions(limit = 50): Promise<ExperimentSessionListResponse> {
+  return request<ExperimentSessionListResponse>(`/api/experiments/sessions?limit=${encodeURIComponent(limit)}`);
+}
+
+export async function fetchExperimentSession(sessionId: string): Promise<ExperimentSession> {
+  return request<ExperimentSession>(`/api/experiments/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function fetchExperimentIterations(sessionId: string): Promise<ExperimentIterationsResponse> {
+  return request<ExperimentIterationsResponse>(
+    `/api/experiments/sessions/${encodeURIComponent(sessionId)}/iterations`,
+  );
+}
+
+export async function fetchExperimentProposals(sessionId: string): Promise<ExperimentProposalsResponse> {
+  return request<ExperimentProposalsResponse>(
+    `/api/experiments/sessions/${encodeURIComponent(sessionId)}/proposals`,
+  );
+}
+
+export async function decideExperimentProposal(
+  sessionId: string,
+  proposalId: number,
+  payload: ExperimentProposalDecisionRequest,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/experiments/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function stopExperimentSession(sessionId: string): Promise<{ stopped: boolean; running_task: boolean }> {
+  return request<{ stopped: boolean; running_task: boolean }>(
+    `/api/experiments/sessions/${encodeURIComponent(sessionId)}/stop`,
+    { method: "POST" },
+  );
+}
+
+export async function exportBestExperimentConfig(sessionId: string): Promise<ExperimentExportBestConfigResponse> {
+  return request<ExperimentExportBestConfigResponse>(
+    `/api/experiments/sessions/${encodeURIComponent(sessionId)}/export-best-config`,
+    { method: "POST" },
+  );
 }

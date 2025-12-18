@@ -15,6 +15,7 @@ from typing import Dict
 # empty which yields ``-1`` (unknown) for every instrument.
 DEFAULT_SECTOR_MAPPING: Dict[str, int] = {}
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  shared data-handling knobs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,17 +70,21 @@ class EvolutionConfig(DataConfig):
     sharpe_proxy_w: float = 0.0
     ic_std_penalty_w: float = 0.10
     turnover_penalty_w: float = 0.05
-    ic_tstat_w: float = 0.0                 # weight for IC t-stat component
-    factor_penalty_w: float = 0.0           # weight for style-factor neutrality penalty
+    ic_tstat_w: float = 0.0  # weight for IC t-stat component
+    factor_penalty_w: float = 0.0  # weight for style-factor neutrality penalty
     factor_penalty_factors: str = "ret1d_t,vol20_t,range_rel_t"
-    stress_penalty_w: float = 0.0           # weight for transaction-cost / stress penalty
-    stress_fee_bps: float = 5.0             # additional stress transaction fee (bps)
-    stress_slippage_bps: float = 2.0        # stress slippage (bps)
-    stress_shock_scale: float = 1.5         # multiplier applied to negative pnl under stress
-    stress_tail_fee_bps: float = 10.0       # heightened cost scenario for stress tests
-    stress_tail_slippage_bps: float = 3.5   # heightened slippage scenario for stress tests
-    stress_tail_shock_scale: float = 2.5    # amplified downside shock for tail stress
-    transaction_cost_bps: float = 0.0       # baseline transaction-cost estimate applied to turnover
+    stress_penalty_w: float = 0.0  # weight for transaction-cost / stress penalty
+    stress_fee_bps: float = 5.0  # additional stress transaction fee (bps)
+    stress_slippage_bps: float = 2.0  # stress slippage (bps)
+    stress_shock_scale: float = 1.5  # multiplier applied to negative pnl under stress
+    stress_tail_fee_bps: float = 10.0  # heightened cost scenario for stress tests
+    stress_tail_slippage_bps: float = (
+        3.5  # heightened slippage scenario for stress tests
+    )
+    stress_tail_shock_scale: float = 2.5  # amplified downside shock for tail stress
+    transaction_cost_bps: float = (
+        0.0  # baseline transaction-cost estimate applied to turnover
+    )
     evaluation_horizons: tuple[int, ...] = (1,)
     qd_archive_enabled: bool = False
     qd_turnover_bins: tuple[float, ...] = (0.1, 0.3, 0.6)
@@ -107,8 +112,8 @@ class EvolutionConfig(DataConfig):
     flat_bar_threshold: float = 0.25
     scale: str = "madz"
     # Optional preprocessing tweaks
-    sector_neutralize: bool = True       # Demean positions by sector before IC
-    winsor_p: float = 0.02               # Tail prob for 'winsor' scale
+    sector_neutralize: bool = True  # Demean positions by sector before IC
+    winsor_p: float = 0.02  # Tail prob for 'winsor' scale
     # When using train/val splits, how to combine metrics: 'equal' or 'by_points'
     split_weighting: str = "equal"
     # Exponential temporal decay half-life (bars). 0 disables decay.
@@ -144,21 +149,25 @@ class EvolutionConfig(DataConfig):
     default_op_weight: float = 1.0
 
     # ramp scheduling for annealed penalties (corr, ic_std, turnover, sharpe_proxy)
-    ramp_fraction: float = 1.0/3.0  # portion of total gens to reach full weight
-    ramp_min_gens: int = 5          # minimum generations to ramp over
+    ramp_fraction: float = 1.0 / 3.0  # portion of total gens to reach full weight
+    ramp_min_gens: int = 5  # minimum generations to ramp over
 
     # selection criterion for breeding/elites while logging can still show ramped
     # Options: 'ramped' (default fitness), 'fixed' (fitness_static), 'ic' (mean_ic)
     selection_metric: str = "ramped"
+    # One-sided z-score used when selection_metric="lcb" (lower confidence bound).
+    selection_lcb_z: float = 1.645
     # optional: boost selection for novelty against HOF (0.0 disables)
     novelty_boost_w: float = 0.0
     # Structural novelty bonus: boost selection by structural distance vs HOF
     novelty_struct_w: float = 0.0
+    # Behavioral novelty: boost by prediction distance vs HOF (0.0 disables)
+    novelty_pred_dist_w: float = 0.0
     # optional: phased selection – use pure IC for the first N generations
     ic_phase_gens: int = 0
     # Rank-based tournament weighting temperature (softmax beta)
     rank_softmax_beta_target: float = 2.0  # final beta when ramp completes
-    rank_softmax_beta_floor: float = 0.0   # starting beta at ramp=0
+    rank_softmax_beta_floor: float = 0.0  # starting beta at ramp=0
 
     # ─────────────────────────────────────────────────────────────────────
     #  advanced search (optional; defaults keep legacy behavior)
@@ -170,16 +179,20 @@ class EvolutionConfig(DataConfig):
     # Multi-fidelity evaluation: first evaluate on a truncated window, then
     # promote top-K to full evaluation for final selection/HOF logging.
     mf_enabled: bool = False
-    mf_initial_fraction: float = 0.4     # fraction of eval bars for the cheap pass
-    mf_promote_fraction: float = 0.3     # fraction of population to re-evaluate fully
-    mf_min_promote: int = 8              # minimum number to promote regardless of fraction
+    mf_initial_fraction: float = 0.4  # fraction of eval bars for the cheap pass
+    mf_promote_fraction: float = 0.3  # fraction of population to re-evaluate fully
+    mf_min_promote: int = 8  # minimum number to promote regardless of fraction
 
     # Operator bandits (optional): adapt fresh/mutate/crossover rates online
     bandit_enabled: bool = False
 
     # Cross-validation (purged CPCV-style)
-    cv_k_folds: int = 0         # 0 disables; K>1 enables CPCV over contiguous folds
-    cv_embargo: int = 0         # bars to embargo around each validation fold
+    cv_k_folds: int = 0  # 0 disables; K>1 enables CPCV over contiguous folds
+    cv_embargo: int = 0  # bars to embargo around each validation fold
+    cv_agg_mode: str = (
+        "mean"  # mean | median | trimmed_mean (applies when cv_k_folds>1)
+    )
+    cv_trim_frac: float = 0.1  # symmetric trim fraction for trimmed_mean
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,11 +201,11 @@ class EvolutionConfig(DataConfig):
 @dataclass
 class BacktestConfig(DataConfig):
     top_to_backtest: int = 10
-    fee: float = 1.0                      # round-trip commission (bps)
-    hold: int = 1                         # holding period (bars)
+    fee: float = 1.0  # round-trip commission (bps)
+    hold: int = 1  # holding period (bars)
     scale: str = "zscore"
-    winsor_p: float = 0.02               # Tail prob for 'winsor' scale
-    long_short_n: int = 0                 # 0 → use all symbols
+    winsor_p: float = 0.02  # Tail prob for 'winsor' scale
+    long_short_n: int = 0  # 0 → use all symbols
     # For daily equities use trading-day annualization (≈252)
     annualization_factor: float = 252
     seed: int = 42
@@ -204,19 +217,22 @@ class BacktestConfig(DataConfig):
     # Sector-neutralize daily target positions before final normalization.
     sector_neutralize_positions: bool = False
     # Volatility targeting on portfolio returns (daily). If <= 0, disabled.
-    volatility_target: float = 0.0        # target daily vol (e.g., 0.01 for 1%)
-    volatility_lookback: int = 30         # bars to estimate realized vol
-    max_leverage: float = 2.0             # cap on exposure multiplier
-    min_leverage: float = 0.25            # floor on exposure multiplier
+    volatility_target: float = 0.0  # target daily vol (e.g., 0.01 for 1%)
+    volatility_lookback: int = 30  # bars to estimate realized vol
+    max_leverage: float = 2.0  # cap on exposure multiplier
+    min_leverage: float = 0.25  # floor on exposure multiplier
     # Drawdown limiter: reduce exposure when DD exceeds threshold.
-    dd_limit: float = 0.0                 # e.g., 0.15 for 15%; if <=0 disabled
-    dd_reduction: float = 0.5             # multiply exposure when beyond dd_limit
+    dd_limit: float = 0.0  # e.g., 0.15 for 15%; if <=0 disabled
+    dd_reduction: float = 0.5  # multiply exposure when beyond dd_limit
 
     # Optional ensemble backtest (disabled by default)
-    ensemble_mode: bool = False           # when true, also backtest an ensemble of top alphas
-    ensemble_size: int = 0                # 0 disables; otherwise picks up to this many
-    ensemble_max_corr: float = 0.3        # target max pairwise corr (IC proxy) for selection
-    ensemble_weighting: str = "equal"     # equal | risk_parity (reserved)
+    ensemble_mode: bool = False  # when true, also backtest an ensemble of top alphas
+    ensemble_size: int = 0  # 0 disables; otherwise picks up to this many
+    ensemble_max_corr: float = 0.3  # target max pairwise corr (IC proxy) for selection
+    ensemble_corr_lambda: float = (
+        0.0  # soft return-correlation penalty weight (0 disables)
+    )
+    ensemble_weighting: str = "equal"  # equal | risk_parity (reserved)
 
 
 # keep old import path alive

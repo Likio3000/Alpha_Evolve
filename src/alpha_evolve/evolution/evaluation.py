@@ -17,6 +17,7 @@ from alpha_evolve.programs.types import (
     SCALAR_FEATURE_NAMES,
 )
 from alpha_evolve.backtesting.metrics import compute_max_drawdown
+from alpha_evolve.utils import stats as ae_stats
 
 
 # Module-level cache (least-recently used)
@@ -45,6 +46,15 @@ class EvalResult:
     sortino_ratio: float = 0.0
     downside_deviation: float = 0.0
     cvar: float = 0.0
+    # Uncertainty helpers (used by selection_metric=psr/lcb)
+    ic_n: int = 0
+    ic_fold_n: int = 0
+    ic_fold_std: float = 0.0
+    sharpe_n: int = 0
+    sharpe_fold_n: int = 0
+    sharpe_fold_std: float = 0.0
+    pnl_skew: float = 0.0
+    pnl_kurt: float = 3.0
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
@@ -86,6 +96,7 @@ def _resolve_factor_vector(
         return None
     return None
 
+
 # Evaluation constants (to be passed or configured)
 # These were global in evolve_alphas.py
 # They should be passed into evaluate_program or configured via an init function for this module.
@@ -94,13 +105,13 @@ _EVAL_CONFIG = {
     "parsimony_penalty_factor": 0.002,
     "max_ops_for_parsimony": 32,
     "xs_flatness_guard_threshold": 5e-3,
-    "temporal_flatness_guard_threshold": 5e-3, # Renamed from flat_signal_threshold
+    "temporal_flatness_guard_threshold": 5e-3,  # Renamed from flat_signal_threshold
     "early_abort_bars": 20,
     "early_abort_xs_threshold": 5e-2,
     "early_abort_t_threshold": 5e-2,
     "flat_bar_threshold": 0.25,
-    "ic_scale_method": "zscore", # from args.scale
-    "winsor_p": 0.01,            # winsorization tail prob for 'winsor'
+    "ic_scale_method": "zscore",  # from args.scale
+    "winsor_p": 0.01,  # winsorization tail prob for 'winsor'
     "sector_neutralize": False,  # optionally demean by sector before IC
     "sharpe_proxy_weight": 0.0,
     "ic_std_penalty_weight": 0.0,
@@ -128,14 +139,17 @@ _EVAL_CONFIG = {
     "stress_tail_shock_scale": 2.5,
     "transaction_cost_bps": 0.0,
     "evaluation_horizons": (1,),
-    "hof_corr_mode": "flat",   # 'flat' (default) or 'per_bar'
+    "hof_corr_mode": "flat",  # 'flat' (default) or 'per_bar'
     "temporal_decay_half_life": 0.0,
     "use_train_val_splits": False,
     "train_points": 0,
     "val_points": 0,
+    "split_weighting": "equal",  # equal | by_points
     # CPCV-style cross-validation over time (K contiguous folds with embargo)
     "cv_k_folds": 0,
     "cv_embargo": 0,
+    "cv_agg_mode": "mean",  # mean | median | trimmed_mean
+    "cv_trim_frac": 0.1,  # symmetric trim fraction for trimmed_mean
     # EVAL_LAG is handled by data_handling module ensuring data is sliced appropriately
     "regime_diagnostic_factors": (
         "regime_volatility_t",
@@ -157,23 +171,29 @@ _EVAL_STATS = {
     "early_abort_flatbar": 0,
 }
 
+
 def reset_eval_stats() -> None:
     for k in _EVAL_STATS:
         _EVAL_STATS[k] = 0
 
+
 def get_eval_stats() -> dict:
     return dict(_EVAL_STATS)
+
 
 # Lightweight per-program event samples for diagnostics per generation
 _EVAL_EVENTS: list = []
 _EVAL_EVENTS_MAX = 200
 
+
 def reset_eval_events() -> None:
     global _EVAL_EVENTS
     _EVAL_EVENTS = []
 
+
 def get_eval_events() -> list:
     return list(_EVAL_EVENTS)
+
 
 def _push_event(ev: dict) -> None:
     try:
@@ -181,6 +201,7 @@ def _push_event(ev: dict) -> None:
             _EVAL_EVENTS.append(ev)
     except Exception:
         pass
+
 
 def configure_evaluation(
     parsimony_penalty: float,
@@ -216,6 +237,7 @@ def configure_evaluation(
     train_points: int = 0,
     val_points: int = 0,
     *,
+    split_weighting: str | None = None,
     sector_neutralize: bool = False,
     winsor_p: float = 0.01,
     # Optional: add deterministic jitter to parsimony penalty to improve ops variance
@@ -230,6 +252,8 @@ def configure_evaluation(
     temporal_decay_half_life: float | None = None,
     cv_k_folds: int | None = None,
     cv_embargo: int | None = None,
+    cv_agg_mode: str | None = None,
+    cv_trim_frac: float | None = None,
     regime_diagnostic_factors: Iterable[str] | None = None,
 ):
     global _EVAL_CONFIG
@@ -259,11 +283,15 @@ def configure_evaluation(
     if isinstance(factor_penalty_factors, str):
         factors_raw = factor_penalty_factors.strip()
         if factors_raw:
-            factors_tuple = tuple(sorted({f.strip() for f in factors_raw.split(',') if f.strip()}))
+            factors_tuple = tuple(
+                sorted({f.strip() for f in factors_raw.split(",") if f.strip()})
+            )
         else:
             factors_tuple = tuple()
     elif factor_penalty_factors is not None:
-        factors_tuple = tuple(sorted({str(f).strip() for f in factor_penalty_factors if str(f).strip()}))
+        factors_tuple = tuple(
+            sorted({str(f).strip() for f in factor_penalty_factors if str(f).strip()})
+        )
     else:
         factors_tuple = tuple()
     _EVAL_CONFIG["factor_penalty_factors"] = factors_tuple
@@ -291,21 +319,33 @@ def configure_evaluation(
     _EVAL_CONFIG["use_train_val_splits"] = use_train_val_splits
     _EVAL_CONFIG["train_points"] = int(train_points)
     _EVAL_CONFIG["val_points"] = int(val_points)
+    if split_weighting is not None:
+        _EVAL_CONFIG["split_weighting"] = str(split_weighting)
     # Fixed weights default to current (possibly ramped) values if not provided
     _EVAL_CONFIG["fixed_sharpe_proxy_weight"] = (
-        float(sharpe_proxy_weight) if fixed_sharpe_proxy_weight is None else float(fixed_sharpe_proxy_weight)
+        float(sharpe_proxy_weight)
+        if fixed_sharpe_proxy_weight is None
+        else float(fixed_sharpe_proxy_weight)
     )
     _EVAL_CONFIG["fixed_ic_std_penalty_weight"] = (
-        float(ic_std_penalty_weight) if fixed_ic_std_penalty_weight is None else float(fixed_ic_std_penalty_weight)
+        float(ic_std_penalty_weight)
+        if fixed_ic_std_penalty_weight is None
+        else float(fixed_ic_std_penalty_weight)
     )
     _EVAL_CONFIG["fixed_turnover_penalty_weight"] = (
-        float(turnover_penalty_weight) if fixed_turnover_penalty_weight is None else float(fixed_turnover_penalty_weight)
+        float(turnover_penalty_weight)
+        if fixed_turnover_penalty_weight is None
+        else float(fixed_turnover_penalty_weight)
     )
     _EVAL_CONFIG["fixed_corr_penalty_weight"] = (
-        float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0)) if fixed_corr_penalty_weight is None else float(fixed_corr_penalty_weight)
+        float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0))
+        if fixed_corr_penalty_weight is None
+        else float(fixed_corr_penalty_weight)
     )
     _EVAL_CONFIG["fixed_ic_tstat_weight"] = (
-        float(ic_tstat_weight) if fixed_ic_tstat_weight is None else float(fixed_ic_tstat_weight)
+        float(ic_tstat_weight)
+        if fixed_ic_tstat_weight is None
+        else float(fixed_ic_tstat_weight)
     )
     if hof_corr_mode is not None:
         _EVAL_CONFIG["hof_corr_mode"] = str(hof_corr_mode)
@@ -315,6 +355,10 @@ def configure_evaluation(
         _EVAL_CONFIG["cv_k_folds"] = int(cv_k_folds)
     if cv_embargo is not None:
         _EVAL_CONFIG["cv_embargo"] = int(cv_embargo)
+    if cv_agg_mode is not None:
+        _EVAL_CONFIG["cv_agg_mode"] = str(cv_agg_mode)
+    if cv_trim_frac is not None:
+        _EVAL_CONFIG["cv_trim_frac"] = float(cv_trim_frac)
     # Clamp jitter into [0, 1] and store
     try:
         pj = float(parsimony_jitter_pct)
@@ -323,7 +367,15 @@ def configure_evaluation(
     _EVAL_CONFIG["parsimony_jitter_pct"] = max(0.0, min(1.0, pj))
     if regime_diagnostic_factors is not None:
         try:
-            names = tuple(sorted({str(x).strip() for x in regime_diagnostic_factors if str(x).strip()}))
+            names = tuple(
+                sorted(
+                    {
+                        str(x).strip()
+                        for x in regime_diagnostic_factors
+                        if str(x).strip()
+                    }
+                )
+            )
         except Exception:
             names = tuple()
         if names:
@@ -347,13 +399,56 @@ def configure_evaluation(
     )
 
 
+def _compute_cv_fold_slices(
+    total_steps: int,
+    cv_k_folds: int,
+    *,
+    embargo: int,
+    label_horizon: int,
+) -> list[slice]:
+    """Return non-overlapping validation slices for purged CV with embargo.
+
+    Indices refer to the per-bar evaluation time index (daily IC/PnL samples).
+    Purging is applied via ``label_horizon`` (e.g., eval_lag) to avoid
+    label-overlap leakage between adjacent folds.
+    """
+    steps = max(0, int(total_steps))
+    k = int(cv_k_folds)
+    if k <= 1 or steps <= 0:
+        return [slice(0, steps)]
+
+    emb = max(0, int(embargo))
+    horizon = max(0, int(label_horizon))
+    fold_len = max(1, steps // k)
+
+    out: list[slice] = []
+    for f in range(k):
+        start = f * fold_len
+        end = steps if f == k - 1 else (f + 1) * fold_len
+
+        if f > 0:
+            start += emb
+
+        end -= horizon
+        if f < k - 1:
+            end -= emb
+
+        if end <= start:
+            continue
+        out.append(slice(start, end))
+    return out
+
+
 def initialize_evaluation_cache(max_size: int = 128):
     global _eval_cache, _EVAL_CACHE_MAX_SIZE
     _EVAL_CACHE_MAX_SIZE = max_size
     _eval_cache = OrderedDict()
     logging.getLogger(__name__).debug("Evaluation cache cleared and initialized.")
 
-def _safe_corr_eval(a: np.ndarray, b: np.ndarray) -> float:  # Specific to evaluation logic's needs
+
+def _safe_corr_eval(
+    a: np.ndarray, b: np.ndarray
+) -> float:  # Specific to evaluation logic's needs
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
         return 0.0
     if len(a) != len(b) or len(a) < 2:
@@ -377,7 +472,7 @@ def _uses_feature_vector_check(prog: AlphaProgram) -> bool:
     # This utility checks if the program's final output depends on any feature vector.
     # It uses AlphaProgram's structure (setup, predict_ops, update_ops)
     # and type definitions like CROSS_SECTIONAL_FEATURE_VECTOR_NAMES.
-    
+
     # Re-implemented based on the original logic in evolve_alphas
     all_ops_map: Dict[str, Op] = {}  # Op provided by alpha_evolve.programs.ops
     for op_instance in prog.setup + prog.predict_ops + prog.update_ops:
@@ -386,11 +481,11 @@ def _uses_feature_vector_check(prog: AlphaProgram) -> bool:
     # Initial state vars and feature vars are not directly part of prog's ops but act as inputs.
     # We need to know which INITIAL_STATE_VARS and FEATURE_VARS are vectors.
     # This check is primarily for CROSS_SECTIONAL_FEATURE_VECTOR_NAMES.
-    
+
     # If the final prediction name itself is a feature vector, then true.
     if FINAL_PREDICTION_VECTOR_NAME in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
         return True
-        
+
     # If the final prediction is not defined by an op (e.g. it's a direct feature or state var)
     if FINAL_PREDICTION_VECTOR_NAME not in all_ops_map:
         # This case implies FINAL_PREDICTION_VECTOR_NAME must be an input feature/state.
@@ -401,19 +496,19 @@ def _uses_feature_vector_check(prog: AlphaProgram) -> bool:
         #     return FINAL_PREDICTION_VECTOR_NAME in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES
         # This seems a bit convoluted. If it's not an op output, it must be an input.
         # We are interested if *any* feature vector contributes.
-        pass # Handled by trace below
+        pass  # Handled by trace below
 
     q: List[str] = [FINAL_PREDICTION_VECTOR_NAME]
     visited_vars: Set[str] = set()
 
     while q:
-        current_var_name = q.pop(0) # BFS style
+        current_var_name = q.pop(0)  # BFS style
         if current_var_name in visited_vars:
             continue
         visited_vars.add(current_var_name)
 
         if current_var_name in CROSS_SECTIONAL_FEATURE_VECTOR_NAMES:
-            return True # Found a dependency on a feature vector
+            return True  # Found a dependency on a feature vector
 
         # If current_var_name is an initial state var that might be a vector,
         # and it's not further defined by an op, we don't trace it further from here (unless it's the target).
@@ -431,8 +526,10 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
     # From evolve_alphas _scale_signal_cross_sectionally_for_ic
     if raw_signal_vector.size == 0:
         return raw_signal_vector
-    
-    clean_signal_vector = np.nan_to_num(raw_signal_vector, nan=0.0, posinf=0.0, neginf=0.0)
+
+    clean_signal_vector = np.nan_to_num(
+        raw_signal_vector, nan=0.0, posinf=0.0, neginf=0.0
+    )
 
     if method == "sign":
         scaled = np.sign(clean_signal_vector)
@@ -464,18 +561,19 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
             scaled = np.zeros_like(clean_signal_vector)
         else:
             scaled = (w - mu) / sd
-    else: # Default: z-score
+    else:  # Default: z-score
         mu = np.nanmean(clean_signal_vector)
         sd = np.nanstd(clean_signal_vector)
-        if sd < 1e-9 :
+        if sd < 1e-9:
             scaled = np.zeros_like(clean_signal_vector)
         else:
             scaled = (clean_signal_vector - mu) / sd
-    
+
     # Centering after scaling for IC calculation and HOF comparison
     # Ensure it's always centered for IC, regardless of method, this was specific to the original.
-    centered_scaled = scaled - np.mean(scaled) 
+    centered_scaled = scaled - np.mean(scaled)
     return np.clip(centered_scaled, -1, 1)
+
 
 def _demean_by_groups(x: np.ndarray, groups: np.ndarray) -> np.ndarray:
     """Demean vector x within integer group IDs, then re-center and clip.
@@ -531,8 +629,10 @@ def _average_rank_ties(x: np.ndarray) -> np.ndarray:
 def evaluate_program(
     prog: AlphaProgram,
     dh_module: data_handling,  # Pass the data_handling module for access
-    hof_module: hof_manager,   # Pass the hall_of_fame_manager module
-    initial_prog_state_vars_config: Dict[str, Any],  # e.g. evolve_alphas.INITIAL_STATE_VARS
+    hof_module: hof_manager,  # Pass the hall_of_fame_manager module
+    initial_prog_state_vars_config: Dict[
+        str, Any
+    ],  # e.g. evolve_alphas.INITIAL_STATE_VARS
     return_preds: bool = True,
     ctx=None,
 ) -> EvalResult:
@@ -554,7 +654,7 @@ def evaluate_program(
         logger.debug("Program %s does not use any feature vector", fp)
         _EVAL_STATS["rejected_no_feature_vec"] += 1
         _push_event({"fp": fp, "event": "no_feature_vector"})
-        result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
+        result = EvalResult(-float("inf"), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
         _cache_set(fp, result)
         return result
 
@@ -585,16 +685,19 @@ def evaluate_program(
         eval_lag = dh_module.get_eval_lag()  # Get eval_lag from data_handling
         sector_groups_vec = dh_module.get_sector_groups(stock_symbols).astype(float)
 
-    program_state: Dict[str, Any] = prog.new_state() # AlphaProgram's own new_state
+    program_state: Dict[str, Any] = prog.new_state()  # AlphaProgram's own new_state
     for s_name, s_type in initial_prog_state_vars_config.items():  # Use passed config
-        if s_name not in program_state:  # Allow AlphaProgram's new_state to pre-populate
+        if (
+            s_name not in program_state
+        ):  # Allow AlphaProgram's new_state to pre-populate
             if s_type == "vector":
                 program_state[s_name] = np.zeros(n_stocks)
             elif s_type == "matrix":
-                program_state[s_name] = np.zeros((n_stocks, n_stocks))  # Assuming square for now
+                program_state[s_name] = np.zeros(
+                    (n_stocks, n_stocks)
+                )  # Assuming square for now
             else:
                 program_state[s_name] = 0.0
-
 
     all_raw_predictions_timeseries: List[np.ndarray] = []
     all_processed_predictions_timeseries: List[np.ndarray] = []
@@ -631,7 +734,9 @@ def evaluate_program(
         for j, sym in enumerate(stock_symbols):
             try:
                 series = aligned_dfs[sym]["close"].reindex(common_time_index)
-                close_matrix[:, j] = np.nan_to_num(series.to_numpy(dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+                close_matrix[:, j] = np.nan_to_num(
+                    series.to_numpy(dtype=float), nan=0.0, posinf=0.0, neginf=0.0
+                )
             except Exception:
                 close_matrix[:, j] = 0.0
     if close_matrix.size:
@@ -674,7 +779,9 @@ def evaluate_program(
 
     num_evaluation_steps = len(common_time_index) - max_horizon
     if num_evaluation_steps <= 0:  # Not enough data for even one evaluation
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
+        _cache_set(
+            fp, EvalResult(-float("inf"), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
+        )
         return _eval_cache[fp]
 
     for h in list(returns_by_horizon.keys()):
@@ -686,7 +793,11 @@ def evaluate_program(
         ret_fwd_trim = ret_fwd_matrix[:num_evaluation_steps]
         ret_fwd_trim = np.nan_to_num(ret_fwd_trim, nan=0.0, posinf=0.0, neginf=0.0)
         target_h = eval_lag if eval_lag in horizons else horizons[0]
-        if not has_close_prices or target_h not in returns_by_horizon or returns_by_horizon[target_h].size == 0:
+        if (
+            not has_close_prices
+            or target_h not in returns_by_horizon
+            or returns_by_horizon[target_h].size == 0
+        ):
             returns_by_horizon[target_h] = ret_fwd_trim
 
     ic_values_by_h: Dict[int, List[float]] = {h: [] for h in horizons}
@@ -721,7 +832,7 @@ def evaluate_program(
     # Or more simply, loop `len(common_time_index) - eval_lag` times.
     # If common_time_index has N points, we can make N - eval_lag predictions.
     # Prediction at t_idx uses features at t_idx, compares with returns at t_idx + eval_lag.
-    
+
     for t_idx in range(num_evaluation_steps):
         timestamp = common_time_index[t_idx]
 
@@ -735,14 +846,22 @@ def evaluate_program(
                 col = feat_name_template.replace("_t", "")
                 mat = ctx.col_matrix_map.get(col)  # type: ignore[union-attr]
                 if mat is not None and 0 <= t_idx < mat.shape[0]:
-                    features_at_t[feat_name_template] = np.nan_to_num(mat[t_idx, :], nan=0.0, posinf=0.0, neginf=0.0)
+                    features_at_t[feat_name_template] = np.nan_to_num(
+                        mat[t_idx, :], nan=0.0, posinf=0.0, neginf=0.0
+                    )
                 else:
                     # Fallback to dataframe lookup for missing columns
                     try:
-                        vec = np.array([
-                            aligned_dfs[sym].loc[timestamp, col] for sym in stock_symbols
-                        ], dtype=float)
-                        features_at_t[feat_name_template] = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+                        vec = np.array(
+                            [
+                                aligned_dfs[sym].loc[timestamp, col]
+                                for sym in stock_symbols
+                            ],
+                            dtype=float,
+                        )
+                        features_at_t[feat_name_template] = np.nan_to_num(
+                            vec, nan=0.0, posinf=0.0, neginf=0.0
+                        )
                     except Exception:
                         features_at_t[feat_name_template] = np.zeros(len(stock_symbols))
             # Scalars
@@ -763,24 +882,33 @@ def evaluate_program(
             # prog.eval uses n_stocks for internal vector shaping/broadcasting.
             raw_predictions_t = prog.eval(features_at_t, program_state, n_stocks)
 
-            if np.any(np.isnan(raw_predictions_t)) or np.any(np.isinf(raw_predictions_t)):
+            if np.any(np.isnan(raw_predictions_t)) or np.any(
+                np.isinf(raw_predictions_t)
+            ):
                 # print(f"Program {fp} yielded NaN/Inf at t_idx {t_idx}. Aborting eval for this prog.")
                 _EVAL_STATS["rejected_nan_or_inf"] += 1
                 _push_event({"fp": fp, "event": "nan_or_inf"})
-                _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
+                _cache_set(
+                    fp,
+                    EvalResult(-float("inf"), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0),
+                )
                 return _eval_cache[fp]
-            
+
             all_raw_predictions_timeseries.append(raw_predictions_t.copy())
-            
+
             processed_predictions_t = _scale_signal_for_ic(
                 raw_predictions_t, _EVAL_CONFIG["ic_scale_method"]
             )
             if _EVAL_CONFIG.get("sector_neutralize", False):
-                processed_predictions_t = _demean_by_groups(processed_predictions_t, sector_groups_vec)
+                processed_predictions_t = _demean_by_groups(
+                    processed_predictions_t, sector_groups_vec
+                )
             all_processed_predictions_timeseries.append(processed_predictions_t)
 
             if factor_corr_tracker or regime_corr_tracker:
-                pred_centered = processed_predictions_t - float(np.mean(processed_predictions_t))
+                pred_centered = processed_predictions_t - float(
+                    np.mean(processed_predictions_t)
+                )
                 pred_std = float(np.std(pred_centered, ddof=0))
                 if pred_std > 1e-9:
                     pred_z = pred_centered / pred_std
@@ -792,7 +920,13 @@ def evaluate_program(
                         if not tracker:
                             continue
                         for fname in list(tracker.keys()):
-                            vec = _resolve_factor_vector(fname, features_at_t, aligned_dfs, stock_symbols, timestamp)
+                            vec = _resolve_factor_vector(
+                                fname,
+                                features_at_t,
+                                aligned_dfs,
+                                stock_symbols,
+                                timestamp,
+                            )
                             if vec is None or vec.size != pred_z.size:
                                 continue
                             vec_centered = vec - float(np.mean(vec))
@@ -811,18 +945,28 @@ def evaluate_program(
                 mean_xs_std_partial = 0.0
                 flat_fraction = 0.0
                 cross_sectional_stds = np.array([])
-                if partial_raw_preds_matrix.ndim == 2 and partial_raw_preds_matrix.shape[1] > 0:
+                if (
+                    partial_raw_preds_matrix.ndim == 2
+                    and partial_raw_preds_matrix.shape[1] > 0
+                ):
                     cross_sectional_stds = partial_raw_preds_matrix.std(axis=1, ddof=0)
                     mean_xs_std_partial = np.mean(cross_sectional_stds)
                     if cross_sectional_stds.size > 0:
                         flat_fraction = np.mean(cross_sectional_stds < 1e-4)
-                
-                mean_t_std_partial = 0.0
-                if partial_raw_preds_matrix.ndim == 2 and partial_raw_preds_matrix.shape[0] > 1: # If matrix
-                    mean_t_std_partial = np.mean(partial_raw_preds_matrix.std(axis=0, ddof=0))
-                elif partial_raw_preds_matrix.ndim == 1 and partial_raw_preds_matrix.shape[0] > 1: # If effectively a single series over time (e.g. n_stocks=1)
-                     mean_t_std_partial = partial_raw_preds_matrix.std(ddof=0)
 
+                mean_t_std_partial = 0.0
+                if (
+                    partial_raw_preds_matrix.ndim == 2
+                    and partial_raw_preds_matrix.shape[0] > 1
+                ):  # If matrix
+                    mean_t_std_partial = np.mean(
+                        partial_raw_preds_matrix.std(axis=0, ddof=0)
+                    )
+                elif (
+                    partial_raw_preds_matrix.ndim == 1
+                    and partial_raw_preds_matrix.shape[0] > 1
+                ):  # If effectively a single series over time (e.g. n_stocks=1)
+                    mean_t_std_partial = partial_raw_preds_matrix.std(ddof=0)
 
                 early_abort = False
                 if mean_xs_std_partial < _EVAL_CONFIG["early_abort_xs_threshold"]:
@@ -853,13 +997,15 @@ def evaluate_program(
                     _EVAL_STATS["early_abort_t"] += 1
                     early_abort = True
                 if early_abort:
-                    _push_event({
-                        "fp": fp,
-                        "event": "early_abort",
-                        "mean_xs_std": float(mean_xs_std_partial),
-                        "flat_fraction": float(flat_fraction),
-                        "mean_t_std": float(mean_t_std_partial),
-                    })
+                    _push_event(
+                        {
+                            "fp": fp,
+                            "event": "early_abort",
+                            "mean_xs_std": float(mean_xs_std_partial),
+                            "flat_fraction": float(flat_fraction),
+                            "mean_t_std": float(mean_t_std_partial),
+                        }
+                    )
                     logger.debug(
                         "Early abort stats %s | mean_xs_std_partial %.6f (< %.6f) flat_fraction %.6f (> %.6f) mean_t_std_partial %.6f (< %.6f)",
                         fp,
@@ -870,7 +1016,9 @@ def evaluate_program(
                         mean_t_std_partial,
                         _EVAL_CONFIG["early_abort_t_threshold"],
                     )
-                    result = EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
+                    result = EvalResult(
+                        -float("inf"), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0
+                    )
                     _cache_set(fp, result)
                     return result
 
@@ -895,13 +1043,21 @@ def evaluate_program(
                     daily_ic_values.append(ic_value)
                     daily_pnl_values.append(pnl_val)
 
-        except Exception: # Broad exception during program's .eval() or IC calculation
-            _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
+        except Exception:  # Broad exception during program's .eval() or IC calculation
+            _cache_set(
+                fp, EvalResult(-float("inf"), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
+            )
             return _eval_cache[fp]
 
-    if not daily_ic_values or not all_raw_predictions_timeseries or not all_processed_predictions_timeseries:
+    if (
+        not daily_ic_values
+        or not all_raw_predictions_timeseries
+        or not all_processed_predictions_timeseries
+    ):
         _push_event({"fp": fp, "event": "exception"})
-        _cache_set(fp, EvalResult(-float('inf'), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0))
+        _cache_set(
+            fp, EvalResult(-float("inf"), 0.0, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0)
+        )
         return _eval_cache[fp]
 
     # Compute metrics (optionally on train/val splits)
@@ -922,25 +1078,37 @@ def evaluate_program(
     use_splits = bool(_EVAL_CONFIG.get("use_train_val_splits", False))
     t_points = int(_EVAL_CONFIG.get("train_points", 0))
     v_points = int(_EVAL_CONFIG.get("val_points", 0))
-    split_weighting = str(_EVAL_CONFIG.get("split_weighting", "equal")) if _EVAL_CONFIG.get("split_weighting") is not None else "equal"
+    split_weighting = (
+        str(_EVAL_CONFIG.get("split_weighting", "equal"))
+        if _EVAL_CONFIG.get("split_weighting") is not None
+        else "equal"
+    )
 
     # Optional temporal decay weighting for mean IC (recent bars matter more)
     def _decay_weights(T: int, half_life: float) -> np.ndarray:
         if T <= 0 or half_life <= 0.0:
             return np.ones(T, dtype=float)
-        ages = np.arange(T-1, -1, -1, dtype=float)  # 0 for newest bar
+        ages = np.arange(T - 1, -1, -1, dtype=float)  # 0 for newest bar
         return 0.5 ** (ages / float(half_life))
 
     hl = float(_EVAL_CONFIG.get("temporal_decay_half_life", 0.0) or 0.0)
-    if not use_splits and hl > 0.0 and (int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0) <= 1):
+    if (
+        not use_splits
+        and hl > 0.0
+        and (int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0) <= 1)
+    ):
         T = len(daily_ic_values)
         w = _decay_weights(T, hl)
         ws = np.sum(w) if T > 0 else 1.0
-        mean_daily_ic = float(np.sum(w * np.array(daily_ic_values)) / (ws if ws > 0 else 1.0))
+        mean_daily_ic = float(
+            np.sum(w * np.array(daily_ic_values)) / (ws if ws > 0 else 1.0)
+        )
     else:
         mean_daily_ic = float(np.mean(daily_ic_values))
     pnl_primary = np.array(pnl_values_by_h.get(primary_horizon, []), dtype=float)
     pnl_primary = pnl_primary[np.isfinite(pnl_primary)]
+    pnl_used = pnl_primary
+    pnl_skew, pnl_kurt = ae_stats.safe_skew_kurtosis(pnl_used)
     sortino_ratio = 0.0
     downside_deviation = 0.0
     cvar_value = 0.0
@@ -974,50 +1142,85 @@ def evaluate_program(
         sharpe_proxy = 0.0
     ic_std = float(np.std(daily_ic_values, ddof=0)) if daily_ic_values else 0.0
     turnover_proxy = 0.0
+    ic_n_points = int(total_steps)
+    ic_fold_n = 0
+    ic_fold_std = 0.0
+    sharpe_fold_n = 0
+    sharpe_fold_std = 0.0
 
     cv_k = int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0)
     cv_emb = int(_EVAL_CONFIG.get("cv_embargo", 0) or 0)
 
     if cv_k > 1 and total_steps > cv_k:
         # Combinatorial (contiguous) purged CV: split into K folds, compute validation metrics
-        fold_len = max(1, total_steps // cv_k)
-        ic_vals = []
-        ic_stds = []
-        turns = []
-        shs = []
+        cv_mode = str(_EVAL_CONFIG.get("cv_agg_mode", "mean") or "mean").lower()
+        try:
+            cv_trim = float(_EVAL_CONFIG.get("cv_trim_frac", 0.1) or 0.0)
+        except Exception:
+            cv_trim = 0.1
+
+        def _agg(values: list[float]) -> float:
+            xs = np.array(values, dtype=float)
+            xs = xs[np.isfinite(xs)]
+            if xs.size == 0:
+                return float("nan")
+            if cv_mode == "median":
+                return float(np.median(xs))
+            if cv_mode == "trimmed_mean":
+                return float(ae_stats.trimmed_mean(xs, cv_trim))
+            return float(np.mean(xs))
+
+        fold_slices = _compute_cv_fold_slices(
+            total_steps,
+            cv_k,
+            embargo=cv_emb,
+            label_horizon=primary_horizon,
+        )
+
+        ic_vals: list[float] = []
+        ic_stds: list[float] = []
+        turns: list[float] = []
+        shs: list[float] = []
+        pnl_segs: list[np.ndarray] = []
         # Collect processed predictions on validation segments for HOF/penalties
         val_pred_segs: list[np.ndarray] = []
-        for f in range(cv_k):
-            start = f * fold_len
-            end = total_steps if f == cv_k - 1 else (f + 1) * fold_len
-            # Validation slice
-            va = slice(start, end)
-            # Embargo region around validation slice (excluded from training, irrelevant here since we only need val metrics)
-            # Compute IC mean (optionally with decay within fold)
+        used_points = 0
+
+        for va in fold_slices:
             arr_va = np.array(daily_ic_values[va], dtype=float)
+            arr_va = arr_va[np.isfinite(arr_va)]
             if arr_va.size == 0:
                 continue
+            used_points += int(arr_va.size)
             if hl > 0.0:
                 w_va = _decay_weights(arr_va.size, hl)
-                ic_va = float(np.sum(w_va * arr_va) / (np.sum(w_va) if np.sum(w_va) > 0 else 1.0))
+                ic_va = float(
+                    np.sum(w_va * arr_va) / (np.sum(w_va) if np.sum(w_va) > 0 else 1.0)
+                )
             else:
                 ic_va = float(np.mean(arr_va))
             ic_vals.append(ic_va)
             ic_stds.append(float(np.std(arr_va, ddof=0)))
-            # Turnover on validation positions
+
             pos_va = _neutralize(full_processed_predictions_matrix[va])
             if pos_va.shape[0] > 1:
-                per_step_va = np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1)/2.0
+                per_step_va = np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1) / 2.0
                 if hl > 0.0:
                     wt_va = _decay_weights(per_step_va.size + 1, hl)[1:]
-                    turn_va = float(np.sum(wt_va * per_step_va) / (np.sum(wt_va) if np.sum(wt_va) > 0 else 1.0))
+                    turn_va = float(
+                        np.sum(wt_va * per_step_va)
+                        / (np.sum(wt_va) if np.sum(wt_va) > 0 else 1.0)
+                    )
                 else:
                     turn_va = float(np.mean(per_step_va))
             else:
                 turn_va = 0.0
             turns.append(turn_va)
-            # Sharpe proxy on validation pnl
+
             pnl_va = np.array(daily_pnl_values[va], dtype=float)
+            pnl_va = pnl_va[np.isfinite(pnl_va)]
+            if pnl_va.size > 0:
+                pnl_segs.append(pnl_va)
             if pnl_va.size > 1:
                 m = float(np.mean(pnl_va))
                 s = float(np.std(pnl_va, ddof=0))
@@ -1025,20 +1228,52 @@ def evaluate_program(
             else:
                 sharpe_va = 0.0
             shs.append(sharpe_va)
-            # Accumulate processed preds for HOF correlation penalty
+
             try:
                 seg = full_processed_predictions_matrix[va]
                 if seg.size > 0:
                     val_pred_segs.append(seg)
             except Exception:
                 pass
-        # Aggregate across folds (simple mean)
-        mean_daily_ic = float(np.mean(ic_vals)) if ic_vals else mean_daily_ic
-        ic_std = float(np.mean(ic_stds)) if ic_stds else ic_std
-        turnover_proxy = float(np.mean(turns)) if turns else turnover_proxy
-        sharpe_proxy = float(np.mean(shs)) if shs else sharpe_proxy
-        processed_for_hof = np.vstack(val_pred_segs) if val_pred_segs else full_processed_predictions_matrix
-    elif use_splits and t_points > 0 and v_points > 0 and (t_points + v_points) <= total_steps:
+
+        if ic_vals:
+            mean_daily_ic = float(_agg(ic_vals))
+            ic_fold_n = int(len(ic_vals))
+            ic_fold_std = (
+                float(np.std(np.array(ic_vals, dtype=float), ddof=0))
+                if ic_fold_n > 1
+                else 0.0
+            )
+            # Treat cross-fold instability as the IC-std penalty under CV.
+            ic_std = ic_fold_std
+        if turns:
+            turnover_proxy = float(_agg(turns))
+        if shs:
+            sharpe_proxy = float(_agg(shs))
+            sharpe_fold_n = int(len(shs))
+            sharpe_fold_std = (
+                float(np.std(np.array(shs, dtype=float), ddof=0))
+                if sharpe_fold_n > 1
+                else 0.0
+            )
+        if used_points > 0:
+            ic_n_points = int(used_points)
+        if pnl_segs:
+            pnl_used = np.concatenate(pnl_segs)
+            pnl_used = pnl_used[np.isfinite(pnl_used)]
+            pnl_skew, pnl_kurt = ae_stats.safe_skew_kurtosis(pnl_used)
+
+        processed_for_hof = (
+            np.vstack(val_pred_segs)
+            if val_pred_segs
+            else full_processed_predictions_matrix
+        )
+    elif (
+        use_splits
+        and t_points > 0
+        and v_points > 0
+        and (t_points + v_points) <= total_steps
+    ):
         tr = slice(0, t_points)
         va = slice(t_points, t_points + v_points)
         if hl > 0.0:
@@ -1046,8 +1281,20 @@ def evaluate_program(
             arr_va = np.array(daily_ic_values[va], dtype=float)
             w_tr = _decay_weights(arr_tr.size, hl)
             w_va = _decay_weights(arr_va.size, hl)
-            ic_tr = float(np.sum(w_tr * arr_tr) / (np.sum(w_tr) if np.sum(w_tr) > 0 else 1.0)) if t_points > 0 else 0.0
-            ic_va = float(np.sum(w_va * arr_va) / (np.sum(w_va) if np.sum(w_va) > 0 else 1.0)) if v_points > 0 else 0.0
+            ic_tr = (
+                float(
+                    np.sum(w_tr * arr_tr) / (np.sum(w_tr) if np.sum(w_tr) > 0 else 1.0)
+                )
+                if t_points > 0
+                else 0.0
+            )
+            ic_va = (
+                float(
+                    np.sum(w_va * arr_va) / (np.sum(w_va) if np.sum(w_va) > 0 else 1.0)
+                )
+                if v_points > 0
+                else 0.0
+            )
         else:
             ic_tr = float(np.mean(daily_ic_values[tr])) if t_points > 0 else 0.0
             ic_va = float(np.mean(daily_ic_values[va])) if v_points > 0 else 0.0
@@ -1057,19 +1304,25 @@ def evaluate_program(
         pos_tr = _neutralize(full_processed_predictions_matrix[tr])
         pos_va = _neutralize(full_processed_predictions_matrix[va])
         if pos_tr.shape[0] > 1:
-            per_step_tr = np.sum(np.abs(np.diff(pos_tr, axis=0)), axis=1)/2.0
+            per_step_tr = np.sum(np.abs(np.diff(pos_tr, axis=0)), axis=1) / 2.0
             if hl > 0.0:
                 wt_tr = _decay_weights(per_step_tr.size + 1, hl)[1:]
-                turn_tr = float(np.sum(wt_tr * per_step_tr) / (np.sum(wt_tr) if np.sum(wt_tr) > 0 else 1.0))
+                turn_tr = float(
+                    np.sum(wt_tr * per_step_tr)
+                    / (np.sum(wt_tr) if np.sum(wt_tr) > 0 else 1.0)
+                )
             else:
                 turn_tr = float(np.mean(per_step_tr))
         else:
             turn_tr = 0.0
         if pos_va.shape[0] > 1:
-            per_step_va = np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1)/2.0
+            per_step_va = np.sum(np.abs(np.diff(pos_va, axis=0)), axis=1) / 2.0
             if hl > 0.0:
                 wt_va = _decay_weights(per_step_va.size + 1, hl)[1:]
-                turn_va = float(np.sum(wt_va * per_step_va) / (np.sum(wt_va) if np.sum(wt_va) > 0 else 1.0))
+                turn_va = float(
+                    np.sum(wt_va * per_step_va)
+                    / (np.sum(wt_va) if np.sum(wt_va) > 0 else 1.0)
+                )
             else:
                 turn_va = float(np.mean(per_step_va))
         else:
@@ -1090,11 +1343,13 @@ def evaluate_program(
     else:
         pos_full = _neutralize(full_processed_predictions_matrix)
         if pos_full.shape[0] > 1:
-            per_step_turn = np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1)/2.0
+            per_step_turn = np.sum(np.abs(np.diff(pos_full, axis=0)), axis=1) / 2.0
             if hl > 0.0 and not use_splits:
                 wt = _decay_weights(per_step_turn.size + 1, hl)[1:]
                 wts = float(np.sum(wt))
-                turnover_proxy = float(np.sum(wt * per_step_turn) / (wts if wts > 0 else 1.0))
+                turnover_proxy = float(
+                    np.sum(wt * per_step_turn) / (wts if wts > 0 else 1.0)
+                )
             else:
                 turnover_proxy = float(np.mean(per_step_turn))
         else:
@@ -1116,7 +1371,11 @@ def evaluate_program(
             ic_std_h = float(np.std(ic_vals, ddof=0)) if ic_vals.size else 0.0
             mean_pnl_h = float(np.mean(pnl_vals)) if pnl_vals.size else 0.0
             if pnl_vals.size > 1:
-                sharpe_h = float(mean_pnl_h / np.std(pnl_vals, ddof=0)) if np.std(pnl_vals, ddof=0) > 1e-9 else 0.0
+                sharpe_h = (
+                    float(mean_pnl_h / np.std(pnl_vals, ddof=0))
+                    if np.std(pnl_vals, ddof=0) > 1e-9
+                    else 0.0
+                )
             else:
                 sharpe_h = 0.0
             horizon_metrics[h] = {
@@ -1174,7 +1433,9 @@ def evaluate_program(
     stress_scenarios: Dict[str, Dict[str, float]] = {}
     stress_metrics: Dict[str, float] = {}
 
-    def _compute_stress(label: str, fee_bps: float, slip_bps: float, shock_scale: float) -> Dict[str, float]:
+    def _compute_stress(
+        label: str, fee_bps: float, slip_bps: float, shock_scale: float
+    ) -> Dict[str, float]:
         if pnl_primary.size == 0:
             metrics_local = {
                 "cost": 0.0,
@@ -1207,7 +1468,7 @@ def evaluate_program(
         stress_scenarios[label] = metrics_local
         return metrics_local
 
-    base_metrics = _compute_stress(
+    _compute_stress(
         "base",
         float(_EVAL_CONFIG.get("stress_fee_bps", 0.0) or 0.0),
         float(_EVAL_CONFIG.get("stress_slippage_bps", 0.0) or 0.0),
@@ -1218,7 +1479,9 @@ def evaluate_program(
     tail_slip = float(_EVAL_CONFIG.get("stress_tail_slippage_bps", 0.0) or 0.0)
     tail_scale = float(_EVAL_CONFIG.get("stress_tail_shock_scale", 0.0) or 0.0)
     if tail_fee > 0.0 or tail_slip > 0.0 or tail_scale > 0.0:
-        _compute_stress("tail", tail_fee, tail_slip, tail_scale if tail_scale > 0.0 else 1.0)
+        _compute_stress(
+            "tail", tail_fee, tail_slip, tail_scale if tail_scale > 0.0 else 1.0
+        )
 
     for label, metrics in stress_scenarios.items():
         for key, value in metrics.items():
@@ -1247,6 +1510,7 @@ def evaluate_program(
         pj = 0.0
     if pj > 1e-12:
         import hashlib
+
         # Map fingerprint to a stable float in [0,1)
         h = hashlib.sha1(fp.encode("utf-8")).digest()
         # Use first 8 bytes as unsigned integer for reproducible fraction
@@ -1263,7 +1527,11 @@ def evaluate_program(
             arr_ic = np.array(combined_ic_values, dtype=float)
         elif daily_ic_values:
             arr_ic = np.array(daily_ic_values, dtype=float)
-            weighted = not use_splits and hl > 0.0 and (int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0) <= 1)
+            weighted = (
+                not use_splits
+                and hl > 0.0
+                and (int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0) <= 1)
+            )
         if arr_ic is not None and arr_ic.size:
             if weighted and arr_ic.size == len(daily_ic_values):
                 w = _decay_weights(arr_ic.size, hl)
@@ -1272,7 +1540,9 @@ def evaluate_program(
                 w2sum = float(np.sum(w * w))
                 neff = wsum * wsum / (w2sum if w2sum > 0 else 1.0)
                 s = float(np.std(arr_ic, ddof=0))
-                ic_tstat = float(mu_w / (s / np.sqrt(max(1.0, neff)))) if s > 1e-12 else 0.0
+                ic_tstat = (
+                    float(mu_w / (s / np.sqrt(max(1.0, neff)))) if s > 1e-12 else 0.0
+                )
             else:
                 mu = float(np.mean(arr_ic))
                 s = float(np.std(arr_ic, ddof=0))
@@ -1288,7 +1558,8 @@ def evaluate_program(
         - _EVAL_CONFIG.get("ic_std_penalty_weight", 0.0) * ic_std
         - _EVAL_CONFIG.get("turnover_penalty_weight", 0.0) * turnover_proxy
         - parsimony_penalty
-        - _EVAL_CONFIG.get("drawdown_penalty_weight", 0.0) * max(0.0, float(drawdown_proxy))
+        - _EVAL_CONFIG.get("drawdown_penalty_weight", 0.0)
+        * max(0.0, float(drawdown_proxy))
         - _EVAL_CONFIG.get("downside_penalty_weight", 0.0) * float(downside_deviation)
         - _EVAL_CONFIG.get("cvar_penalty_weight", 0.0) * max(0.0, -float(cvar_value))
         + _EVAL_CONFIG.get("ic_tstat_weight", 0.0) * ic_tstat
@@ -1302,7 +1573,11 @@ def evaluate_program(
                 continue
             mean_abs_corr = float(np.mean(np.abs(values)))
             factor_penalty_components[name] = mean_abs_corr
-    factor_exposure_sum = float(sum(factor_penalty_components.values())) if factor_penalty_components else 0.0
+    factor_exposure_sum = (
+        float(sum(factor_penalty_components.values()))
+        if factor_penalty_components
+        else 0.0
+    )
     factor_penalty_value = 0.0
     if factor_penalty_weight > 0.0 and factor_penalty_components:
         factor_penalty_value = factor_penalty_weight * factor_exposure_sum
@@ -1321,10 +1596,13 @@ def evaluate_program(
     if np.all(processed_for_hof == 0):
         logger.debug("All-zero predictions – rejected")
         _EVAL_STATS["rejected_all_zero"] += 1
-        score = -float('inf')
+        score = -float("inf")
 
     # Flatness guards (on raw predictions)
-    if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[1] > 0: # XS check
+    if (
+        full_raw_predictions_matrix.ndim == 2
+        and full_raw_predictions_matrix.shape[1] > 0
+    ):  # XS check
         cross_sectional_stds = full_raw_predictions_matrix.std(axis=1, ddof=0)
         mean_xs_std = np.mean(cross_sectional_stds)
         if mean_xs_std < _EVAL_CONFIG["xs_flatness_guard_threshold"]:
@@ -1340,10 +1618,13 @@ def evaluate_program(
                 mean_xs_std,
                 _EVAL_CONFIG["xs_flatness_guard_threshold"],
             )
-            score = -float('inf')
+            score = -float("inf")
 
-    if score > -float('inf'): # Temporal check only if not already penalized to -inf
-        if full_raw_predictions_matrix.ndim == 2 and full_raw_predictions_matrix.shape[0] > 1:
+    if score > -float("inf"):  # Temporal check only if not already penalized to -inf
+        if (
+            full_raw_predictions_matrix.ndim == 2
+            and full_raw_predictions_matrix.shape[0] > 1
+        ):
             time_std_per_stock = full_raw_predictions_matrix.std(axis=0, ddof=0)
             mean_t_std = np.mean(time_std_per_stock)
             if mean_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
@@ -1359,8 +1640,11 @@ def evaluate_program(
                     mean_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
                 )
-                score = -float('inf')
-        elif full_raw_predictions_matrix.ndim == 1 and full_raw_predictions_matrix.shape[0] > 1: # Single series case
+                score = -float("inf")
+        elif (
+            full_raw_predictions_matrix.ndim == 1
+            and full_raw_predictions_matrix.shape[0] > 1
+        ):  # Single series case
             mean_t_std = full_raw_predictions_matrix.std(ddof=0)
             if mean_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
                 logger.debug(
@@ -1375,11 +1659,14 @@ def evaluate_program(
                     mean_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
                 )
-                score = -float('inf')
+                score = -float("inf")
 
     # Flatness guards on processed predictions
-    if score > -float('inf'):
-        if full_processed_predictions_matrix.ndim == 2 and full_processed_predictions_matrix.shape[1] > 0:
+    if score > -float("inf"):
+        if (
+            full_processed_predictions_matrix.ndim == 2
+            and full_processed_predictions_matrix.shape[1] > 0
+        ):
             proc_xs_stds = full_processed_predictions_matrix.std(axis=1, ddof=0)
             mean_proc_xs_std = np.mean(proc_xs_stds)
             if mean_proc_xs_std < _EVAL_CONFIG["xs_flatness_guard_threshold"]:
@@ -1395,10 +1682,13 @@ def evaluate_program(
                     mean_proc_xs_std,
                     _EVAL_CONFIG["xs_flatness_guard_threshold"],
                 )
-                score = -float('inf')
+                score = -float("inf")
 
-    if score > -float('inf'):
-        if full_processed_predictions_matrix.ndim == 2 and full_processed_predictions_matrix.shape[0] > 1:
+    if score > -float("inf"):
+        if (
+            full_processed_predictions_matrix.ndim == 2
+            and full_processed_predictions_matrix.shape[0] > 1
+        ):
             proc_t_stds = full_processed_predictions_matrix.std(axis=0, ddof=0)
             mean_proc_t_std = np.mean(proc_t_stds)
             if mean_proc_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
@@ -1414,8 +1704,11 @@ def evaluate_program(
                     mean_proc_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
                 )
-                score = -float('inf')
-        elif full_processed_predictions_matrix.ndim == 1 and full_processed_predictions_matrix.shape[0] > 1:
+                score = -float("inf")
+        elif (
+            full_processed_predictions_matrix.ndim == 1
+            and full_processed_predictions_matrix.shape[0] > 1
+        ):
             mean_proc_t_std = full_processed_predictions_matrix.std(ddof=0)
             if mean_proc_t_std < _EVAL_CONFIG["temporal_flatness_guard_threshold"]:
                 logger.debug(
@@ -1430,15 +1723,23 @@ def evaluate_program(
                     mean_proc_t_std,
                     _EVAL_CONFIG["temporal_flatness_guard_threshold"],
                 )
-                score = -float('inf')
+                score = -float("inf")
 
     # HOF correlation penalty (uses processed predictions)
-    if score > -float('inf') and processed_for_hof.size > 0:
+    if score > -float("inf") and processed_for_hof.size > 0:
         mode = str(_EVAL_CONFIG.get("hof_corr_mode", "flat"))
-        if mode == "per_bar" and processed_for_hof.ndim == 2 and processed_for_hof.shape[0] > 0:
-            correlation_penalty = hof_module.get_correlation_penalty_per_bar(processed_for_hof)
+        if (
+            mode == "per_bar"
+            and processed_for_hof.ndim == 2
+            and processed_for_hof.shape[0] > 0
+        ):
+            correlation_penalty = hof_module.get_correlation_penalty_per_bar(
+                processed_for_hof
+            )
         else:
-            correlation_penalty = hof_module.get_correlation_penalty_with_hof(processed_for_hof.flatten())
+            correlation_penalty = hof_module.get_correlation_penalty_with_hof(
+                processed_for_hof.flatten()
+            )
         if correlation_penalty > 0:
             logger.debug(
                 "Correlation penalty for %s: %.6f",
@@ -1469,20 +1770,38 @@ def evaluate_program(
         sortino_ratio=float(sortino_ratio),
         downside_deviation=float(downside_deviation),
         cvar=float(cvar_value),
+        ic_n=int(ic_n_points),
+        ic_fold_n=int(ic_fold_n),
+        ic_fold_std=float(ic_fold_std),
+        sharpe_n=int(getattr(pnl_used, "size", 0) or 0),
+        sharpe_fold_n=int(sharpe_fold_n),
+        sharpe_fold_std=float(sharpe_fold_std),
+        pnl_skew=float(pnl_skew),
+        pnl_kurt=float(pnl_kurt),
     )
     # Compute fixed-weight fitness if candidate wasn't invalidated to -inf
     try:
         if result.fitness > -float("inf") and processed_for_hof.size > 0:
             fixed_sharpe_w = float(_EVAL_CONFIG.get("fixed_sharpe_proxy_weight", 0.0))
             fixed_ic_std_w = float(_EVAL_CONFIG.get("fixed_ic_std_penalty_weight", 0.0))
-            fixed_turnover_w = float(_EVAL_CONFIG.get("fixed_turnover_penalty_weight", 0.0))
+            fixed_turnover_w = float(
+                _EVAL_CONFIG.get("fixed_turnover_penalty_weight", 0.0)
+            )
             fixed_corr_w = float(_EVAL_CONFIG.get("fixed_corr_penalty_weight", 0.0))
             # Use HOF helper at provided weight (cutoff stays as configured in HOF)
             mode = str(_EVAL_CONFIG.get("hof_corr_mode", "flat"))
-            if mode == "per_bar" and processed_for_hof.ndim == 2 and processed_for_hof.shape[0] > 0:
-                corr_pen_fixed = hof_module.get_correlation_penalty_with_weight_per_bar(processed_for_hof, weight=fixed_corr_w)
+            if (
+                mode == "per_bar"
+                and processed_for_hof.ndim == 2
+                and processed_for_hof.shape[0] > 0
+            ):
+                corr_pen_fixed = hof_module.get_correlation_penalty_with_weight_per_bar(
+                    processed_for_hof, weight=fixed_corr_w
+                )
             else:
-                corr_pen_fixed = hof_module.get_correlation_penalty_with_weight(processed_for_hof.flatten(), weight=fixed_corr_w)
+                corr_pen_fixed = hof_module.get_correlation_penalty_with_weight(
+                    processed_for_hof.flatten(), weight=fixed_corr_w
+                )
             score_fixed = (
                 mean_daily_ic
                 + fixed_sharpe_w * sharpe_proxy

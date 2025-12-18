@@ -8,6 +8,7 @@ Usage:
 If no path is given, reads the path from pipeline_runs_cs/LATEST.
 Outputs PNG files next to diagnostics.json.
 """
+
 from __future__ import annotations
 import json
 import sys
@@ -17,6 +18,7 @@ import numpy as np
 # Force a non-interactive backend for headless environments
 try:
     import matplotlib
+
     matplotlib.use("Agg")  # Safe in both headless and GUI envs
 except Exception:
     # If matplotlib is not installed, the import below will handle it
@@ -73,22 +75,26 @@ def generate_plots(run_dir: Path) -> Path:
 
     # Apply a dark theme to match the dashboard UI
     try:
-        plt.rcParams.update({
-            "figure.facecolor": "#0f1317",
-            "axes.facecolor": "#12161a",
-            "savefig.facecolor": "#0f1317",
-            "savefig.edgecolor": "#0f1317",
-            "axes.edgecolor": "#2a3138",
-            "axes.labelcolor": "#e6e8eb",
-            "text.color": "#e6e8eb",
-            "xtick.color": "#a7adb3",
-            "ytick.color": "#a7adb3",
-            "grid.color": "#1f242a",
-        })
+        plt.rcParams.update(
+            {
+                "figure.facecolor": "#0f1317",
+                "axes.facecolor": "#12161a",
+                "savefig.facecolor": "#0f1317",
+                "savefig.edgecolor": "#0f1317",
+                "axes.edgecolor": "#2a3138",
+                "axes.labelcolor": "#e6e8eb",
+                "text.color": "#e6e8eb",
+                "xtick.color": "#a7adb3",
+                "ytick.color": "#a7adb3",
+                "grid.color": "#1f242a",
+            }
+        )
     except Exception:
         pass
 
-    gens = np.array([int(d.get("generation", i + 1)) for i, d in enumerate(diags)], dtype=int)
+    gens = np.array(
+        [int(d.get("generation", i + 1)) for i, d in enumerate(diags)], dtype=int
+    )
 
     def _safe_series(vals):
         arr = np.array(vals, dtype=float)
@@ -120,9 +126,10 @@ def generate_plots(run_dir: Path) -> Path:
     _safe_plot(ax, gens, q_p95, label="P95", alpha=0.7)
     # Rolling-window smoothing for median
     med_arr = _safe_series(q_med)
-    win = max(3, min(9, len(med_arr)//10*2+1))  # odd window ~10% of run, min 3, max 9
+    win = max(
+        3, min(9, len(med_arr) // 10 * 2 + 1)
+    )  # odd window ~10% of run, min 3, max 9
     if np.isfinite(med_arr).any() and win > 1:
-        valid = np.isfinite(med_arr)
         smooth = _moving_avg_nan(med_arr, win)
         _safe_plot(ax, gens, smooth, label=f"Median (smoothed w={win})", lw=2)
     else:
@@ -197,7 +204,9 @@ def generate_plots(run_dir: Path) -> Path:
             gen_col.append(g)
     if ops and fit:
         fig, ax = plt.subplots(figsize=(7.5, 4.5))
-        sc = ax.scatter(ops, fit, c=gen_col, cmap="viridis", alpha=0.6, s=18, edgecolors="none")
+        sc = ax.scatter(
+            ops, fit, c=gen_col, cmap="viridis", alpha=0.6, s=18, edgecolors="none"
+        )
         cbar = fig.colorbar(sc, ax=ax)
         cbar.set_label("Generation")
         ax.set_title("Top-K programs: Fitness vs Ops")
@@ -219,6 +228,7 @@ def main() -> None:
 
 def fig_to_png(fig) -> bytes:
     import io
+
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=160)
     return buf.getvalue()

@@ -1,14 +1,17 @@
 from __future__ import annotations
 import logging
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, OrderedDict as OrderedDictType
+from typing import Dict, List, Tuple, OrderedDict as OrderedDictType
 from alpha_evolve.utils.data_loading import DataLoadError, align_and_prune
-from collections import OrderedDict
 import pandas as pd
 from alpha_evolve.utils.data_loading import load_symbol_dfs_from_dir
 from alpha_evolve.utils.features import compute_basic_features
-from alpha_evolve.utils.cache import compute_align_cache_key, load_aligned_bundle_from_cache, save_aligned_bundle_to_cache
+from alpha_evolve.utils.cache import (
+    compute_align_cache_key,
+    load_aligned_bundle_from_cache,
+    save_aligned_bundle_to_cache,
+)
 # numpy is used by pandas operations, but not directly called here often.
+
 
 def _rolling_features_individual_df_bt(df: pd.DataFrame) -> pd.DataFrame:
     """Compatibility wrapper to use the shared feature builder.
@@ -16,6 +19,7 @@ def _rolling_features_individual_df_bt(df: pd.DataFrame) -> pd.DataFrame:
     ``ret_fwd`` is recomputed after alignment; we purposefully omit it here.
     """
     return compute_basic_features(df)
+
 
 def load_and_align_data_for_backtest(
     data_dir_param: str,
@@ -77,10 +81,16 @@ def load_and_align_data_for_backtest(
             data_dir_param, _rolling_features_individual_df_bt
         )
 
-        if strategy_param == 'specific_long_10k':
-            raw_dfs = {sym: df for sym, df in raw_dfs.items() if len(df) >= min_common_points_param}
+        if strategy_param == "specific_long_10k":
+            raw_dfs = {
+                sym: df
+                for sym, df in raw_dfs.items()
+                if len(df) >= min_common_points_param
+            }
             if len(raw_dfs) < 2:
-                 raise DataLoadError(f"Not enough long files (>= {min_common_points_param} data points) for 'specific_long_10k' backtest strategy. Found: {len(raw_dfs)}")
+                raise DataLoadError(
+                    f"Not enough long files (>= {min_common_points_param} data points) for 'specific_long_10k' backtest strategy. Found: {len(raw_dfs)}"
+                )
         # Use shared alignment + pruning (for all strategies)
         bundle = align_and_prune(
             raw_dfs,
@@ -97,6 +107,8 @@ def load_and_align_data_for_backtest(
     stock_symbols = bundle.symbols
 
     if len(stock_symbols) < 2:
-        raise DataLoadError("Need at least two stock symbols after alignment for backtesting.")
-        
+        raise DataLoadError(
+            "Need at least two stock symbols after alignment for backtesting."
+        )
+
     return aligned_dfs_ordered, common_index, stock_symbols

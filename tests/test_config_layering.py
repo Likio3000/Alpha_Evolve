@@ -1,4 +1,3 @@
-import os
 import sys
 from dataclasses import asdict
 
@@ -25,22 +24,26 @@ def test_backtest_config_layering_precedence(monkeypatch, tmp_path):
     # CLI overrides
     argv = [
         "backtest_evolved_alphas.py",
-        "--config", str(cfg_path),
-        "--scale", "sign",
-        "--top_to_backtest", "5",
+        "--config",
+        str(cfg_path),
+        "--scale",
+        "sign",
+        "--top_to_backtest",
+        "5",
     ]
     monkeypatch.setattr(sys, "argv", argv)
 
     from alpha_evolve.backtesting import engine as bt_engine
+
     parse_bt = bt_engine.parse_args
     cfg, _ = parse_bt()
     d = asdict(cfg)
 
     # Precedence: file < env < CLI
-    assert d["data_dir"] == "env_dir"            # env overrides file
-    assert d["top_to_backtest"] == 5              # CLI overrides env
-    assert d["scale"] == "sign"                  # CLI overrides env and file
-    assert d["fee"] == 0.1                        # file retained
+    assert d["data_dir"] == "env_dir"  # env overrides file
+    assert d["top_to_backtest"] == 5  # CLI overrides env
+    assert d["scale"] == "sign"  # CLI overrides env and file
+    assert d["fee"] == 0.1  # file retained
 
 
 def test_pipeline_config_layering_precedence(monkeypatch, tmp_path):
@@ -63,13 +66,17 @@ def test_pipeline_config_layering_precedence(monkeypatch, tmp_path):
     monkeypatch.setenv("AE_DATA_DIR", "env_data")
 
     argv = [
-        "alpha_evolve.cli.pipeline", "7",
-        "--config", str(cfg_path),
-        "--data_dir", "cli_data",
+        "alpha_evolve.cli.pipeline",
+        "7",
+        "--config",
+        str(cfg_path),
+        "--data_dir",
+        "cli_data",
     ]
     monkeypatch.setattr(sys, "argv", argv)
 
     from alpha_evolve.cli.pipeline import parse_args as parse_pipe
+
     evo_cfg, bt_cfg, _ = parse_pipe()
 
     # Positional generations wins; CLI data_dir wins, env overrides seed

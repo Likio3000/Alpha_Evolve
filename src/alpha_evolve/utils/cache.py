@@ -2,9 +2,8 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from .data_loading import DataBundle
 
@@ -40,7 +39,9 @@ def compute_align_cache_key(
     content changes without mtime update (rare).
     """
     h = hashlib.sha1()
-    h.update(f"feat:{feature_fn_name}|strat:{strategy}|min:{min_common_points}|lag:{eval_lag}|incl:{int(include_lag_in_required_length)}|trim:{int(fixed_trim_include_lag)}".encode())
+    h.update(
+        f"feat:{feature_fn_name}|strat:{strategy}|min:{min_common_points}|lag:{eval_lag}|incl:{int(include_lag_in_required_length)}|trim:{int(fixed_trim_include_lag)}".encode()
+    )
     try:
         for name in sorted(os.listdir(data_dir)):
             if not name.lower().endswith(".csv"):

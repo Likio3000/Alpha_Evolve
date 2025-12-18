@@ -15,11 +15,26 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -e .
+      - name: Build dashboard UI
+        run: |
+          npm --prefix dashboard-ui ci
+          npm --prefix dashboard-ui run lint
+          npm --prefix dashboard-ui run build
       - name: Run mypy
         run: mypy
       - name: Run pytest
-        run: pytest -q
+        run: SKIP_MP_TESTS=1 pytest -q
+      - name: Run quick benchmark smoke
+        env:
+          BENCH_CONFIG: configs/bench_sp500_small_ci.toml
+          SEEDS: "0:1"
+        run: bash scripts/benchmark_quick_smoke.sh

@@ -15,6 +15,10 @@ class PipelineRunRequest(BaseModel):
     config: Optional[str] = None
     data_dir: Optional[str] = None
     overrides: Optional[Dict[str, Scalar]] = None
+    runner_mode: Optional[str] = Field(
+        default=None,
+        description="Execution mode for dashboard jobs: auto|multiprocessing|subprocess",
+    )
 
 
 class AutoImproveRequest(BaseModel):
@@ -61,3 +65,39 @@ class SelfplayRunRequest(BaseModel):
     debug_prints: Optional[bool] = None
     run_baselines: Optional[bool] = None
     retrain_baselines: Optional[bool] = None
+
+
+class ExperimentStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    search_space: str
+    config: Optional[str] = None
+    iterations: int = Field(default=5, ge=1)
+    seed: int = Field(default=0, ge=0)
+    objective: str = Field(default="Sharpe", min_length=1)
+    minimize: bool = False
+    exploration_prob: float = Field(default=0.35, ge=0.0, le=1.0)
+    auto_approve: bool = False
+    approval_poll_interval: float = Field(default=5.0, gt=0.0)
+    approval_timeout: Optional[float] = Field(default=None, gt=0.0)
+    pipeline_output_dir: Optional[str] = None
+    pipeline_log_level: Optional[str] = None
+    pipeline_log_file: Optional[str] = None
+    debug_prints: bool = False
+    run_baselines: bool = False
+    retrain_baselines: bool = False
+    disable_align_cache: bool = False
+    align_cache_dir: Optional[str] = None
+
+    corr_gate_sharpe: float = Field(default=1.0)
+    sharpe_close_epsilon: float = Field(default=0.05, ge=0.0)
+    max_sharpe_sacrifice: float = Field(default=0.05, ge=0.0)
+    min_corr_improvement: float = Field(default=0.05, ge=0.0)
+
+
+class ExperimentProposalDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(..., min_length=1, description="approved|rejected")
+    decided_by: Optional[str] = None
+    notes: Optional[str] = None

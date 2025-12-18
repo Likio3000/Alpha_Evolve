@@ -89,9 +89,11 @@ qd_max_entries = 256
 # Ramping / selection strategy
 ramp_fraction = 0.3333333333              # fraction of generations to ramp
 ramp_min_gens = 5
-selection_metric = "ramped"               # ramped | fixed | ic | auto | phased
+selection_metric = "ramped"               # ramped | fixed | ic | lcb | psr | auto | phased
+selection_lcb_z = 1.645                   # one-sided z-score for selection_metric=lcb
 novelty_boost_w = 0.0
 novelty_struct_w = 0.0
+novelty_pred_dist_w = 0.0
 ic_phase_gens = 0
 
 # Rank-based tournament weighting temperature (softmax beta schedule)
@@ -109,6 +111,8 @@ mf_promote_fraction = 0.3
 mf_min_promote = 8
 cv_k_folds = 0
 cv_embargo = 0
+cv_agg_mode = "mean"                      # mean | median | trimmed_mean
+cv_trim_frac = 0.1                        # symmetric trim fraction for trimmed_mean
 
 
 [backtest]
@@ -133,6 +137,7 @@ sector_neutralize_positions = false
 ensemble_mode = false
 ensemble_size = 0
 ensemble_max_corr = 0.3
+ensemble_corr_lambda = 0.0
 ensemble_weighting = "equal"
 
 # Risk controls

@@ -1,0 +1,48 @@
+[evolution]
+data_dir = "data_sp500_small"
+max_lookback_data_option = "full_overlap"
+min_common_points = 500
+eval_lag = 1
+
+# Keep quick-mode runs fast (CI/sandbox friendly)
+generations = 3
+pop_size = 40
+workers = 1
+seed = 0
+
+# Use the uncertainty-aware selection variants by default.
+selection_metric = "lcb"
+selection_lcb_z = 1.645
+
+# Light diversity nudges (keep off by default; benchmark can turn on)
+novelty_boost_w = 0.0
+novelty_struct_w = 0.0
+novelty_pred_dist_w = 0.0
+
+# Optional: keep CV off for the quick benchmark.
+cv_k_folds = 0
+cv_embargo = 0
+cv_agg_mode = "mean"
+cv_trim_frac = 0.1
+
+[backtest]
+data_dir = "data_sp500_small"
+max_lookback_data_option = "full_overlap"
+min_common_points = 500
+eval_lag = 1
+
+top_to_backtest = 5
+fee = 0.5
+hold = 1
+scale = "zscore"
+winsor_p = 0.02
+long_short_n = 0
+annualization_factor = 252
+
+# Ensure we always produce diversification artefacts.
+ensemble_mode = true
+ensemble_size = 3
+ensemble_max_corr = 0.7
+ensemble_corr_lambda = 0.2
+ensemble_weighting = "equal"
+

@@ -69,7 +69,7 @@ def _to_toml(obj: Dict[str, Dict[str, Any]]) -> str:
         if isinstance(v, (int, float)):
             return str(v)
         s = str(v)
-        s = s.replace("\\", "\\\\").replace("\"", "\\\"")
+        s = s.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{s}"'
 
     lines: list[str] = []
@@ -100,15 +100,24 @@ def get_defaults(request: HttpRequest):
     if cfg.exists():
         try:
             data = _load_toml(cfg)
-        except (FileNotFoundError, ValueError, RuntimeError):  # pragma: no cover - unexpected
+        except (
+            FileNotFoundError,
+            ValueError,
+            RuntimeError,
+        ):  # pragma: no cover - unexpected
             data = {}
         _merge(evo, data.get("evolution"))
         _merge(bt, data.get("backtest"))
 
     choices = {
-        "max_lookback_data_option": ["common_1200", "specific_long_10k", "full_overlap"],
-        "selection_metric": ["ramped", "fixed", "ic", "auto", "phased"],
+        "max_lookback_data_option": [
+            "common_1200",
+            "specific_long_10k",
+            "full_overlap",
+        ],
+        "selection_metric": ["ramped", "fixed", "ic", "lcb", "psr", "auto", "phased"],
         "split_weighting": ["equal", "by_points"],
+        "cv_agg_mode": ["mean", "median", "trimmed_mean"],
         "scale": ["zscore", "rank", "sign", "madz", "winsor"],
         "hof_corr_mode": ["flat", "per_bar"],
         "ensemble_weighting": ["equal", "risk_parity"],
@@ -169,7 +178,9 @@ def get_preset_values(request: HttpRequest):
         return json_error(str(exc), 404)
     except (ValueError, RuntimeError) as exc:
         return json_error(str(exc), 400)
-    return json_response({"evolution": data.get("evolution", {}), "backtest": data.get("backtest", {})})
+    return json_response(
+        {"evolution": data.get("evolution", {}), "backtest": data.get("backtest", {})}
+    )
 
 
 @csrf_exempt

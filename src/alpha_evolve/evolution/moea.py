@@ -17,6 +17,7 @@ OBJECTIVE_LABELS: Tuple[str, ...] = (
     "neg_complex",
     "neg_dd",
     "neg_factor",
+    "neg_corr",
     "neg_robust",
     "neg_cvar",
 )
@@ -49,6 +50,7 @@ def default_objectives(result: EvalResult) -> ObjectiveTuple:
         float(-result.parsimony_penalty),
         float(-getattr(result, "max_drawdown", 0.0)),
         float(-getattr(result, "factor_exposure_sum", 0.0)),
+        float(-getattr(result, "correlation_penalty", 0.0)),
         float(-getattr(result, "robustness_penalty", 0.0)),
         float(-tail_loss),
     )
@@ -106,7 +108,9 @@ def nondominated_sort(objs: Sequence[ObjectiveTuple]) -> List[List[int]]:
     return fronts
 
 
-def crowding_distance(front: Sequence[int], objs: Sequence[ObjectiveTuple]) -> Dict[int, float]:
+def crowding_distance(
+    front: Sequence[int], objs: Sequence[ObjectiveTuple]
+) -> Dict[int, float]:
     """Compute crowding distance for indices in ``front``.
 
     Distances follow NSGA-II: boundary points receive ``inf``.
@@ -191,7 +195,9 @@ def compute_pareto_analysis(
     )
 
 
-def to_objective_dict(obj: ObjectiveTuple, labels: Sequence[str] = OBJECTIVE_LABELS) -> Dict[str, float]:
+def to_objective_dict(
+    obj: ObjectiveTuple, labels: Sequence[str] = OBJECTIVE_LABELS
+) -> Dict[str, float]:
     """Utility to map an objective tuple into a dict keyed by ``labels``."""
 
     return {label: float(value) for label, value in zip(labels, obj)}

@@ -11,6 +11,8 @@
   - `docs/reference/run-artifacts.md`
 - **How-Tos**
   - `docs/howtos/testing.md`
+- **Roadmaps**
+  - `docs/frontier-upgrade-plan.md`
 - **RFCs** – `docs/RFCs/`
 
 All documents live alongside the code they describe. Update both when behaviour changes so the docs remain authoritative.

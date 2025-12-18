@@ -1,6 +1,8 @@
 import logging
 import os
 import sys
+import json
+import time
 from typing import Dict, Optional
 
 try:
@@ -23,7 +25,11 @@ class _TqdmCompatibleHandler(logging.StreamHandler):
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
         try:
             msg = self.format(record)
-            target = self.stream if hasattr(self, "stream") and self.stream is not None else sys.stdout
+            target = (
+                self.stream
+                if hasattr(self, "stream") and self.stream is not None
+                else sys.stdout
+            )
             if _tqdm is not None:
                 _tqdm.write(msg, file=target)
             else:
@@ -65,10 +71,51 @@ class _ColorFormatter(logging.Formatter):
         ts_coloured = f"{self.DIM}{ts}{self.RESET}"
         lvl_coloured = f"{level_colour}{level}{self.RESET}"
         logger_coloured = f"{self.DIM}{logger_name}{self.RESET}"
-        msg_colour = level_colour if record.levelno >= logging.INFO else self.FG[logging.DEBUG]
+        msg_colour = (
+            level_colour if record.levelno >= logging.INFO else self.FG[logging.DEBUG]
+        )
         message_coloured = f"{msg_colour}{message}{self.RESET}"
 
-        return " │ ".join((ts_coloured, lvl_coloured, logger_coloured, message_coloured))
+        return " │ ".join(
+            (ts_coloured, lvl_coloured, logger_coloured, message_coloured)
+        )
+
+
+class JsonFormatter(logging.Formatter):
+    """Minimal JSON log formatter (Prometheus/ELK-friendly)."""
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:  # noqa: D401,N802
+        fmt = datefmt or self.datefmt or "%Y-%m-%dT%H:%M:%SZ"
+        return time.strftime(fmt, time.gmtime(record.created))
+
+    def format(self, record: logging.LogRecord) -> str:  # noqa: D401
+        payload = {
+            "ts": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+
+        for key in (
+            "client_addr",
+            "request_line",
+            "status_code",
+            "method",
+            "path",
+            "query_string",
+        ):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _wants_json_logs() -> bool:
+    val = os.environ.get("AE_LOG_FORMAT") or os.environ.get("LOG_FORMAT") or ""
+    return val.strip().lower() == "json"
 
 
 def _make_console_handler(level: int) -> logging.Handler:
@@ -85,15 +132,66 @@ def _make_console_handler(level: int) -> logging.Handler:
     is_tty = sys.stdout.isatty() if hasattr(sys.stdout, "isatty") else False
     use_color = bool(force_color or (is_tty and not no_color))
 
-    fmt = "%(asctime)s │ %(levelname)-5s │ %(name)s │ %(message)s"
-    handler.setFormatter(_ColorFormatter(fmt, datefmt="%H:%M:%S", use_color=use_color))
+    if _wants_json_logs():
+        handler.setFormatter(JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ"))
+    else:
+        fmt = "%(asctime)s │ %(levelname)-5s │ %(name)s │ %(message)s"
+        handler.setFormatter(
+            _ColorFormatter(fmt, datefmt="%H:%M:%S", use_color=use_color)
+        )
     return handler
 
 
 def _build_uvicorn_log_config(level: int) -> Dict[str, object]:
     level_name = logging.getLevelName(level)
+    if _wants_json_logs():
+        return {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "()": "alpha_evolve.utils.logging.JsonFormatter",
+                    "datefmt": "%Y-%m-%dT%H:%M:%SZ",
+                },
+                "access": {
+                    "()": "alpha_evolve.utils.logging.JsonFormatter",
+                    "datefmt": "%Y-%m-%dT%H:%M:%SZ",
+                },
+            },
+            "handlers": {
+                "default": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "default",
+                    "stream": "ext://sys.stdout",
+                },
+                "access": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "access",
+                    "stream": "ext://sys.stdout",
+                },
+            },
+            "loggers": {
+                "uvicorn": {
+                    "handlers": ["default"],
+                    "level": level_name,
+                    "propagate": False,
+                },
+                "uvicorn.error": {
+                    "handlers": ["default"],
+                    "level": level_name,
+                    "propagate": False,
+                },
+                "uvicorn.access": {
+                    "handlers": ["access"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+            },
+        }
     base_fmt = "%(asctime)s │ %(levelname)-5s │ %(name)s │ %(message)s"
-    access_fmt = "%(asctime)s │ ACCESS │ %(client_addr)s → %(request_line)s (%(status_code)s)"
+    access_fmt = (
+        "%(asctime)s │ ACCESS │ %(client_addr)s → %(request_line)s (%(status_code)s)"
+    )
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -102,30 +200,55 @@ def _build_uvicorn_log_config(level: int) -> Dict[str, object]:
             "access": {"format": access_fmt, "datefmt": "%H:%M:%S"},
         },
         "handlers": {
-            "default": {"class": "logging.StreamHandler", "formatter": "default", "stream": "ext://sys.stdout"},
-            "access": {"class": "logging.StreamHandler", "formatter": "access", "stream": "ext://sys.stdout"},
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+                "stream": "ext://sys.stdout",
+            },
+            "access": {
+                "class": "logging.StreamHandler",
+                "formatter": "access",
+                "stream": "ext://sys.stdout",
+            },
         },
         "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": level_name, "propagate": False},
-            "uvicorn.error": {"handlers": ["default"], "level": level_name, "propagate": False},
-            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+            "uvicorn": {
+                "handlers": ["default"],
+                "level": level_name,
+                "propagate": False,
+            },
+            "uvicorn.error": {
+                "handlers": ["default"],
+                "level": level_name,
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "handlers": ["access"],
+                "level": "INFO",
+                "propagate": False,
+            },
         },
     }
 
 
-def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> Dict[str, object]:
+def setup_logging(
+    level: int = logging.INFO, log_file: Optional[str] = None
+) -> Dict[str, object]:
     """Configure root logging and return a uvicorn-compatible log config."""
     handlers: list[logging.Handler] = [_make_console_handler(level)]
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
-        # File: keep date and a tidier format (seconds precision)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
+        if _wants_json_logs():
+            file_handler.setFormatter(JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ"))
+        else:
+            # File: keep date and a tidier format (seconds precision)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
             )
-        )
         handlers.append(file_handler)
 
     logging.basicConfig(level=level, handlers=handlers, force=True)
@@ -134,6 +257,7 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
     try:
         # Matplotlib font manager can spam DEBUG logs; keep it quiet
         import matplotlib  # type: ignore
+
         try:
             matplotlib.set_loglevel("warning")  # available on recent versions
         except Exception:
@@ -152,8 +276,10 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[str] = None) -> 
 
     # Print the date once at the start to avoid per-line date clutter
     try:
-        import time as _t
-        logging.getLogger("alpha_evolve.logger").info("Session started · %s", _t.strftime("%Y-%m-%d"))
+        if not _wants_json_logs():
+            logging.getLogger("alpha_evolve.logger").info(
+                "Session started · %s", time.strftime("%Y-%m-%d")
+            )
     except Exception:
         pass
 

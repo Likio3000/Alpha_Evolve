@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchAlphaTimeseries,
   fetchBacktestSummary,
@@ -14,190 +14,32 @@ import { RunList } from "./components/RunList";
 import { BacktestTable } from "./components/BacktestTable";
 import { TimeseriesCharts } from "./components/TimeseriesCharts";
 import { JobConsole } from "./components/JobConsole";
+import { RunForensicsPanel } from "./components/RunForensicsPanel";
 import { HeaderNav, TabId } from "./components/HeaderNav";
 import { RunnerCanvas } from "./components/RunnerCanvas";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { IntroductionPage } from "./components/IntroductionPage";
+import { ExperimentManager } from "./components/ExperimentManager";
 import { usePolling } from "./hooks/usePolling";
 import {
   AlphaTimeseries,
   BacktestRow,
-  GenerationProgressState,
   GenerationSummary,
   PipelineJobState,
   PipelineRunRequest,
   RunSummary,
 } from "./types";
+import { mapGenerationProgress, mapGenerationSummary } from "./pipelineMapping";
 
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
 
-function extractSharpeFromLog(log: string | null | undefined): number | null {
-  if (!log) {
-    return null;
-  }
-  const matches = [...log.matchAll(/Sharpe\(best\)\s*=\s*([+\-]?[0-9.]+)/g)];
-  if (!matches.length) {
-    return null;
-  }
-  const last = matches[matches.length - 1];
-  const value = Number(last[1]);
-  return Number.isFinite(value) ? value : null;
-}
-
 const SUMMARY_HISTORY_LIMIT = 400;
+const LOG_HISTORY_LIMIT_CHARS = 50_000;
 
-function toNumber(value: unknown, fallback = 0): number {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-}
-
-function toNullableNumber(value: unknown): number | null {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return null;
-}
-
-function mapNumberRecord(source: unknown): Record<string, number> {
-  const record = asRecord(source);
-  if (!record) {
-    return {};
-  }
-  const result: Record<string, number> = {};
-  for (const [key, val] of Object.entries(record)) {
-    const num = Number(val);
-    if (Number.isFinite(num)) {
-      result[key] = num;
-    }
-  }
-  return result;
-}
-
-function mapNestedNumberRecord(source: unknown): Record<string, Record<string, number>> {
-  const record = asRecord(source);
-  if (!record) {
-    return {};
-  }
-  const result: Record<string, Record<string, number>> = {};
-  for (const [key, val] of Object.entries(record)) {
-    result[key] = mapNumberRecord(val);
-  }
-  return result;
-}
-
-function mapGenerationProgress(raw: unknown): GenerationProgressState | null {
-  const record = asRecord(raw);
-  if (!record) {
-    return null;
-  }
-  const generation = toNumber(record.gen ?? record.generation, NaN);
-  const completed = toNumber(record.completed, NaN);
-  if (!Number.isFinite(generation) || !Number.isFinite(completed)) {
-    return null;
-  }
-  const total = toNullableNumber(record.total ?? record.population ?? record.total_individuals);
-  const pctComplete = toNullableNumber(record.pct_complete ?? record.pct);
-  let derivedPct = pctComplete;
-  if (derivedPct === null && total && total > 0) {
-    derivedPct = Math.min(1, generation / total);
-  }
-  return {
-    generation,
-    generationsTotal: toNullableNumber(record.generations_total ?? record.total_gens),
-    pctComplete: derivedPct,
-    completed,
-    totalIndividuals: total,
-    bestFitness: toNullableNumber(record.best),
-    medianFitness: toNullableNumber(record.median),
-    elapsedSeconds: toNullableNumber(record.elapsed_sec ?? record.elapsed),
-    etaSeconds: toNullableNumber(record.eta_sec ?? record.eta),
-  };
-}
-
-function mapGenerationSummary(raw: unknown): GenerationSummary | null {
-  const record = asRecord(raw);
-  if (!record) {
-    return null;
-  }
-  const generation = toNumber(record.generation, NaN);
-  const total = toNumber(record.generations_total, NaN);
-  if (!Number.isFinite(generation) || !Number.isFinite(total)) {
-    return null;
-  }
-  const pctCompleteRaw = Number(record.pct_complete);
-  const pctComplete = Number.isFinite(pctCompleteRaw)
-    ? pctCompleteRaw
-    : generation / Math.max(1, total);
-
-  const bestRecord = asRecord(record.best);
-  if (!bestRecord) {
-    return null;
-  }
-
-  const timingRecord = asRecord(record.timing);
-  const populationRecord = asRecord(record.population);
-  const penalties = mapNumberRecord(record.penalties);
-  const fitnessBreakdownRaw = asRecord(record.fitness_breakdown);
-  const fitnessBreakdown: Record<string, number | null> = {};
-  if (fitnessBreakdownRaw) {
-    for (const [key, val] of Object.entries(fitnessBreakdownRaw)) {
-      const num = Number(val);
-      fitnessBreakdown[key] = Number.isFinite(num) ? num : null;
-    }
-  }
-
-  const best: GenerationSummary["best"] = {
-    fitness: toNumber(bestRecord.fitness),
-    fitnessStatic: toNullableNumber(bestRecord.fitness_static),
-    meanIc: toNumber(bestRecord.mean_ic),
-    icStd: toNumber(bestRecord.ic_std),
-    turnover: toNumber(bestRecord.turnover),
-    sharpeProxy: toNumber(bestRecord.sharpe_proxy),
-    sortino: toNumber(bestRecord.sortino),
-    drawdown: toNumber(bestRecord.drawdown),
-    downsideDeviation: toNumber(bestRecord.downside_deviation),
-    cvar: toNumber(bestRecord.cvar),
-    factorPenalty: toNumber(bestRecord.factor_penalty),
-    fingerprint: typeof bestRecord.fingerprint === "string" ? bestRecord.fingerprint : null,
-    programSize: Math.trunc(toNumber(bestRecord.program_size)),
-    program: typeof bestRecord.program === "string" ? bestRecord.program : "",
-    horizonMetrics: mapNestedNumberRecord(bestRecord.horizon_metrics),
-    factorExposures: mapNumberRecord(bestRecord.factor_exposures),
-    regimeExposures: mapNumberRecord(bestRecord.regime_exposures),
-    transactionCosts: mapNumberRecord(bestRecord.transaction_costs),
-    stressMetrics: mapNumberRecord(bestRecord.stress_metrics),
-  };
-
-  const timing = {
-    generationSeconds: toNumber(timingRecord?.generation_seconds),
-    averageSeconds: toNullableNumber(timingRecord?.average_seconds),
-    etaSeconds: toNullableNumber(timingRecord?.eta_seconds),
-  };
-
-  const population = {
-    size: Math.trunc(toNumber(populationRecord?.size)),
-    uniqueFingerprints: Math.trunc(toNumber(populationRecord?.unique_fingerprints)),
-  };
-
-  return {
-    generation,
-    generationsTotal: total,
-    pctComplete,
-    best,
-    penalties,
-    fitnessBreakdown,
-    timing,
-    population,
-  };
-}
+type StreamState = "connected" | "retrying" | "stale";
 
 export function App(): React.ReactElement {
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -217,10 +59,22 @@ export function App(): React.ReactElement {
   const [timeseriesError, setTimeseriesError] = useState<string | null>(null);
 
   const [job, setJob] = useState<PipelineJobState | null>(null);
+  const [streamState, setStreamState] = useState<StreamState | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const lastStreamEventAtRef = useRef<number>(0);
   const [banner, setBanner] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("introduction");
-  const closeEventStream = useCallback(() => {}, []);
+  const closeEventStream = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setStreamState(null);
+  }, []);
   const [pendingRunSelectionBaseline, setPendingRunSelectionBaseline] = useState<string | null | undefined>(undefined);
+
+  const activeJobId = job?.jobId ?? null;
+  const jobRunning = Boolean(job && job.status === "running");
 
   const selectedRun = useMemo(() => {
     if (!selectedRunPath) {
@@ -389,12 +243,12 @@ export function App(): React.ReactElement {
 
   const refreshJob = useCallback(
     async (jobIdOverride?: string) => {
-      const activeJobId = jobIdOverride ?? job?.jobId;
-      if (!activeJobId) {
+      const jobId = jobIdOverride ?? activeJobId;
+      if (!jobId) {
         return;
       }
       try {
-        const snapshot = await fetchJobActivity(activeJobId);
+        const snapshot = await fetchJobActivity(jobId);
         const summaryPayload = Array.isArray(snapshot.summaries) ? snapshot.summaries : [];
         const mappedSummaries = summaryPayload
           .map((entry) => mapGenerationSummary(entry))
@@ -429,10 +283,10 @@ export function App(): React.ReactElement {
 
         setJob((current) => {
           const base: PipelineJobState =
-            current && current.jobId === activeJobId
+            current && current.jobId === jobId
               ? current
               : {
-                  jobId: activeJobId,
+                  jobId,
                   status: "running",
                   lastMessage: "Pipeline running…",
                   lastUpdated: Date.now(),
@@ -468,12 +322,7 @@ export function App(): React.ReactElement {
             next.lastMessage = "Pipeline running…";
           }
           if (typeof snapshot.log === "string") {
-            const logText = snapshot.log;
-            next.log = logText;
-            const sharpeFromLog = extractSharpeFromLog(logText);
-            if (sharpeFromLog !== null) {
-              next.sharpeBest = sharpeFromLog;
-            }
+            next.log = snapshot.log;
           }
           const sharpeRaw = snapshot.sharpe_best;
           if (sharpeRaw !== undefined && sharpeRaw !== null) {
@@ -504,7 +353,7 @@ export function App(): React.ReactElement {
         }
       } catch (error) {
         setJob((current) => {
-          if (!current || current.jobId !== activeJobId) {
+          if (!current || current.jobId !== jobId) {
             return current;
           }
           return {
@@ -515,7 +364,118 @@ export function App(): React.ReactElement {
         });
       }
     },
-    [job, refreshRuns],
+    [activeJobId, refreshRuns],
+  );
+
+  const applyPipelineEvent = useCallback(
+    (activeJobId: string, raw: string) => {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      if (!payload || typeof payload !== "object") {
+        return;
+      }
+      const event = payload as Record<string, unknown>;
+      const eventType = event.type;
+
+      if (eventType === "final" || (eventType === "status" && event.msg === "exit")) {
+        void refreshRuns();
+      }
+      if (eventType === "status" && event.msg === "exit" && Number(event.code) !== 0) {
+        setPendingRunSelectionBaseline(undefined);
+      }
+
+      setJob((current) => {
+        if (!current || current.jobId !== activeJobId) {
+          return current;
+        }
+        const next: PipelineJobState = { ...current, lastUpdated: Date.now() };
+
+        if (eventType === "log") {
+          const rawLine = typeof event.raw === "string" ? event.raw : "";
+          if (rawLine) {
+            const normalized = rawLine.endsWith("\n") ? rawLine : `${rawLine}\n`;
+            const combined = `${next.log || ""}${normalized}`;
+            next.log =
+              combined.length > LOG_HISTORY_LIMIT_CHARS
+                ? combined.slice(combined.length - LOG_HISTORY_LIMIT_CHARS)
+                : combined;
+          }
+          return next;
+        }
+
+        if (eventType === "progress") {
+          const progress = mapGenerationProgress(event.data);
+          if (progress) {
+            next.progress = progress;
+          }
+          return next;
+        }
+
+        if (eventType === "gen_summary") {
+          const summary = mapGenerationSummary(event.data);
+          if (summary) {
+            const summaries = next.summaries ?? [];
+            const idx = summaries.findIndex((entry) => entry.generation === summary.generation);
+            const updated = idx >= 0 ? summaries.map((entry, i) => (i === idx ? summary : entry)) : [...summaries, summary];
+            updated.sort((a, b) => a.generation - b.generation);
+            next.summaries =
+              updated.length > SUMMARY_HISTORY_LIMIT ? updated.slice(updated.length - SUMMARY_HISTORY_LIMIT) : updated;
+          }
+          return next;
+        }
+
+        if (eventType === "score") {
+          const sharpeRaw = event.sharpe_best ?? event.sharpeBest;
+          const sharpe = Number(sharpeRaw);
+          if (Number.isFinite(sharpe)) {
+            next.sharpeBest = sharpe;
+          }
+          return next;
+        }
+
+        if (eventType === "final") {
+          const sharpe = Number(event.sharpe_best ?? event.sharpeBest);
+          if (Number.isFinite(sharpe)) {
+            next.sharpeBest = sharpe;
+          }
+          next.status = "complete";
+          next.lastMessage = "Pipeline finished.";
+          return next;
+        }
+
+        if (eventType === "status") {
+          const msg = event.msg;
+          if (msg === "stop_requested") {
+            next.lastMessage = "Stop requested…";
+            return next;
+          }
+          if (msg === "exit") {
+            const code = Number(event.code);
+            next.status = code === 0 ? "complete" : "error";
+            next.lastMessage = code === 0 ? "Pipeline finished." : "Pipeline stopped.";
+            return next;
+          }
+          if (typeof msg === "string" && msg.trim()) {
+            next.lastMessage = msg;
+          }
+          return next;
+        }
+
+        if (eventType === "error") {
+          next.status = "error";
+          const detail = typeof event.detail === "string" ? event.detail : null;
+          next.lastMessage = detail && detail.trim() ? detail : "Pipeline error.";
+          return next;
+        }
+
+        return next;
+      });
+    },
+    [refreshRuns],
   );
 
   const handleStartPipeline = useCallback(
@@ -544,9 +504,74 @@ export function App(): React.ReactElement {
     [lastRunPath, runs, refreshJob],
   );
 
+  useEffect(() => {
+    if (!activeJobId || !jobRunning) {
+      closeEventStream();
+      return;
+    }
+    if (typeof EventSource === "undefined") {
+      setStreamState("stale");
+      return;
+    }
+
+    const jobId = activeJobId;
+    closeEventStream();
+    setStreamState("retrying");
+    lastStreamEventAtRef.current = Date.now();
+
+    const url = `/api/pipeline/events/${encodeURIComponent(jobId)}`;
+    const es = new EventSource(url);
+    eventSourceRef.current = es;
+
+    const touch = () => {
+      lastStreamEventAtRef.current = Date.now();
+    };
+
+    const markConnected = () => {
+      touch();
+      setStreamState("connected");
+    };
+
+    es.onopen = () => {
+      markConnected();
+    };
+
+    es.onmessage = (event) => {
+      touch();
+      applyPipelineEvent(jobId, event.data);
+    };
+
+    es.onerror = () => {
+      touch();
+      setStreamState((prev) => (prev === "connected" ? "retrying" : prev ?? "retrying"));
+      void refreshJob(jobId);
+    };
+
+    es.addEventListener("ping", markConnected as EventListener);
+
+    const staleInterval = window.setInterval(() => {
+      const ageMs = Date.now() - lastStreamEventAtRef.current;
+      setStreamState((prev) => {
+        if (ageMs > 15_000) {
+          return prev === "connected" ? "stale" : prev;
+        }
+        return prev === "stale" ? "connected" : prev;
+      });
+    }, 2_000);
+
+    return () => {
+      window.clearInterval(staleInterval);
+      es.close();
+      if (eventSourceRef.current === es) {
+        eventSourceRef.current = null;
+      }
+      setStreamState(null);
+    };
+  }, [activeJobId, applyPipelineEvent, closeEventStream, jobRunning, refreshJob]);
+
   usePolling(() => {
     void refreshJob();
-  }, 2000, Boolean(job && job.status === "running"));
+  }, 2500, Boolean(job && job.status === "running" && streamState !== "connected"));
 
   usePolling(() => {
     if (!runsLoading) {
@@ -667,6 +692,8 @@ export function App(): React.ReactElement {
                   data={alphaTimeseries}
                   label={selectedRow?.AlphaID ?? selectedRow?.TimeseriesFile ?? null}
                 />
+
+                <RunForensicsPanel runDir={selectedRunPath} />
               </div>
             </div>
           </>
@@ -679,7 +706,7 @@ export function App(): React.ReactElement {
             </div>
             <div className="app-layout app-layout--stack" data-test="controls-layout">
               <PipelineControls onSubmit={handleStartPipeline} busy={Boolean(job && job.status === "running")} />
-              <JobConsole job={job} onCopyLog={handleCopyLog} onStop={handleStopJob} />
+              <JobConsole job={job} connectionState={streamState} onCopyLog={handleCopyLog} onStop={handleStopJob} />
             </div>
           </>
         ) : null}
@@ -687,6 +714,15 @@ export function App(): React.ReactElement {
         {activeTab === "settings" ? (
           <div className="app-layout app-layout--full" data-test="settings-layout">
             <SettingsPanel onNotify={(msg) => setBanner(msg)} />
+          </div>
+        ) : null}
+
+        {activeTab === "experiments" ? (
+          <div className="app-layout app-layout--full" data-test="experiments-layout">
+            <ExperimentManager
+              onNotify={(msg) => setBanner(msg)}
+              onReplayPipeline={handleStartPipeline}
+            />
           </div>
         ) : null}
       </main>

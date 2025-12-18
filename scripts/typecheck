@@ -3,6 +3,9 @@
 set -euo pipefail
 
 if command -v uv >/dev/null 2>&1; then
+  here=$(cd "$(dirname "$0")" && pwd -P)
+  root="$here/.."
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$root/.uv_cache}"
   if uv run mypy "$@"; then
     exit 0
   else

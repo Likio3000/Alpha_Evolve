@@ -16,6 +16,7 @@ import { GenerationSummary, PipelineJobState } from "../types";
 
 interface JobConsoleProps {
   job: PipelineJobState | null;
+  connectionState?: "connected" | "retrying" | "stale" | null;
   onStop?: (job: PipelineJobState) => void;
   onCopyLog?: (job: PipelineJobState) => void;
 }
@@ -30,7 +31,7 @@ function resolvePctComplete(job: PipelineJobState, latestSummary: GenerationSumm
   );
 }
 
-export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.ReactElement {
+export function JobConsole({ job, connectionState = null, onStop, onCopyLog }: JobConsoleProps): React.ReactElement {
   if (!job) {
     return (
       <section className="panel pipeline-activity">
@@ -230,6 +231,7 @@ export function JobConsole({ job, onStop, onCopyLog }: JobConsoleProps): React.R
 
       <ActivityStatus
         status={job.status}
+        connectionState={connectionState}
         pctComplete={pctComplete}
         generationLabel={generationLabel}
         etaLabel={etaLabel}

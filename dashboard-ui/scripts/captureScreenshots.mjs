@@ -18,8 +18,9 @@ fs.mkdirSync(outputDir, { recursive: true });
 const introductionPath = path.join(outputDir, "introduction-overview.png");
 const overviewPath = path.join(outputDir, "backtest-analysis.png");
 const controlsPath = path.join(outputDir, "pipeline-controls.png");
+const experimentsPath = path.join(outputDir, "experiments.png");
 const settingsPath = path.join(outputDir, "settings-presets.png");
-for (const filePath of [introductionPath, overviewPath, controlsPath, settingsPath]) {
+for (const filePath of [introductionPath, overviewPath, controlsPath, experimentsPath, settingsPath]) {
   if (fs.existsSync(filePath)) {
     fs.rmSync(filePath, { force: true });
   }
@@ -66,6 +67,12 @@ async function captureScreenshots() {
     await page.waitForTimeout(600);
     await page.screenshot({ path: controlsPath, fullPage: true });
     log(`Saved Pipeline Controls screenshot to ${controlsPath}`);
+
+    await page.click('[data-test="nav-experiments"]');
+    await page.waitForSelector('[data-test="experiments-layout"]', { state: "visible", timeout: 20000 });
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: experimentsPath, fullPage: true });
+    log(`Saved Experiments screenshot to ${experimentsPath}`);
 
     await page.click('[data-test="nav-settings"]');
     await page.waitForSelector('[data-test="settings-grid"] .settings-table', { state: "visible", timeout: 20000 });
