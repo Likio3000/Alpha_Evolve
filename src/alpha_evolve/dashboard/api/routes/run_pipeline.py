@@ -534,6 +534,9 @@ async def _forward_events(
                                     fh_hist.write("\n")
                     except Exception:
                         pass
+                run_dir = item.get("run_dir")
+                if isinstance(run_dir, str) and run_dir.strip():
+                    _touch_activity(run_dir=run_dir.strip())
                 sharpe = item.get("sharpe_best")
                 try:
                     value = float(sharpe)

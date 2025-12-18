@@ -223,7 +223,16 @@ export function JobConsole({ job, connectionState = null, onStop, onCopyLog }: J
   return (
     <Card className="w-full">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-xl font-bold">Pipeline Activity</CardTitle>
+        <div className="flex flex-col gap-2">
+          <CardTitle className="text-xl font-bold">Pipeline Activity</CardTitle>
+          {job.runName ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="font-mono text-xs">
+                Run: {job.runName}
+              </Badge>
+            </div>
+          ) : null}
+        </div>
         <div className="flex gap-2">
           {canStop ? (
             <Button variant="destructive" size="sm" onClick={() => onStop?.(job)}>

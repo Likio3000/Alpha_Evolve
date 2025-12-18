@@ -40,6 +40,7 @@ export function App(): React.ReactElement {
   const [selectedRunPath, setSelectedRunPath] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<BacktestRow | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [lastCreatedRunDirName, setLastCreatedRunDirName] = useState<string | null>(null);
 
   // Queries
   const { data: runs = [], isLoading: runsLoading, error: runsError } = useRuns();
@@ -66,6 +67,22 @@ export function App(): React.ReactElement {
   // For now, we mimic the old behavior where startPipeline sets the active ID.
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const { job, streamState, setJob } = usePipelineStream(activeJobId);
+
+  React.useEffect(() => {
+    if (!job?.runDir) return;
+    const dirName = job.runDir.split(/[\\/]/).pop() ?? null;
+    if (dirName) {
+      setLastCreatedRunDirName(dirName);
+    }
+  }, [job?.runDir]);
+
+  React.useEffect(() => {
+    if (!lastCreatedRunDirName) return;
+    const match = runs.find((run) => run.path.endsWith(lastCreatedRunDirName));
+    if (match && match.path !== selectedRunPath) {
+      setSelectedRunPath(match.path);
+    }
+  }, [lastCreatedRunDirName, runs, selectedRunPath]);
 
   // Computed
   const selectedRun = useMemo(() => {

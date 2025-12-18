@@ -298,7 +298,7 @@ def job_activity(request: HttpRequest, job_id: str):
         "running": running,
     }
     if isinstance(activity, dict):
-        for key in ("status", "last_message", "sharpe_best", "progress", "updated_at"):
+        for key in ("status", "last_message", "sharpe_best", "progress", "updated_at", "run_dir"):
             if key in activity:
                 payload[key] = activity[key]
         summaries = activity.get("summaries")

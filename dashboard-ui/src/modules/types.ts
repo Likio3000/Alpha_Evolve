@@ -68,6 +68,8 @@ export interface PipelineJobState {
   log: string;
   logPath?: string | null;
   sharpeBest?: number | null;
+  runDir?: string | null;
+  runName?: string | null;
   progress?: GenerationProgressState | null;
   summaries: GenerationSummary[];
 }
@@ -80,6 +82,7 @@ export interface JobActivityResponse {
   log?: string | null;
   log_path?: string | null;
   sharpe_best?: number | null;
+  run_dir?: string | null;
   progress?: unknown;
   summaries?: unknown[];
   updated_at?: number | string | null;

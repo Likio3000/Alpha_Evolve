@@ -7,6 +7,13 @@ import { keys } from "./use-dashboard";
 
 const SUMMARY_HISTORY_LIMIT = 400;
 const LOG_HISTORY_LIMIT_CHARS = 50_000;
+const CODENAME_RE = /Run codename:\s*([A-Za-z0-9-]+)/;
+
+function extractCodenameFromRunDir(runDir: string): string | null {
+    const base = runDir.split(/[\\/]/).pop() ?? "";
+    const match = /^run_([^_]+)_g\d+_seed/.exec(base);
+    return match?.[1] ?? null;
+}
 
 type StreamState = "connected" | "retrying" | "stale";
 
@@ -82,6 +89,8 @@ export function usePipelineStream(activeJobId: string | null) {
                                 lastUpdated: Date.now(),
                                 log: "",
                                 sharpeBest: null,
+                                runDir: null,
+                                runName: null,
                                 progress: null,
                                 summaries: [],
                             };
@@ -119,6 +128,13 @@ export function usePipelineStream(activeJobId: string | null) {
                         const value = Number(sharpeRaw);
                         if (Number.isFinite(value)) {
                             next.sharpeBest = value;
+                        }
+                    }
+                    const runDirRaw = snapshot.run_dir;
+                    if (typeof runDirRaw === "string" && runDirRaw.trim()) {
+                        next.runDir = runDirRaw;
+                        if (!next.runName) {
+                            next.runName = extractCodenameFromRunDir(runDirRaw);
                         }
                     }
                     if (progressState) {
@@ -180,6 +196,12 @@ export function usePipelineStream(activeJobId: string | null) {
                 if (eventType === "log") {
                     const rawLine = typeof event.raw === "string" ? event.raw : "";
                     if (rawLine) {
+                        if (!next.runName) {
+                            const match = CODENAME_RE.exec(rawLine);
+                            if (match?.[1]) {
+                                next.runName = match[1];
+                            }
+                        }
                         const normalized = rawLine.endsWith("\n") ? rawLine : `${rawLine}\n`;
                         const combined = `${next.log || ""}${normalized}`;
                         next.log =
@@ -224,6 +246,13 @@ export function usePipelineStream(activeJobId: string | null) {
                     const sharpe = Number(event.sharpe_best ?? event.sharpeBest);
                     if (Number.isFinite(sharpe)) {
                         next.sharpeBest = sharpe;
+                    }
+                    const runDir = typeof event.run_dir === "string" ? event.run_dir : null;
+                    if (runDir) {
+                        next.runDir = runDir;
+                        if (!next.runName) {
+                            next.runName = extractCodenameFromRunDir(runDir);
+                        }
                     }
                     next.status = "complete";
                     next.lastMessage = "Pipeline finished.";
