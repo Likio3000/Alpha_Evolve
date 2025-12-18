@@ -67,23 +67,63 @@ def load_symbol_dfs_from_dir(
     Returns a mapping {symbol -> prepared_dataframe}. Skips invalid files; if none
     valid, raises DataLoadError.
     """
-    import os
-    import glob
     from pathlib import Path
 
+    data_path = Path(data_dir).expanduser()
+    if not data_path.exists():
+        raise DataLoadError(
+            "Data directory does not exist: "
+            f"{data_path.resolve()} (from data_dir={data_dir!r}, cwd={Path.cwd()})"
+        )
+    if not data_path.is_dir():
+        raise DataLoadError(
+            "Data path is not a directory: "
+            f"{data_path.resolve()} (from data_dir={data_dir!r})"
+        )
+
+    csv_files = sorted(data_path.glob("*.csv"))
+    if not csv_files:
+        hint = ""
+        # Common repo layout: data_sp500/ and data_sp500_small/ ship empty with READMEs.
+        if data_path.name == "data_sp500_small":
+            hint = (
+                " Populate it with:\n"
+                "  uv run python scripts/make_sp500_subset.py --out data_sp500_small --tickers 30 "
+                "--start-date 2020-01-01 --max-rows 756 --min-rows 504"
+            )
+        elif data_path.name.startswith("data_sp500"):
+            hint = (
+                " Populate it with:\n"
+                f"  python3 scripts/fetch_sp500_data.py --out {data_path.as_posix()} --years 20"
+            )
+        raise DataLoadError(
+            f"No .csv files found in {data_path.resolve()} (cwd={Path.cwd()}).{hint}"
+        )
+
     out: Dict[str, pd.DataFrame] = {}
-    for csv_file in glob.glob(os.path.join(data_dir, "*.csv")):
+    errors: list[tuple[str, str]] = []
+    for csv_file in csv_files:
         try:
             raw = pd.read_csv(csv_file)
             base = prepare_ohlcv_df(raw)
             with_feat = feature_fn(base)
             with_feat = with_feat.dropna()
             if not with_feat.empty:
-                out[Path(csv_file).stem] = with_feat
-        except Exception:
+                out[csv_file.stem] = with_feat
+        except Exception as e:
+            errors.append((csv_file.name, f"{type(e).__name__}: {e}"))
             continue
     if not out:
-        raise DataLoadError(f"No valid CSV data loaded from {data_dir}.")
+        examples = ""
+        if errors:
+            # Keep the message short but actionable.
+            sample = "\n".join(f"  - {name}: {msg}" for name, msg in errors[:5])
+            more = "" if len(errors) <= 5 else f"\n  … ({len(errors) - 5} more)"
+            examples = f"\nExamples of load failures:\n{sample}{more}"
+        raise DataLoadError(
+            f"No valid CSV data loaded from {data_path.resolve()} "
+            f"({len(csv_files)} files found, {len(errors)} failed).{examples}"
+        )
     return out
 
 

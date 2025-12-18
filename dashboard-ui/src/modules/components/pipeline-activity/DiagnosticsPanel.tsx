@@ -1,5 +1,6 @@
 import React from "react";
 import { prettifyKey } from "./utils";
+import { cn } from "@/lib/utils";
 
 interface DiagnosticsPanelProps {
   penalties: Array<{ key: string; value: number }>;
@@ -17,36 +18,37 @@ export function DiagnosticsPanel({
   contribsPending = false,
 }: DiagnosticsPanelProps): React.ReactElement {
   return (
-    <div className="pipeline-activity__insights">
-      <div className="pipeline-activity__insight-card">
-        <h3>Penalty breakdown</h3>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold border-b pb-1">Penalty breakdown</h3>
         {penalties.length ? (
-          <ul className="pipeline-activity__list">
+          <ul className="space-y-1 text-sm">
             {penalties.map(({ key, value }) => (
-              <li key={key}>
-                <span>{prettifyKey(key)}</span>
-                <span className="pipeline-activity__penalty-value">-{Math.abs(value).toFixed(4)}</span>
+              <li key={key} className="flex justify-between items-center group">
+                <span className="text-muted-foreground group-hover:text-foreground transition-colors">{prettifyKey(key)}</span>
+                <span className="font-mono text-destructive">-{Math.abs(value).toFixed(4)}</span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="muted">
+          <p className="text-xs text-muted-foreground italic">
             {penaltiesPending ? "Waiting for penalty data…" : "No active penalties this generation."}
           </p>
         )}
       </div>
 
-      <div className="pipeline-activity__insight-card">
-        <h3>Score contributions</h3>
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold border-b pb-1">Score contributions</h3>
         {scoreContribs.length ? (
-          <ul className="pipeline-activity__list">
+          <ul className="space-y-1 text-sm">
             {scoreContribs.map(({ key, value }) => (
-              <li key={key}>
-                <span>{prettifyKey(key)}</span>
+              <li key={key} className="flex justify-between items-center group">
+                <span className="text-muted-foreground group-hover:text-foreground transition-colors">{prettifyKey(key)}</span>
                 <span
-                  className={`pipeline-activity__contrib ${
-                    value >= 0 ? "pipeline-activity__contrib--pos" : "pipeline-activity__contrib--neg"
-                  }`}
+                  className={cn(
+                    "font-mono",
+                    value >= 0 ? "text-green-600 dark:text-green-400" : "text-destructive"
+                  )}
                 >
                   {value >= 0 ? "+" : ""}
                   {value.toFixed(4)}
@@ -55,19 +57,19 @@ export function DiagnosticsPanel({
             ))}
           </ul>
         ) : (
-          <p className="muted">
+          <p className="text-xs text-muted-foreground italic">
             {contribsPending ? "Awaiting fitness breakdowns…" : "No contribution data available."}
           </p>
         )}
       </div>
 
-      <div className="pipeline-activity__insight-card">
-        <h3>Run cadence</h3>
-        <ul className="pipeline-activity__stat-list">
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold border-b pb-1">Run cadence</h3>
+        <ul className="space-y-2 text-sm">
           {cadenceStats.map((stat) => (
-            <li key={stat.label}>
-              <span className="muted">{stat.label}</span>
-              <span>{stat.value}</span>
+            <li key={stat.label} className="flex justify-between items-center bg-muted/30 p-2 rounded">
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
+              <span className="font-mono">{stat.value}</span>
             </li>
           ))}
         </ul>

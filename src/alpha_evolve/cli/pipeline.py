@@ -135,6 +135,33 @@ def _resolve_output_dir(cli_arg: str | None) -> Path:
     return out
 
 
+def _resolve_data_dir(data_dir: str, *, config_base: Path | None = None) -> str:
+    """Resolve a possibly-relative data directory to an absolute path.
+
+    Preference order for relative paths:
+      1) PROJECT_ROOT / data_dir (repo-default)
+      2) <config file dir> / data_dir (if config provided)
+      3) cwd / data_dir (back-compat)
+    Falls back to PROJECT_ROOT / data_dir if none exist.
+    """
+    p = Path(str(data_dir)).expanduser()
+    if p.is_absolute():
+        return str(p.resolve())
+
+    candidates: list[Path] = [(PROJECT_ROOT / p)]
+    if config_base is not None:
+        candidates.append(config_base / p)
+    candidates.append(Path.cwd() / p)
+
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c.resolve())
+        except Exception:
+            continue
+    return str((PROJECT_ROOT / p).resolve())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  CLI → two dataclass configs (auto-generated from dataclasses)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +255,15 @@ def parse_args(argv: Sequence[str] | None = None) -> tuple[EvolutionConfig, Back
     # Apply backtest-only overrides
     if getattr(ns, "bt_scale", None):
         bt_cfg.scale = ns.bt_scale
+
+    config_base = None
+    if getattr(ns, "config", None):
+        try:
+            config_base = Path(ns.config).expanduser().resolve().parent
+        except Exception:
+            config_base = None
+    evo_cfg.data_dir = _resolve_data_dir(evo_cfg.data_dir, config_base=config_base)
+    bt_cfg.data_dir = _resolve_data_dir(bt_cfg.data_dir, config_base=config_base)
 
     return evo_cfg, bt_cfg, ns
 
@@ -462,6 +498,10 @@ def run_pipeline_programmatic(
     options: PipelineOptions | None = None,
 ) -> Path:
     opts = options or PipelineOptions()
+
+    # Ensure relative data dirs behave sensibly when invoked from non-repo CWDs.
+    evo_cfg.data_dir = _resolve_data_dir(evo_cfg.data_dir)
+    bt_cfg.data_dir = _resolve_data_dir(bt_cfg.data_dir)
 
     if opts.disable_align_cache:
         os.environ["AE_DISABLE_ALIGN_CACHE"] = "1"

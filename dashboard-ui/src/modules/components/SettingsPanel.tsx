@@ -12,6 +12,12 @@ import {
   ConfigPresetValues,
   Scalar,
 } from "../types";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 type PresetKey = string;
 
@@ -98,12 +104,12 @@ function ConfigTable({
   }, [active, defaults, filter, showChangedOnly]);
 
   return (
-    <div className="settings-table">
-      <div className="settings-table__header">
-        <h3>{title}</h3>
-        <span className="settings-table__count">{entries.length} {entries.length === 1 ? "field" : "fields"}</span>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
+        <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">{entries.length} {entries.length === 1 ? "field" : "fields"}</span>
       </div>
-      <div className="settings-table__body">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {entries.map(({ key, baseValue, resolvedValue, changed }) => {
           if (baseValue === undefined && resolvedValue === undefined) {
             return null;
@@ -135,30 +141,32 @@ function ConfigTable({
             onChange(key, event.target.checked);
           };
 
-          const metaClass = changed ? "settings-card__meta" : "settings-card__meta settings-card__meta--muted";
-
           return (
-            <div key={key} className={changed ? "settings-card settings-card--changed" : "settings-card"}>
-              <div className="settings-card__top">
-                <div className="settings-card__key">{key}</div>
-                {changed ? <span className="settings-card__badge">Changed</span> : null}
-              </div>
-              <div className="settings-card__value">
+            <Card key={key} className={cn("flex flex-col", changed && "border-primary/50 bg-primary/5")}>
+              <CardHeader className="p-4 pb-2">
+                <div className="flex justify-between items-start gap-2">
+                  <CardTitle className="text-xs font-mono font-medium truncate break-all" title={key}>{key}</CardTitle>
+                  {changed ? <Badge variant="secondary" className="text-[10px] h-4 px-1">Changed</Badge> : null}
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-4 py-2 flex-grow">
                 {isBoolean ? (
-                  <label className="settings-card__checkbox">
+                  <div className="flex items-center space-x-2">
                     <input
                       type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
                       checked={Boolean(valueForType)}
                       onChange={handleBooleanChange}
                       disabled={disabled}
                     />
-                    <span>{valueForType ? "Enabled" : "Disabled"}</span>
-                  </label>
+                    <span className="text-sm">{valueForType ? "Enabled" : "Disabled"}</span>
+                  </div>
                 ) : null}
                 {isNumber ? (
-                  <input
+                  <Input
                     type="number"
-                    className="settings-card__input"
+                    className="h-8 text-sm"
                     value={valueForType === undefined ? "" : Number(valueForType)}
                     onChange={handleNumberChange}
                     step={Number.isInteger(valueForType) ? 1 : "any"}
@@ -172,7 +180,7 @@ function ConfigTable({
                       const uniqueOptions = Array.from(new Set([current, ...choiceList]));
                       return (
                         <select
-                          className="settings-card__select"
+                          className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                           value={current}
                           onChange={handleTextChange}
                           disabled={disabled}
@@ -184,33 +192,40 @@ function ConfigTable({
                       );
                     })()
                   ) : (
-                    <input
+                    <Input
                       type="text"
-                      className="settings-card__input"
+                      className="h-8 text-sm"
                       value={valueForType === undefined ? "" : String(valueForType)}
                       onChange={handleTextChange}
                       disabled={disabled}
                     />
                   )
                 ) : null}
-              </div>
-              <div className="settings-card__footer">
-                <button
-                  type="button"
-                  className="settings-card__reset"
+              </CardContent>
+              <CardFooter className="p-4 pt-2 flex justify-between items-center bg-muted/20">
+                {baseValue !== undefined && changed ? (
+                  <div className="text-[10px] text-muted-foreground truncate" title={`Default: ${formatValue(baseValue)}`}>
+                    Def: {formatValue(baseValue)}
+                  </div>
+                ) : (
+                  <div />
+                )}
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
                   onClick={() => onReset(key)}
                   disabled={disabled || baseValue === undefined || !changed}
-                  aria-label={`Reset ${key} to default`}
                 >
                   Reset
-                </button>
-                {baseValue !== undefined ? <div className={metaClass}>Default: {formatValue(baseValue)}</div> : null}
-              </div>
-            </div>
+                </Button>
+              </CardFooter>
+            </Card>
           );
         })}
       </div>
-      {!entries.length ? <p className="muted">No parameters found.</p> : null}
+      {!entries.length ? <p className="text-sm text-muted-foreground italic">No parameters found.</p> : null}
     </div>
   );
 }
@@ -387,126 +402,145 @@ export function SettingsPanel({ onNotify }: SettingsPanelProps): React.ReactElem
   const editingDisabled = loading || presetLoading || saving;
 
   return (
-    <section className="panel settings-panel" data-test="settings-panel">
-      <div className="panel-header">
-        <h2>Settings & Presets</h2>
-        <div className="panel-actions">
-          <button className="btn" onClick={() => void loadInitialData()} disabled={loading}>
+    <Card className="w-full h-full border-none shadow-none bg-transparent">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Settings &amp; Presets</h2>
+          <p className="text-sm text-muted-foreground">Manage evolution configurations and presets.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => void loadInitialData()} disabled={loading}>
             Refresh
-          </button>
-          <button className="btn" onClick={resetActive} disabled={presetLoading}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={resetActive} disabled={presetLoading}>
             Use defaults
-          </button>
-          <button className="btn" onClick={handleCopy} disabled={!defaults}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleCopy} disabled={!defaults}>
             Copy JSON
-          </button>
+          </Button>
         </div>
       </div>
 
-      {error ? <p className="muted error-text">{error}</p> : null}
-      {loading ? <p className="muted">Loading configuration metadata…</p> : null}
+      {error ? <div className="text-sm text-destructive bg-destructive/10 p-2 rounded mb-4">{error}</div> : null}
+      {loading ? <div className="text-sm text-muted-foreground">Loading configuration metadata…</div> : null}
 
-      <div className="settings-grid" data-test="settings-grid">
-        <aside className="settings-presets">
-          <h3>Dataset Presets</h3>
-          <div className="settings-presets__list">
-            {Object.keys(presets).length === 0 ? (
-              <p className="muted">No presets available.</p>
-            ) : (
-              Object.keys(presets)
-                .sort()
-                .map((key) => (
-                  <button
-                    key={key}
-                    className={key === activePreset ? "settings-presets__btn settings-presets__btn--active" : "settings-presets__btn"}
-                    onClick={() => handleLoadDataset(key)}
-                    disabled={presetLoading}
-                  >
-                    {key}
-                  </button>
-                ))
-            )}
-          </div>
-
-          <h3>Saved Configs</h3>
-          <div className="settings-presets__list">
-            {configs.length === 0 ? (
-              <p className="muted">No stored configs yet.</p>
-            ) : (
-              configs.map((item) => (
-                <button
-                  key={item.path}
-                  className={item.name === activePreset ? "settings-presets__btn settings-presets__btn--active" : "settings-presets__btn"}
-                  onClick={() => handleLoadConfig(item)}
-                  disabled={presetLoading}
-                >
-                  {item.name}
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
-        <div className="settings-details">
-          <div className="settings-toolbar">
-            <div className="settings-toolbar__search">
-              <input
-                type="search"
-                placeholder="Search settings…"
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-              />
+      {!loading && (
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+          <aside className="md:col-span-3 space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold mb-3">Dataset Presets</h3>
+              <div className="space-y-1">
+                {Object.keys(presets).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No presets available.</p>
+                ) : (
+                  Object.keys(presets)
+                    .sort()
+                    .map((key) => (
+                      <Button
+                        key={key}
+                        variant={key === activePreset ? "secondary" : "ghost"}
+                        className="w-full justify-start h-8 text-sm"
+                        onClick={() => handleLoadDataset(key)}
+                        disabled={presetLoading}
+                      >
+                        {key}
+                      </Button>
+                    ))
+                )}
+              </div>
             </div>
-            <label className="settings-toolbar__toggle">
-              <input
-                type="checkbox"
-                checked={showChangedOnly}
-                onChange={(event) => setShowChangedOnly(event.target.checked)}
-              />
-              Show changed only
-            </label>
-          </div>
 
-          <ConfigTable
-            title="Evolution"
-            defaults={defaults?.evolution ?? null}
-            active={activeEvolution}
-            filterText={searchText}
-            showChangedOnly={showChangedOnly}
-            choices={choiceMap}
-            disabled={editingDisabled}
-            onChange={(key, value) => updateParam("evolution", key, value)}
-            onReset={(key) => resetParam("evolution", key)}
-          />
-          <ConfigTable
-            title="Backtest"
-            defaults={defaults?.backtest ?? null}
-            active={activeBacktest}
-            filterText={searchText}
-            showChangedOnly={showChangedOnly}
-            choices={choiceMap}
-            disabled={editingDisabled}
-            onChange={(key, value) => updateParam("backtest", key, value)}
-            onReset={(key) => resetParam("backtest", key)}
-          />
+            <div>
+              <h3 className="text-sm font-semibold mb-3">Saved Configs</h3>
+              <div className="space-y-1">
+                {configs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No stored configs yet.</p>
+                ) : (
+                  configs.map((item) => (
+                    <Button
+                      key={item.path}
+                      variant={item.name === activePreset ? "secondary" : "ghost"}
+                      className="w-full justify-start h-8 text-sm truncate"
+                      onClick={() => handleLoadConfig(item)}
+                      disabled={presetLoading}
+                      title={item.name}
+                    >
+                      <span className="truncate">{item.name}</span>
+                    </Button>
+                  ))
+                )}
+              </div>
+            </div>
+          </aside>
 
-          <div className="settings-save">
-            <label className="form-field">
-              <span className="form-label">Save as</span>
-              <input
-                type="text"
-                value={saveName}
-                onChange={(event) => setSaveName(event.target.value)}
-                placeholder="configs/custom.toml"
-                disabled={saving}
-              />
-            </label>
-            <button className="btn btn-primary" onClick={handleSave} disabled={saving || loading}>
-              {saving ? "Saving…" : "Save configuration"}
-            </button>
+          <div className="md:col-span-9 space-y-8">
+            <Card className="p-4 bg-muted/40 sticky top-0 z-10 backdrop-blur-sm">
+              <div className="flex flex-col sm:flex-row gap-4 items-end">
+                <div className="w-full space-y-1">
+                  <Label htmlFor="search-settings">Filter Parameters</Label>
+                  <Input
+                    id="search-settings"
+                    placeholder="Search settings…"
+                    value={searchText}
+                    onChange={(event) => setSearchText(event.target.value)}
+                  />
+                </div>
+                <div className="flex items-center space-x-2 pb-2">
+                  <input
+                    id="show-changed"
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+                    checked={showChangedOnly}
+                    onChange={(event) => setShowChangedOnly(event.target.checked)}
+                  />
+                  <Label htmlFor="show-changed" className="font-normal cursor-pointer">Show changed only</Label>
+                </div>
+              </div>
+            </Card>
+
+            <ConfigTable
+              title="Evolution"
+              defaults={defaults?.evolution ?? null}
+              active={activeEvolution}
+              filterText={searchText}
+              showChangedOnly={showChangedOnly}
+              choices={choiceMap}
+              disabled={editingDisabled}
+              onChange={(key, value) => updateParam("evolution", key, value)}
+              onReset={(key) => resetParam("evolution", key)}
+            />
+            <ConfigTable
+              title="Backtest"
+              defaults={defaults?.backtest ?? null}
+              active={activeBacktest}
+              filterText={searchText}
+              showChangedOnly={showChangedOnly}
+              choices={choiceMap}
+              disabled={editingDisabled}
+              onChange={(key, value) => updateParam("backtest", key, value)}
+              onReset={(key) => resetParam("backtest", key)}
+            />
+
+            <Card className="p-6 bg-muted/20 mt-8">
+              <div className="flex flex-col md:flex-row gap-4 items-end">
+                <div className="w-full space-y-2">
+                  <Label>Save Configuration As</Label>
+                  <Input
+                    type="text"
+                    value={saveName}
+                    onChange={(event) => setSaveName(event.target.value)}
+                    placeholder="configs/custom.toml"
+                    disabled={saving}
+                  />
+                </div>
+                <Button onClick={handleSave} disabled={saving || loading}>
+                  {saving ? "Saving…" : "Save configuration"}
+                </Button>
+              </div>
+            </Card>
           </div>
         </div>
-      </div>
-    </section>
+      )}
+    </Card>
   );
 }

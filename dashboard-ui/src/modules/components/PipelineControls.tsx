@@ -1,6 +1,11 @@
 import React, { useEffect, useId, useState } from "react";
 import { fetchConfigList, fetchConfigPresets } from "../api";
 import { ConfigListItem, PipelineRunRequest } from "../types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 interface PipelineControlsProps {
   onSubmit: (payload: PipelineRunRequest) => Promise<void> | void;
@@ -147,95 +152,108 @@ export function PipelineControls({
   };
 
   return (
-    <section className="panel panel-controls">
-      <div className="panel-header">
-        <h2>Pipeline Controls</h2>
-        <div className="panel-actions">
-          <button
-            className="btn btn-primary"
-            type="submit"
-            form={formId}
-            disabled={busy || hasInvalidInput || hasZeroValue}
-          >
-            {busy ? "Running…" : "Launch Pipeline"}
-          </button>
-        </div>
-      </div>
-      <form id={formId} className="form-grid" onSubmit={handleSubmit}>
-        <label className="form-field">
-          <span className="form-label">Dataset preset</span>
-          <select
-            value={dataset}
-            onChange={(event) => setDataset(event.target.value)}
-            disabled={busy || datasetLoading}
-          >
-            {datasetOptions.length === 0 ? (
-              <option value="">No presets found</option>
-            ) : null}
-            {datasetOptions.map((value) => (
-              <option key={value} value={value}>
-                {datasetLabels[value] ?? value}
-              </option>
-            ))}
-          </select>
-        </label>
+    <Card className="w-full">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-xl font-bold">Pipeline Controls</CardTitle>
+        <Button
+          type="submit"
+          form={formId}
+          disabled={busy || hasInvalidInput || hasZeroValue}
+          className="w-auto"
+        >
+          {busy ? "Running…" : "Launch Pipeline"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <form id={formId} className="grid gap-4 py-4" onSubmit={handleSubmit}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="dataset">Dataset preset</Label>
+              <select
+                id="dataset"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={dataset}
+                onChange={(event) => setDataset(event.target.value)}
+                disabled={busy || datasetLoading}
+              >
+                {datasetOptions.length === 0 ? (
+                  <option value="">No presets found</option>
+                ) : null}
+                {datasetOptions.map((value) => (
+                  <option key={value} value={value}>
+                    {datasetLabels[value] ?? value}
+                  </option>
+                ))}
+              </select>
+              {datasetLoading && <p className="text-xs text-muted-foreground">Loading dataset presets…</p>}
+              {datasetError && <p className="text-xs text-destructive">{datasetError}</p>}
+            </div>
 
-        <label className="form-field">
-          <span className="form-label">Generations</span>
-          <input
-            type="number"
-            step={1}
-            value={generationInput}
-            onChange={(event) => setGenerationInput(event.target.value)}
-            disabled={busy}
-          />
-        </label>
+            <div className="grid gap-2">
+              <Label htmlFor="config">Config preset</Label>
+              <select
+                id="config"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={configPath}
+                onChange={(event) => setConfigPath(event.target.value)}
+                disabled={busy || configLoading}
+              >
+                <option value="">None (use dataset defaults)</option>
+                {configs.map((cfg) => (
+                  <option key={cfg.path} value={cfg.path}>
+                    {cfg.name}
+                  </option>
+                ))}
+              </select>
+              {configLoading && <p className="text-xs text-muted-foreground">Loading configs…</p>}
+              {configError && <p className="text-xs text-destructive">{configError}</p>}
+              {configPath && <p className="text-xs text-muted-foreground">Overrides dataset defaults</p>}
+            </div>
 
-        <label className="form-field">
-          <span className="form-label">Population size</span>
-          <input
-            type="number"
-            step={1}
-            value={popSizeInput}
-            onChange={(event) => setPopSizeInput(event.target.value)}
-            disabled={busy}
-          />
-        </label>
+            <div className="grid gap-2">
+              <Label htmlFor="generations">Generations</Label>
+              <Input
+                id="generations"
+                type="number"
+                step={1}
+                value={generationInput}
+                onChange={(event) => setGenerationInput(event.target.value)}
+                disabled={busy}
+              />
+            </div>
 
-        <label className="form-field">
-          <span className="form-label">Runner mode</span>
-          <select value={runnerMode ?? "auto"} onChange={(event) => setRunnerMode(event.target.value as PipelineRunRequest["runner_mode"])} disabled={busy}>
-            <option value="auto">Auto (recommended)</option>
-            <option value="subprocess">Subprocess (sandbox-safe)</option>
-            <option value="multiprocessing">Multiprocessing (fastest)</option>
-          </select>
-        </label>
+            <div className="grid gap-2">
+              <Label htmlFor="popSize">Population size</Label>
+              <Input
+                id="popSize"
+                type="number"
+                step={1}
+                value={popSizeInput}
+                onChange={(event) => setPopSizeInput(event.target.value)}
+                disabled={busy}
+              />
+            </div>
 
-        <label className="form-field">
-          <span className="form-label">Config preset</span>
-          <select
-            value={configPath}
-            onChange={(event) => setConfigPath(event.target.value)}
-            disabled={busy || configLoading}
-          >
-            <option value="">None (use dataset defaults)</option>
-            {configs.map((cfg) => (
-              <option key={cfg.path} value={cfg.path}>
-                {cfg.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <div className="grid gap-2 md:col-span-2">
+              <Label htmlFor="runnerMode">Runner mode</Label>
+              <select
+                id="runnerMode"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={runnerMode ?? "auto"}
+                onChange={(event) => setRunnerMode(event.target.value as PipelineRunRequest["runner_mode"])}
+                disabled={busy}
+              >
+                <option value="auto">Auto (recommended)</option>
+                <option value="subprocess">Subprocess (sandbox-safe)</option>
+                <option value="multiprocessing">Multiprocessing (fastest)</option>
+              </select>
+            </div>
+          </div>
 
-        {configLoading ? <p className="muted">Loading configuration presets…</p> : null}
-        {configError ? <p className="muted error-text">{configError}</p> : null}
-        {datasetLoading ? <p className="muted">Loading dataset presets…</p> : null}
-        {datasetError ? <p className="muted error-text">{datasetError}</p> : null}
-        {configPath ? <p className="muted">Selected config overrides dataset defaults.</p> : null}
-
-        {inlineNotice ? <p className="form-warning">{inlineNotice}</p> : null}
-        {message ? <div className="form-message">{message}</div> : null}
-      </form>
-    </section>
+          {inlineNotice && <p className="text-sm font-medium text-destructive">{inlineNotice}</p>}
+          {message && <div className="p-3 bg-muted rounded text-sm">{message}</div>}
+        </form>
+      </CardContent>
+    </Card>
   );
 }

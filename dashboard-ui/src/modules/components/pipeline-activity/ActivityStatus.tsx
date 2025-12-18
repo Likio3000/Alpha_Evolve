@@ -1,6 +1,8 @@
 import React from "react";
 import { PipelineJobState } from "../../types";
 import { formatDuration, timeAgo } from "./utils";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 
 interface ActivityStatusProps {
   status: PipelineJobState["status"];
@@ -29,33 +31,33 @@ export function ActivityStatus({
   const progressLabel =
     pctComplete !== null ? `${pctComplete.toFixed(1)}% complete` : "Waiting for progress updates…";
 
+  const statusVariant =
+    status === "running" ? "default" :
+      status === "error" ? "destructive" :
+        status === "complete" ? "secondary" : "outline";
+
   return (
-    <>
-      <div className="pipeline-activity__status-row">
-        <div className={`status-badge status-badge--${status}`}>{status}</div>
-        {connectionState ? (
-          <div className={`connection-badge connection-badge--${connectionState}`}>SSE {connectionState}</div>
-        ) : null}
-        {generationLabel ? <span className="pipeline-activity__status-meta">{generationLabel}</span> : null}
-        {etaDisplay ? <span className="pipeline-activity__status-meta muted">{etaDisplay}</span> : null}
-        {elapsedDisplay ? (
-          <span className="pipeline-activity__status-meta muted">Elapsed {elapsedDisplay}</span>
-        ) : null}
-        {updatedLabel ? <span className="pipeline-activity__status-meta muted">Updated {updatedLabel}</span> : null}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-2 items-center">
+        <Badge variant={statusVariant} className="capitalize">{status}</Badge>
+        {connectionState && (
+          <Badge variant="outline" className={connectionState === "connected" ? "border-green-500 text-green-500" : "text-muted-foreground"}>
+            SSE {connectionState}
+          </Badge>
+        )}
+        {generationLabel && <Badge variant="secondary">{generationLabel}</Badge>}
+        {etaDisplay && <span className="text-xs text-muted-foreground">{etaDisplay}</span>}
+        {elapsedDisplay && <span className="text-xs text-muted-foreground">Elapsed {elapsedDisplay}</span>}
+        {updatedLabel && <span className="text-xs text-muted-foreground">Updated {updatedLabel}</span>}
       </div>
 
-      <div className="pipeline-activity__progress">
-        <div className="pipeline-activity__progress-bar">
-          <div
-            className="pipeline-activity__progress-bar-fill"
-            style={{ width: `${pctComplete !== null ? pctComplete : 0}%` }}
-          />
-        </div>
-        <div className="pipeline-activity__progress-meta">
-          <span>{progressLabel}</span>
-          {lastMessage ? <span className="muted">{lastMessage}</span> : null}
+      <div className="space-y-1">
+        <Progress value={pctComplete || 0} />
+        <div className="flex justify-between items-center text-xs">
+          <span className="font-medium">{progressLabel}</span>
+          {lastMessage && <span className="text-muted-foreground truncate max-w-[300px]">{lastMessage}</span>}
         </div>
       </div>
-    </>
+    </div>
   );
 }

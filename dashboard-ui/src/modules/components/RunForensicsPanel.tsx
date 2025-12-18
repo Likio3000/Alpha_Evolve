@@ -2,6 +2,18 @@ import React, { useEffect, useMemo, useState } from "react";
 import { fetchRunAssets } from "../api";
 import { GenerationSummary } from "../types";
 import { mapGenerationSummary } from "../pipelineMapping";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 interface RunForensicsPanelProps {
   runDir: string | null;
@@ -195,144 +207,163 @@ export function RunForensicsPanel({ runDir }: RunForensicsPanelProps): React.Rea
   }, [comparePair]);
 
   return (
-    <div className="panel panel-run-details">
-      <div className="panel-header">
-        <h2>Run Forensics</h2>
-        {runDir ? <span className="muted">{runDir}</span> : null}
-      </div>
+    <Card className="w-full">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-xl font-bold">Run Forensics</CardTitle>
+        {runDir ? <span className="text-xs font-mono text-muted-foreground">{runDir}</span> : null}
+      </CardHeader>
 
-      {!runDir ? <p className="muted">Select a run to inspect its generation timeline and artefacts.</p> : null}
+      <CardContent>
+        {!runDir ? (
+          <div className="text-center py-6 text-muted-foreground text-sm">Select a run to inspect its generation timeline and artefacts.</div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold border-b pb-2">Artefacts</h3>
 
-      {assetsError ? <p className="muted error-text">{assetsError}</p> : null}
-      {assetsLoading ? <p className="muted">Scanning run artefacts…</p> : null}
+              {assetsError ? <p className="text-xs text-destructive">{assetsError}</p> : null}
+              {assetsLoading ? <p className="text-xs text-muted-foreground">Scanning run artefacts…</p> : null}
 
-      {runDir ? (
-        <div className="run-param-grid">
-          <div className="run-param-item">
-            <div className="run-param-item__label">Artefacts</div>
-            {assets.length ? (
-              <>
-                <select value={selectedAsset} onChange={(event) => setSelectedAsset(event.target.value)}>
-                  {assets.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-                {selectedAsset ? (
-                  <a className="btn btn--link" href={buildRunAssetUrl(runDir, selectedAsset)} target="_blank" rel="noreferrer">
-                    Download / open
-                  </a>
-                ) : null}
-              </>
-            ) : (
-              <p className="muted">No artefacts found.</p>
-            )}
-
-            {selectedAsset && previewKind === "image" ? (
-              <img
-                src={buildRunAssetUrl(runDir, selectedAsset)}
-                alt={selectedAsset}
-                style={{ width: "100%", borderRadius: 10, marginTop: 12 }}
-              />
-            ) : null}
-            {selectedAsset && previewKind === "text" ? <pre className="log-viewer">{previewText}</pre> : null}
-          </div>
-
-          <div className="run-param-item">
-            <div className="run-param-item__label">Generation timeline</div>
-            {timelineError ? <p className="muted error-text">{timelineError}</p> : null}
-            {!timeline.length ? (
-              <p className="muted">No gen_summary history found (meta/gen_summary.jsonl).</p>
-            ) : (
-              <>
-                <div className="table-scroll">
-                  <table className="bt-table">
-                    <thead>
-                      <tr>
-                        <th>Gen</th>
-                        <th>Fitness</th>
-                        <th>Mean IC</th>
-                        <th>Sharpe proxy</th>
-                        <th>Turnover</th>
-                        <th>Drawdown</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {timeline.map((entry) => (
-                        <tr
-                          key={entry.generation}
-                          style={{
-                            cursor: "pointer",
-                            background:
-                              entry.generation === compareA || entry.generation === compareB
-                                ? "rgba(52, 88, 140, 0.25)"
-                                : undefined,
-                          }}
-                          onClick={() => {
-                            setCompareB(compareA);
-                            setCompareA(entry.generation);
-                          }}
-                        >
-                          <td>{entry.generation}</td>
-                          <td>{entry.best.fitness.toFixed(4)}</td>
-                          <td>{entry.best.meanIc.toFixed(4)}</td>
-                          <td>{entry.best.sharpeProxy.toFixed(3)}</td>
-                          <td>{entry.best.turnover.toFixed(4)}</td>
-                          <td>{entry.best.drawdown.toFixed(4)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {assets.length ? (
+                <div className="flex gap-2">
+                  <select
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    value={selectedAsset}
+                    onChange={(event) => setSelectedAsset(event.target.value)}
+                  >
+                    {assets.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedAsset ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={buildRunAssetUrl(runDir, selectedAsset)} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    </Button>
+                  ) : null}
                 </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">No artefacts found.</p>
+              )}
 
-                {comparePair ? (
-                  <div style={{ marginTop: 12 }}>
-                    <div className="muted" style={{ marginBottom: 8 }}>
-                      Comparing Gen {comparePair.a.generation} vs Gen {comparePair.b.generation}
-                    </div>
-                    {diffMetrics.length ? (
-                      <div className="table-scroll">
-                        <table className="bt-table">
-                          <thead>
-                            <tr>
-                              <th>Metric</th>
-                              <th>A</th>
-                              <th>B</th>
-                              <th>Δ</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {diffMetrics.map((row) => (
-                              <tr key={row.key}>
-                                <td>{row.key}</td>
-                                <td>{row.a.toFixed(4)}</td>
-                                <td>{row.b.toFixed(4)}</td>
-                                <td>{row.delta >= 0 ? "+" : ""}{row.delta.toFixed(4)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <p className="muted">No comparable metrics available for this pair.</p>
-                    )}
-                    <div style={{ marginTop: 12 }}>
-                      <div className="muted" style={{ marginBottom: 6 }}>
-                        Program diff (raw)
-                      </div>
-                      <div className="run-param-grid">
-                        <pre className="log-viewer">{comparePair.a.best.program || "n/a"}</pre>
-                        <pre className="log-viewer">{comparePair.b.best.program || "n/a"}</pre>
-                      </div>
-                    </div>
+              {selectedAsset && previewKind === "image" ? (
+                <img
+                  src={buildRunAssetUrl(runDir, selectedAsset)}
+                  alt={selectedAsset}
+                  className="w-full rounded-lg border mt-4"
+                />
+              ) : null}
+              {selectedAsset && previewKind === "text" ? (
+                <pre className="mt-4 h-[400px] overflow-y-auto rounded-lg border bg-muted/30 p-4 font-mono text-xs whitespace-pre-wrap">
+                  {previewText}
+                </pre>
+              ) : null}
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold border-b pb-2">Generation timeline</h3>
+
+              {timelineError ? <p className="text-xs text-destructive">{timelineError}</p> : null}
+              {!timeline.length ? (
+                <p className="text-xs text-muted-foreground">No gen_summary history found (meta/gen_summary.jsonl).</p>
+              ) : (
+                <>
+                  <div className="border rounded-md overflow-hidden max-h-[300px] overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[60px]">Gen</TableHead>
+                          <TableHead>Fit</TableHead>
+                          <TableHead>IC</TableHead>
+                          <TableHead>Sharpe</TableHead>
+                          <TableHead>TO</TableHead>
+                          <TableHead>DD</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {timeline.map((entry) => (
+                          <TableRow
+                            key={entry.generation}
+                            className={cn(
+                              "cursor-pointer hover:bg-muted/50",
+                              (entry.generation === compareA || entry.generation === compareB) && "bg-muted"
+                            )}
+                            onClick={() => {
+                              setCompareB(compareA);
+                              setCompareA(entry.generation);
+                            }}
+                          >
+                            <TableCell className="font-mono">{entry.generation}</TableCell>
+                            <TableCell>{entry.best.fitness.toFixed(4)}</TableCell>
+                            <TableCell>{entry.best.meanIc.toFixed(4)}</TableCell>
+                            <TableCell>{entry.best.sharpeProxy.toFixed(3)}</TableCell>
+                            <TableCell>{entry.best.turnover.toFixed(4)}</TableCell>
+                            <TableCell>{entry.best.drawdown.toFixed(4)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
-                ) : null}
-              </>
-            )}
+
+                  {comparePair ? (
+                    <div className="space-y-4 pt-4 border-t">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        Comparing Gen {comparePair.a.generation} vs Gen {comparePair.b.generation}
+                      </div>
+                      {diffMetrics.length ? (
+                        <div className="border rounded-md">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Metric</TableHead>
+                                <TableHead>Gen {comparePair.a.generation}</TableHead>
+                                <TableHead>Gen {comparePair.b.generation}</TableHead>
+                                <TableHead>Δ</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {diffMetrics.map((row) => (
+                                <TableRow key={row.key}>
+                                  <TableCell className="font-medium">{row.key}</TableCell>
+                                  <TableCell>{row.a.toFixed(4)}</TableCell>
+                                  <TableCell>{row.b.toFixed(4)}</TableCell>
+                                  <TableCell className={cn(row.delta > 0 ? "text-green-600" : row.delta < 0 ? "text-red-600" : "")}>
+                                    {row.delta >= 0 ? "+" : ""}{row.delta.toFixed(4)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No comparable metrics available for this pair.</p>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Program Gen {comparePair.a.generation}</div>
+                          <pre className="h-[150px] overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-[10px] whitespace-pre-wrap">
+                            {comparePair.a.best.program || "n/a"}
+                          </pre>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Program Gen {comparePair.b.generation}</div>
+                          <pre className="h-[150px] overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-[10px] whitespace-pre-wrap">
+                            {comparePair.b.best.program || "n/a"}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
           </div>
-        </div>
-      ) : null}
-    </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

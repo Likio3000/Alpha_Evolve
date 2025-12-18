@@ -14,6 +14,8 @@ import {
   YAxis,
 } from "recharts";
 import type { TooltipProps } from "recharts";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 interface TimeseriesChartsProps {
   data: AlphaTimeseries | null;
@@ -37,17 +39,18 @@ interface SanitizedTimeseries {
   returnsDomain: [number, number];
 }
 
+// Keeping consistent theme colors for charts, but could use CSS variables if Recharts supported them easily.
 const COLORS = {
-  equityStroke: "#5ab4f0",
-  equityFillStart: "rgba(90, 180, 240, 0.55)",
-  equityFillEnd: "rgba(90, 180, 240, 0.05)",
-  grid: "rgba(90, 180, 240, 0.12)",
-  axis: "rgba(167, 173, 179, 0.7)",
-  tooltipBorder: "rgba(90, 180, 240, 0.45)",
-  tooltipBg: "rgba(10, 14, 20, 0.92)",
-  retPositive: "#6ee7b7",
-  retNegative: "#ef6d7a",
-  retNeutral: "#f6c560",
+  equityStroke: "#3b82f6", // blue-500
+  equityFillStart: "rgba(59, 130, 246, 0.5)",
+  equityFillEnd: "rgba(59, 130, 246, 0.05)",
+  grid: "rgba(255, 255, 255, 0.1)",
+  axis: "#94a3b8", // slate-400
+  tooltipBg: "rgba(15, 23, 42, 0.95)", // slate-950
+  tooltipBorder: "rgba(59, 130, 246, 0.5)",
+  retPositive: "#10b981", // emerald-500
+  retNegative: "#ef4444", // red-500
+  retNeutral: "#eab308", // yellow-500
 };
 
 const YAXIS_PROPS = {
@@ -188,9 +191,9 @@ function EquityTooltip({ active, payload }: TooltipProps<number, string>): React
     ? datum.tooltipLabel || buildTooltipLabel(datum.date, datum.index)
     : "";
   return (
-    <div className="chart-tooltip">
-      <div className="chart-tooltip__label">{tooltipLabel}</div>
-      <div className="chart-tooltip__value">{formatEquity(value)}</div>
+    <div className="bg-slate-950 border border-blue-500/50 rounded-lg p-2 shadow-xl backdrop-blur-md">
+      <div className="text-[10px] text-slate-400 font-medium mb-1 uppercase tracking-wider">{tooltipLabel}</div>
+      <div className="text-sm font-bold text-white font-mono">{formatEquity(value)}</div>
     </div>
   );
 }
@@ -208,13 +211,17 @@ function ReturnsTooltip({
     : "";
   const rawValue = payload[0]?.value;
   const value = typeof rawValue === "number" ? rawValue : null;
-  const tone =
-    value == null ? "chart-tooltip__value" : value >= 0 ? "chart-tooltip__value chart-tooltip__value--positive" : "chart-tooltip__value chart-tooltip__value--negative";
+
+  let toneClass = "text-white";
+  if (value != null) {
+    if (value > 0) toneClass = "text-emerald-400";
+    else if (value < 0) toneClass = "text-red-400";
+  }
 
   return (
-    <div className="chart-tooltip">
-      <div className="chart-tooltip__label">{tooltipLabel}</div>
-      <div className={tone}>{formatReturn(value)}</div>
+    <div className="bg-slate-950 border border-slate-800 rounded-lg p-2 shadow-xl backdrop-blur-md">
+      <div className="text-[10px] text-slate-400 font-medium mb-1 uppercase tracking-wider">{tooltipLabel}</div>
+      <div className={cn("text-sm font-bold font-mono", toneClass)}>{formatReturn(value)}</div>
     </div>
   );
 }
@@ -222,15 +229,19 @@ function ReturnsTooltip({
 export function TimeseriesCharts({ data, label }: TimeseriesChartsProps): React.ReactElement {
   if (!data) {
     return (
-      <div className="chart-row">
-        <div className="chart-card">
-          <h3>Equity Curve</h3>
-          <p className="chart-card__empty muted">Select an alpha to view timeseries.</p>
-        </div>
-        <div className="chart-card">
-          <h3>Returns per Bar</h3>
-          <p className="chart-card__empty muted">Select an alpha to view timeseries.</p>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card className="h-[300px] flex items-center justify-center text-muted-foreground bg-muted/20">
+          <div className="text-center">
+            <h3 className="text-sm font-semibold mb-1">Equity Curve</h3>
+            <p className="text-xs">Select an alpha to view timeseries.</p>
+          </div>
+        </Card>
+        <Card className="h-[300px] flex items-center justify-center text-muted-foreground bg-muted/20">
+          <div className="text-center">
+            <h3 className="text-sm font-semibold mb-1">Returns per Bar</h3>
+            <p className="text-xs">Select an alpha to view timeseries.</p>
+          </div>
+        </Card>
       </div>
     );
   }
@@ -243,10 +254,12 @@ export function TimeseriesCharts({ data, label }: TimeseriesChartsProps): React.
   const descriptor = label ? ` — ${label}` : "";
 
   return (
-    <div className="chart-row">
-      <div className="chart-card">
-        <h3>Equity Curve{descriptor}</h3>
-        <div className="chart-card__body">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <Card className="flex flex-col h-[300px]">
+        <CardHeader className="py-3 px-4 pb-0">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Equity Curve{descriptor}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex-grow min-h-0 p-4">
           {hasEquity ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={rows}>
@@ -256,16 +269,18 @@ export function TimeseriesCharts({ data, label }: TimeseriesChartsProps): React.
                     <stop offset="95%" stopColor={COLORS.equityFillEnd} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" />
+                <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="date"
                   {...XAXIS_PROPS}
                   tickFormatter={(_, index) => rows[index]?.axisLabel ?? ""}
+                  height={20}
                 />
                 <YAxis
                   {...YAXIS_PROPS}
                   domain={equityDomain}
                   tickFormatter={(value: number) => formatEquity(value)}
+                  width={40}
                 />
                 <Tooltip content={<EquityTooltip />} cursor={{ stroke: COLORS.equityStroke, strokeOpacity: 0.2 }} />
                 <Area
@@ -280,37 +295,41 @@ export function TimeseriesCharts({ data, label }: TimeseriesChartsProps): React.
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <p className="chart-card__empty muted">No equity data available for this alpha.</p>
+            <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+              No equity data available.
+            </div>
           )}
+        </CardContent>
+        <div className="px-4 pb-3 flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-sm bg-blue-500" />
+          <span className="text-xs text-muted-foreground">{label ?? "Equity"}</span>
         </div>
-        <div className="chart-legend">
-          <span className="chart-legend__item">
-            <span className="chart-legend__swatch" style={{ backgroundColor: COLORS.equityStroke }} />
-            {label ?? "Equity"}
-          </span>
-        </div>
-      </div>
+      </Card>
 
-      <div className="chart-card">
-        <h3>Returns per Bar{descriptor}</h3>
-        <div className="chart-card__body">
+      <Card className="flex flex-col h-[300px]">
+        <CardHeader className="py-3 px-4 pb-0">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Returns per Bar{descriptor}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex-grow min-h-0 p-4">
           {hasReturns ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={rows}>
-                <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" />
+                <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="date"
                   {...XAXIS_PROPS}
                   tickFormatter={(_, index) => rows[index]?.axisLabel ?? ""}
+                  height={20}
                 />
                 <YAxis
                   {...YAXIS_PROPS}
                   domain={returnsDomain}
                   tickFormatter={(value: number) => formatReturn(value)}
+                  width={40}
                 />
-                <ReferenceLine y={0} stroke="rgba(167, 173, 179, 0.4)" strokeDasharray="4 4" />
-                <Tooltip content={<ReturnsTooltip />} cursor={{ fill: "rgba(90, 180, 240, 0.08)" }} />
-                <Bar dataKey="ret_net" radius={[4, 4, 0, 0]}>
+                <ReferenceLine y={0} stroke="rgba(255, 255, 255, 0.2)" strokeDasharray="4 4" />
+                <Tooltip content={<ReturnsTooltip />} cursor={{ fill: "rgba(255, 255, 255, 0.03)" }} />
+                <Bar dataKey="ret_net" radius={[2, 2, 0, 0]}>
                   {rows.map((item) => {
                     const value = item.ret_net;
                     let fill = COLORS.retNeutral;
@@ -324,20 +343,22 @@ export function TimeseriesCharts({ data, label }: TimeseriesChartsProps): React.
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p className="chart-card__empty muted">No return data available for this alpha.</p>
+            <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+              No return data available.
+            </div>
           )}
+        </CardContent>
+        <div className="px-4 pb-3 flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+            <span className="text-xs text-muted-foreground">Positive</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-sm bg-red-500" />
+            <span className="text-xs text-muted-foreground">Negative</span>
+          </div>
         </div>
-        <div className="chart-legend">
-          <span className="chart-legend__item">
-            <span className="chart-legend__swatch chart-legend__swatch--positive" />
-            Positive return
-          </span>
-          <span className="chart-legend__item">
-            <span className="chart-legend__swatch chart-legend__swatch--negative" />
-            Negative return
-          </span>
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }

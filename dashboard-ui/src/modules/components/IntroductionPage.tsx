@@ -1,264 +1,160 @@
 import React from "react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Beaker, Cpu, Gavel, Microscope, Network, Zap } from "lucide-react";
 
 export function IntroductionPage(): React.ReactElement {
   return (
-    <article className="intro-page" data-test="introduction-layout">
-      <section className="intro-page__hero">
-        <h2>Alpha Evolve in Context</h2>
-        <p>
-          Alpha Evolve is a research platform for discovering systematic equity alphas via evolutionary
-          program synthesis. The platform couples a configurable genetic programming engine with a
-          reproducible backtesting stack, rich diagnostics, and real-time observability. This page
-          summarizes the scientific framing so every user understands what the pipeline optimizes,
-          how it measures evidence, and which safeguards are in place before deploying a factor.
+    <article className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-1000" data-test="introduction-layout">
+      {/* Hero Section */}
+      <section className="text-center max-w-4xl mx-auto space-y-6 pt-4">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold uppercase tracking-wider mb-2">
+          <Zap className="w-3 h-3" />
+          <span>Research Platform v0.1.0</span>
+        </div>
+        <h2 className="text-4xl md:text-5xl font-heading font-bold tracking-tight bg-gradient-to-b from-foreground to-foreground/70 bg-clip-text text-transparent">
+          Discovery via Evolutionary Synthesis
+        </h2>
+        <p className="text-xl text-muted-foreground leading-relaxed max-w-2xl mx-auto">
+          Alpha Evolve couples high-performance genetic programming with a reproducible backtesting stack for industrial-grade alpha discovery.
         </p>
-        <div className="intro-page__hero-grid">
-          <div>
-            <h3>Research mandate</h3>
-            <p>
-              Produce interpretable, cross-sectional alpha expressions that survive held-out validation
-              while satisfying turnover and risk constraints.
-            </p>
-          </div>
-          <div>
-            <h3>Methodological spine</h3>
-            <p>
-              Genetic programming over a domain-specific language of factor operators, evaluated on
-              rolling, cross-sectional datasets with strict alignment and risk controls.
-            </p>
-          </div>
-          <div>
-            <h3>Evidence standard</h3>
-            <p>
-              Multi-horizon fitness (Sharpe, IC, turnover, drawdown) with train/validation separation,
-              QD archives, and hall-of-fame correlation guards to prioritise robust signals over noise.
-            </p>
-          </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left pt-10">
+          <Card className="glass-card premium-border group">
+            <CardHeader className="pb-2">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-500">
+                <Microscope className="w-5 h-5 text-primary" />
+              </div>
+              <CardTitle className="text-lg">Research Mandate</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground leading-relaxed">
+              Produce interpretable, cross-sectional alpha expressions that survive held-out validation while satisfying strict turnover and risk constraints.
+            </CardContent>
+          </Card>
+
+          <Card className="glass-card premium-border group">
+            <CardHeader className="pb-2">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-500">
+                <Cpu className="w-5 h-5 text-primary" />
+              </div>
+              <CardTitle className="text-lg">Methodological Spine</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground leading-relaxed">
+              Genetic programming over a domain-specific DSL, evaluated on rolling datasets with rigorous alignment and execution-lag controls.
+            </CardContent>
+          </Card>
+
+          <Card className="glass-card premium-border group">
+            <CardHeader className="pb-2">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-500">
+                <Gavel className="w-5 h-5 text-primary" />
+              </div>
+              <CardTitle className="text-lg">Evidence Standard</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground leading-relaxed">
+              Multi-horizon fitness (Sharpe, IC, Turnover) with temporal separation, QD archives, and hall-of-fame correlation guards.
+            </CardContent>
+          </Card>
         </div>
       </section>
 
-      <section className="intro-page__section">
-        <header>
-          <h3>System Architecture</h3>
-          <p>
-            Alpha Evolve is organised as a three-layer stack that keeps research concerns decoupled:
+      {/* Architecture Section */}
+      <section className="space-y-6 pt-8">
+        <div className="flex flex-col gap-2 items-center text-center">
+          <h3 className="text-2xl font-bold tracking-tight">System Architecture</h3>
+          <p className="text-muted-foreground max-w-xl">
+            A decoupled three-layer stack designed for research velocity and execution fidelity.
           </p>
-        </header>
-        <ol className="intro-page__list intro-page__list--numbered">
-          <li>
-            <strong>Data &amp; Context.</strong> The evaluation context is built by{" "}
-            <code>make_eval_context_from_dir</code>; it loads aligned OHLC bars, engineered features,
-            optional sector mapping, and caches them in shared-memory matrices. Alignment guarantees
-            that every candidate observes the same training universe, honours evaluation lags, and
-            enforces a minimum history window before any fitness is computed.
-          </li>
-          <li>
-            <strong>Evolution Engine.</strong> The engine in <code>alpha_evolve.evolution.engine</code>{" "}
-            generates candidate programs, evaluates them in a multiprocessing pool, updates the hall of
-            fame, and emits diagnostics. It exposes every hyperparameter via <code>EvoConfig</code> so
-            you can tune population sizes, operator distributions, novelty weighting, or cross-validation
-            settings without touching core code.
-          </li>
-          <li>
-            <strong>Experiment Orchestration.</strong> The dashboard server spawns the pipeline in an
-            isolated process, streams structured SSE updates (<code>status</code>, <code>progress</code>,
-            <code>score</code>, <code>diag</code>), persists artefacts under <code>pipeline_runs_cs/</code>,
-            and exposes REST endpoints plus the self-evolution controller for closed-loop research.
-          </li>
-        </ol>
-      </section>
+        </div>
 
-      <section className="intro-page__section">
-        <header>
-          <h3>Alpha Representation &amp; Search Dynamics</h3>
-        </header>
-        <div className="intro-page__grid">
-          <div>
-            <h4>Domain-specific language</h4>
-            <p>
-              Candidates are <code>AlphaProgram</code> instances with three phases:{" "}
-              <em>setup</em> (state initialisation), <em>predict</em> (cross-sectional score
-              computation), and <em>update</em> (state roll-forward). The opcode library combines price
-              transforms, rolling statistics, rank operators, boolean gates, and vector arithmetic tuned
-              for daily equity universes. Operator selection is biased toward vector-returning
-              expressions to stabilise cross-sectional ranking.
-            </p>
+        <div className="grid gap-4">
+          <div className="glass-panel p-6 rounded-2xl flex gap-6 items-start hover:bg-white/[0.02] transition-colors border-white/5">
+            <div className="w-12 h-12 rounded-xl bg-white/5 flex-shrink-0 flex items-center justify-center border border-white/10">
+              <span className="text-xl font-bold text-primary">01</span>
+            </div>
+            <div className="space-y-2">
+              <h4 className="font-bold text-lg">Data &amp; Context</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-3xl">
+                Evaluation context built via <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">make_eval_context_from_dir</code>. Loads aligned OHLC bars and engineered features into shared-memory matrices. Guarantees evaluation lags and enforces history windows.
+              </p>
+            </div>
           </div>
-          <div>
-            <h4>Initialisation &amp; variation</h4>
-            <p>
-              Tree initialisation respects depth limits per phase and samples features from{" "}
-              <code>CROSS_SECTIONAL_FEATURE_VECTOR_NAMES</code>. Evolution uses a mix of subtree
-              crossover, point mutation, shrink, and insert operators. Ramp/fixed selection policies,
-              softmax tournament parameters, and novelty boosts are all configurable to balance
-              exploitation versus exploration.
-            </p>
+
+          <div className="glass-panel p-6 rounded-2xl flex gap-6 items-start hover:bg-white/[0.02] transition-colors border-white/5">
+            <div className="w-12 h-12 rounded-xl bg-white/5 flex-shrink-0 flex items-center justify-center border border-white/10">
+              <span className="text-xl font-bold text-primary">02</span>
+            </div>
+            <div className="space-y-2">
+              <h4 className="font-bold text-lg">Evolution Engine</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-3xl">
+                High-performance engine in <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">alpha_evolve.evolution.engine</code>. Evaluates populations in multiprocessing pools, maintains elite archives, and exposes all hyperparameters via <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">EvoConfig</code>.
+              </p>
+            </div>
           </div>
-          <div>
-            <h4>Quality-diversity tooling</h4>
-            <p>
-              The engine maintains (optional) QD archives over turnover and structural complexity in
-              addition to the classical hall of fame. Multi-objective optimisation (NSGA-II-lite) is
-              available to trade off Sharpe, risk, and structural cost simultaneously. Correlation-aware
-              hall-of-fame updates ensure that new champions contribute orthogonal information instead of
-              rediscovering existing profiles.
-            </p>
+
+          <div className="glass-panel p-6 rounded-2xl flex gap-6 items-start hover:bg-white/[0.02] transition-colors border-white/5">
+            <div className="w-12 h-12 rounded-xl bg-white/5 flex-shrink-0 flex items-center justify-center border border-white/10">
+              <span className="text-xl font-bold text-primary">03</span>
+            </div>
+            <div className="space-y-2">
+              <h4 className="font-bold text-lg">Experiment Orchestration</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-3xl">
+                Isolated dashboard server streams SSE updates (<code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">status</code>, <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-xs">progress</code>), persists artefacts under <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">pipeline_runs_cs/</code>, and exposes REST endpoints for closed-loop self-evolution.
+              </p>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="intro-page__section">
-        <header>
-          <h3>Fitness, Validation, and Risk Controls</h3>
-        </header>
-        <div className="intro-page__grid intro-page__grid--two">
-          <div>
-            <h4>Primary objectives</h4>
-            <p>
-              Fitness aggregates multi-horizon Sharpe, information coefficient (IC), and downside
-              statistics. Evaluation horizons are derived from <code>evaluation_horizons</code> or the
-              configured lag, enabling simultaneous assessment of short and medium-term efficacy. Train /
-              validation splits, CPCV-style folds, and embargo windows are supported to detect overfit
-              programs before they enter the hall of fame.
-            </p>
+      {/* search dynamics */}
+      <section className="grid md:grid-cols-2 gap-12 pt-8">
+        <div className="space-y-4">
+          <h3 className="text-2xl font-bold tracking-tight border-b border-white/5 pb-2">Search Dynamics</h3>
+          <div className="space-y-6">
+            <div className="flex gap-4">
+              <Network className="w-6 h-6 text-primary flex-shrink-0" />
+              <div className="space-y-1">
+                <h4 className="font-bold">Domain-specific language</h4>
+                <p className="text-sm text-muted-foreground">Candidates use three-phase logic (setup, predict, update) with an opcode library tuned for cross-sectional factor construction.</p>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <Beaker className="w-6 h-6 text-primary flex-shrink-0" />
+              <div className="space-y-1">
+                <h4 className="font-bold">Initialisation &amp; variation</h4>
+                <p className="text-sm text-muted-foreground">Depth-limited tree init combined with subtree crossover and point mutation ensures efficient traversals of the program space.</p>
+              </div>
+            </div>
           </div>
-          <div>
-            <h4>Penalty stack</h4>
-            <ul className="intro-page__list">
-              <li>
-                <strong>Parsimony.</strong> Weighted by <code>parsimony_penalty</code> and injected
-                jitter to discourage over-complex expressions.
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-2xl font-bold tracking-tight border-b border-white/5 pb-2">Risk &amp; Validation</h3>
+          <div className="space-y-4 p-4 rounded-xl bg-primary/[0.03] border border-primary/10">
+            <h4 className="font-bold text-sm uppercase tracking-wider text-primary">Penalty Stack</h4>
+            <ul className="space-y-3 text-sm">
+              <li className="flex gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5" />
+                <span><strong>Parsimony.</strong> Complexity-weighted penalties to prevent over-parametrisation.</span>
               </li>
-              <li>
-                <strong>Turnover &amp; IC variance.</strong> Penalties for excessive trading costs or
-                unstable cross-sectional relationships (<code>turnover_penalty_w</code>,{" "}
-                <code>ic_std_penalty_w</code>).
+              <li className="flex gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5" />
+                <span><strong>Turnover.</strong> Real-world cost constraints enforced during evaluation.</span>
               </li>
-              <li>
-                <strong>Correlation.</strong> <code>corr_penalty_w</code> and <code>hof_corr_mode</code>{" "}
-                ensure new elites add orthogonal alpha. Temporal decay half-lives and factor exposure
-                penalties further align with risk budgeting constraints.
-              </li>
-              <li>
-                <strong>Early abort guards.</strong> Temporal/cross-sectional flatness checks and
-                rolling window sanity tests abort evaluations early when a program degenerates, saving
-                compute and avoiding NaNs.
+              <li className="flex gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5" />
+                <span><strong>HOF Correlation.</strong> Ensures new elites provide orthogonal alpha.</span>
               </li>
             </ul>
           </div>
         </div>
-        <p>
-          Every evaluation emits structured JSON summaries (per-generation champion metrics, penalty
-          breakdowns, horizon table) that the dashboard replays in real time. Final champions, ranked
-          by adjusted fitness, flow into <code>SUMMARY.json</code>, <code>backtest_summary_topN.csv</code>,
-          and the hall-of-fame export.
-        </p>
       </section>
 
-      <section className="intro-page__section">
-        <header>
-          <h3>Backtesting &amp; Diagnostics</h3>
-        </header>
-        <p>
-          After evolution, the pipeline performs a deterministic backtest over the selected champions.
-          It computes equity curves, realised turnover, drawdowns, and a full attribution table. Artefacts
-          under <code>backtest_portfolio_csvs/</code> mirror the UI tables, while{" "}
-          <code>meta/gen_summary.jsonl</code> captures the entire evolutionary trajectory for offline
-          analysis. Diagnostics modules surface candidate-level tracebacks, feature usage statistics,
-          QD archive snapshots, and optional MOEA fronts to guide follow-up research.
-        </p>
-        <div className="intro-page__callouts">
-          <div>
-            <h4>Key artefacts</h4>
-            <ul className="intro-page__list">
-              <li>
-                <code>SUMMARY.json</code> — run-wide metrics (best Sharpe, IC, max drawdown, turnover).
-              </li>
-              <li>
-                <code>meta/ui_context.json</code> — submission payload, config snapshot, timestamps.
-              </li>
-              <li>
-                <code>generated_configs/</code> — TOML copies of saved presets and overrides.
-              </li>
-              <li>
-                <code>logs/pipeline_*.log</code> — full text logs mirrored in the Job Console.
-              </li>
-            </ul>
-          </div>
-          <div>
-            <h4>Observability</h4>
-            <p>
-              Real-time progress streams through server-sent events; the UI plots generation summaries,
-              best-of-run equity curves, and exposes log excerpts. Replayability is preserved: the same
-              JSON lines powering the live console are written to disk for regression comparisons or
-              scientific reporting.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section className="intro-page__section">
-        <header>
-          <h3>Automation &amp; Outer-Loop Experimentation</h3>
-        </header>
-        <p>
-          Beyond single runs, Alpha Evolve embeds automation hooks for large studies:
-        </p>
-        <ul className="intro-page__list">
-          <li>
-            <strong>Self-Evolution Sessions.</strong> <code>scripts/self_evolve.py</code> perturbs config
-            parameters according to a declarative search space, launches inner pipeline runs, and pauses
-            for human or agent approval. Each iteration logs a briefing, objective score, and suggested
-            follow-up to <code>agent_briefings.jsonl</code>.
-          </li>
-          <li>
-            <strong>Server Manager &amp; Iteration harness.</strong> The dashboard server is managed via{" "}
-            <code>scripts/dev/server_manager.py</code>, while{" "}
-            <code>scripts/dev/run_iteration.py</code> rotates artefact slots, rebuilds the UI, and captures
-            Playwright screenshots for auditability.
-          </li>
-          <li>
-            <strong>API surface.</strong> Everything visible in the UI is exposed through REST endpoints
-            (<code>/api/pipeline/run</code>, <code>/api/runs</code>, <code>/ui-meta/*</code>) so you can
-            orchestrate studies programmatically or integrate Alpha Evolve into a broader research stack.
-          </li>
-        </ul>
-      </section>
-
-      <section className="intro-page__section">
-        <header>
-          <h3>How to Use the Dashboard</h3>
-        </header>
-        <div className="intro-page__grid intro-page__grid--three">
-          <div>
-            <h4>Backtest Analysis</h4>
-            <p>
-              Explore historical runs, inspect champion tables, and review cross-sectional equity curves.
-              Use the run list to relabel experiments, compare Sharpe trajectories, or download artefacts
-              straight from the backend.
-            </p>
-          </div>
-          <div>
-            <h4>Pipeline Controls</h4>
-            <p>
-              Launch fresh evolution jobs, monitor real-time logs, and react when diagnostics flag an
-              issue. The console streams both stdout and structured SSE events, while the control panel
-              mirrors <code>EvolutionConfig</code> defaults and presets.
-            </p>
-          </div>
-          <div>
-            <h4>Settings &amp; Presets</h4>
-            <p>
-              Browse the entire configuration surface area, import presets, or persist curated TOML
-              snapshots. This serves as the knowledge base linking UI choices to concrete pipeline
-              arguments.
-            </p>
-          </div>
-        </div>
-        <p className="intro-page__closing">
-          Continue into the Backtest Analysis tab to study prior discoveries, or open Pipeline Controls to
-          launch your own experiment. All artefacts generated downstream remain linked back to this
-          overview so collaborators can trace assumptions and reproduce results.
+      {/* Quick Start/CTA */}
+      <section className="p-8 rounded-[2rem] bg-gradient-to-tr from-primary/20 via-primary/5 to-transparent border border-white/10 text-center space-y-4 overflow-hidden relative">
+        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-primary/20 blur-[100px] pointer-events-none" />
+        <h3 className="text-xl font-bold">Ready to evolve?</h3>
+        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+          Navigate to <strong>Pipeline Controls</strong> to launch a new run, or <strong>Backtest Analysis</strong> to review results.
         </p>
       </section>
     </article>

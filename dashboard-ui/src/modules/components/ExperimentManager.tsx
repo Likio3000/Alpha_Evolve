@@ -11,6 +11,20 @@ import {
 } from "../api";
 import { ExperimentIteration, ExperimentProposal, ExperimentSession, PipelineRunRequest } from "../types";
 import { usePolling } from "../hooks/usePolling";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -205,22 +219,23 @@ export function ExperimentManager({ onNotify, onReplayPipeline }: ExperimentMana
   }, [onNotify, onReplayPipeline, selectedSessionId]);
 
   return (
-    <section className="panel experiment-panel" data-test="experiment-manager">
-      <div className="panel-header">
-        <div>
-          <h2>Experiment Manager</h2>
-          <p className="muted">Tracked self-evolution sessions with approval gates and replay support.</p>
-        </div>
+    <Card className="w-full border-none shadow-none bg-transparent">
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold tracking-tight">Experiment Manager</h2>
+        <p className="text-sm text-muted-foreground">Tracked self-evolution sessions with approval gates and replay support.</p>
       </div>
 
-      <div className="experiment-grid">
-        <div className="experiment-col">
-          <div className="experiment-section">
-            <h3>Start Session</h3>
-            <div className="experiment-form">
-              <label className="experiment-field">
-                <span>Search Space</span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Start Session</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Search Space</Label>
                 <select
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   value={startSearchSpace}
                   onChange={(e) => setStartSearchSpace(e.target.value)}
                   disabled={startBusy}
@@ -232,64 +247,74 @@ export function ExperimentManager({ onNotify, onReplayPipeline }: ExperimentMana
                   ))}
                   {!searchSpaces.length ? <option value={startSearchSpace}>Enter manually</option> : null}
                 </select>
-              </label>
+              </div>
 
-              <label className="experiment-field">
-                <span>Base Config (optional)</span>
-                <input
+              <div className="space-y-2">
+                <Label>Base Config (optional)</Label>
+                <Input
                   type="text"
                   value={startConfig}
                   onChange={(e) => setStartConfig(e.target.value)}
                   placeholder="configs/sp500.toml"
                   disabled={startBusy}
                 />
-              </label>
+              </div>
 
-              <label className="experiment-field">
-                <span>Iterations</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={startIterations}
-                  onChange={(e) => setStartIterations(Number(e.target.value))}
-                  disabled={startBusy}
-                />
-              </label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Iterations</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={startIterations}
+                    onChange={(e) => setStartIterations(Number(e.target.value))}
+                    disabled={startBusy}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Seed</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={startSeed}
+                    onChange={(e) => setStartSeed(Number(e.target.value))}
+                    disabled={startBusy}
+                  />
+                </div>
+              </div>
 
-              <label className="experiment-field">
-                <span>Seed</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={startSeed}
-                  onChange={(e) => setStartSeed(Number(e.target.value))}
-                  disabled={startBusy}
-                />
-              </label>
-
-              <label className="experiment-checkbox">
+              <div className="flex items-center space-x-2 pt-2">
                 <input
                   type="checkbox"
+                  id="auto-approve"
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
                   checked={startAutoApprove}
                   onChange={(e) => setStartAutoApprove(e.target.checked)}
                   disabled={startBusy}
                 />
-                <span>Auto approve proposals</span>
-              </label>
+                <Label htmlFor="auto-approve" className="font-normal cursor-pointer">Auto approve proposals</Label>
+              </div>
 
-              <button className="btn" type="button" onClick={handleStartSession} disabled={startBusy}>
+              <Button className="w-full" onClick={handleStartSession} disabled={startBusy}>
                 {startBusy ? "Starting…" : "Start Session"}
-              </button>
-            </div>
-          </div>
+              </Button>
+            </CardContent>
+          </Card>
 
-          <div className="experiment-section">
-            <h3>Sessions</h3>
-            {sessionsError ? <p className="muted error-text">{sessionsError}</p> : null}
-            <div className="experiment-form">
-              <label className="experiment-field">
-                <span>Active Session</span>
-                <select value={selectedSessionId ?? ""} onChange={(e) => setSelectedSessionId(e.target.value)}>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Sessions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {sessionsError ? <p className="text-xs text-destructive bg-destructive/10 p-2 rounded">{sessionsError}</p> : null}
+
+              <div className="space-y-2">
+                <Label>Active Session</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  value={selectedSessionId ?? ""}
+                  onChange={(e) => setSelectedSessionId(e.target.value)}
+                >
                   {sessions.map((s) => (
                     <option key={s.session_id} value={s.session_id}>
                       {s.session_id.slice(0, 8)}… ({s.status})
@@ -297,98 +322,112 @@ export function ExperimentManager({ onNotify, onReplayPipeline }: ExperimentMana
                   ))}
                   {!sessions.length ? <option value="">No sessions</option> : null}
                 </select>
-              </label>
+              </div>
 
-              <div className="panel-actions">
-                <button className="btn btn--secondary" type="button" onClick={handleStop} disabled={!selectedSessionId}>
+              <div className="flex gap-2">
+                <Button variant="secondary" className="flex-1" onClick={handleStop} disabled={!selectedSessionId}>
                   Stop
-                </button>
-                <button
-                  className="btn btn--secondary"
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="flex-1"
                   onClick={handleReplayBest}
                   disabled={!selectedSession?.best_iteration_id}
                 >
                   Replay Best
-                </button>
+                </Button>
               </div>
-            </div>
+            </CardContent>
 
             {selectedSession ? (
-              <div className="experiment-card">
+              <CardFooter className="bg-muted/30 flex flex-col items-start gap-1 p-4 text-xs">
                 <div>
-                  <span className="muted">Status</span>: {selectedSession.status}{" "}
-                  {selectedSession.running_task ? <span className="muted">(runner active)</span> : null}
+                  <span className="text-muted-foreground">Status:</span> <Badge variant="outline" className="ml-1 uppercase text-[10px]">{selectedSession.status}</Badge>{" "}
+                  {selectedSession.running_task ? <span className="text-blue-500 font-medium ml-2">(Runner Active)</span> : null}
                 </div>
-                <div>
-                  <span className="muted">Best Sharpe</span>: {selectedSession.best_sharpe ?? "—"}{" "}
-                  <span className="muted">Best corr</span>: {selectedSession.best_corr ?? "—"}
+                <div className="flex gap-4 mt-1">
+                  <div><span className="text-muted-foreground">Best Sharpe:</span> <span className="font-mono">{selectedSession.best_sharpe ?? "—"}</span></div>
+                  <div><span className="text-muted-foreground">Best Corr:</span> <span className="font-mono">{selectedSession.best_corr ?? "—"}</span></div>
                 </div>
                 {selectedSession.last_error ? (
-                  <div className="muted error-text">Last error: {selectedSession.last_error}</div>
+                  <div className="text-destructive mt-1 font-medium">Error: {selectedSession.last_error}</div>
                 ) : null}
-              </div>
+              </CardFooter>
             ) : null}
-          </div>
+          </Card>
         </div>
 
-        <div className="experiment-col">
-          <div className="experiment-section">
-            <h3>Approvals</h3>
-            {detailsError ? <p className="muted error-text">{detailsError}</p> : null}
-            {pendingProposal ? (
-              <div className="experiment-card">
-                <div>
-                  <strong>Pending proposal #{pendingProposal.id}</strong> (next iteration {pendingProposal.next_iteration})
+        <div className="space-y-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Approvals</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {detailsError ? <p className="text-xs text-destructive mb-2">{detailsError}</p> : null}
+              {pendingProposal ? (
+                <div className="space-y-4">
+                  <div className="text-sm">
+                    <strong>Pending proposal #{pendingProposal.id}</strong> (next iteration {pendingProposal.next_iteration})
+                  </div>
+                  <div className="bg-muted/50 p-3 rounded-md border font-mono text-xs overflow-auto max-h-[200px]">
+                    <pre>{JSON.stringify(pendingProposal.proposed_updates_json, null, 2)}</pre>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button className="flex-1" onClick={() => void handleDecide("approved")}>
+                      Approve
+                    </Button>
+                    <Button variant="secondary" className="flex-1" onClick={() => void handleDecide("rejected")}>
+                      Reject
+                    </Button>
+                  </div>
                 </div>
-                <pre className="log-viewer">{JSON.stringify(pendingProposal.proposed_updates_json, null, 2)}</pre>
-                <div className="panel-actions">
-                  <button className="btn" type="button" onClick={() => void handleDecide("approved")}>
-                    Approve
-                  </button>
-                  <button className="btn btn--secondary" type="button" onClick={() => void handleDecide("rejected")}>
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <p className="muted">No pending proposals.</p>
-            )}
-          </div>
+              ) : (
+                <div className="text-sm text-muted-foreground py-4 text-center">No pending proposals.</div>
+              )}
+            </CardContent>
+          </Card>
 
-          <div className="experiment-section">
-            <h3>Iterations</h3>
-            {iterations.length ? (
-              <div className="experiment-table-wrap">
-                <table className="experiment-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Status</th>
-                      <th>Sharpe</th>
-                      <th>Avg corr</th>
-                      <th>Run</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {iterations.map((it) => (
-                      <tr key={it.id}>
-                        <td>{it.iteration_index}</td>
-                        <td>{it.status}</td>
-                        <td>{it.objective_sharpe ?? "—"}</td>
-                        <td>{it.objective_corr ?? "—"}</td>
-                        <td className="muted">{it.run_dir ? String(it.run_dir).split("/").slice(-1)[0] : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="muted">No iterations recorded yet.</p>
-            )}
-          </div>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Iterations</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {iterations.length ? (
+                <div className="max-h-[300px] overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[50px]">#</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Sharpe</TableHead>
+                        <TableHead>Avg Corr</TableHead>
+                        <TableHead className="text-right">Run</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {iterations.map((it) => (
+                        <TableRow key={it.id}>
+                          <TableCell className="font-medium">{it.iteration_index}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="text-[10px] font-normal">{it.status}</Badge>
+                          </TableCell>
+                          <TableCell>{it.objective_sharpe ?? "—"}</TableCell>
+                          <TableCell>{it.objective_corr ?? "—"}</TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground font-mono">
+                            {it.run_dir ? String(it.run_dir).split("/").slice(-1)[0] : "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground p-6 text-center">No iterations recorded yet.</div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
-    </section>
+    </Card>
   );
 }

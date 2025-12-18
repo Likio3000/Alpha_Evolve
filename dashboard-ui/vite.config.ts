@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, Plugin, ViteDevServer, HmrContext } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -33,13 +33,13 @@ function runUpdateArtifactsCLI(args: string[]): Promise<void> {
   });
 }
 
-function artifactsAutoCapturePlugin() {
+function artifactsAutoCapturePlugin(): Plugin {
   let scheduleTrigger: ((reason: string) => void) | undefined;
 
   return {
     name: "alpha-evolve-artifacts-autocapture",
     apply: "serve",
-    configureServer(server) {
+    configureServer(server: ViteDevServer) {
       let running = false;
       let pendingReason: string | null = null;
       let timer: NodeJS.Timeout | null = null;
@@ -87,7 +87,7 @@ function artifactsAutoCapturePlugin() {
         }
       });
     },
-    handleHotUpdate(ctx) {
+    handleHotUpdate(ctx: HmrContext) {
       if (ctx.file.includes(`${path.sep}artifacts${path.sep}`)) {
         return;
       }
@@ -100,6 +100,11 @@ function artifactsAutoCapturePlugin() {
 export default defineConfig({
   base: "./",
   plugins: autoCaptureEnabled ? [react(), artifactsAutoCapturePlugin()] : [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   build: {
     sourcemap: true,
     outDir: "dist",
