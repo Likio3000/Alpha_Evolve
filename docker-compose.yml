@@ -8,7 +8,6 @@ services:
       PORT: "8000"
       LOG_LEVEL: "INFO"
       AE_PIPELINE_DIR: "/app/pipeline_runs_cs"
-      AE_EXPERIMENTS_DB: "/app/artifacts/experiments/experiments.sqlite"
     volumes:
       - ./pipeline_runs_cs:/app/pipeline_runs_cs
       - ./logs:/app/logs

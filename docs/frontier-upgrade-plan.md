@@ -161,22 +161,6 @@ This phase changes the *selection math* to improve the probability of finding hi
 
 ---
 
-### Phase 6 — Agentic experiment manager (self-evolve + dashboard control)
-**Deliverables**
-- Upgrade `scripts/self_evolve.py` into a tracked experiment system:
-  - SQLite registry: configs, diffs, seeds, metrics, run paths, git SHA, dataset hash.
-  - dashboard UI to start/monitor sessions, approve/reject candidates, and replay the best.
-- Make optimization explicitly multi-objective with Sharpe dominance:
-  - primary objective Sharpe; correlation only influences decisions when Sharpe is close or above a threshold.
-
-**Acceptance**
-- One click: run a session, compare candidates, replay the winner, and know exactly what changed.
-
-**Tests**
-- DB tests, replay tests, and a 1-iteration end-to-end integration test.
-
----
-
 ### Phase 7 — Productionization (optional, high leverage)
 **Deliverables**
 - Docker/compose, CI gates (python tests + UI build + quick benchmark).
@@ -190,4 +174,3 @@ This phase changes the *selection math* to improve the probability of finding hi
 4) Phase 4 (math upgrades with unit tests + benchmark harness hooks).
 5) Phase 5 (prove improvements).
 6) Phase 6–7 (agentic sessions + hardening).
-

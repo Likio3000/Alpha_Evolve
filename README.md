@@ -140,15 +140,6 @@ For a quick end-to-end sanity check, run:
 sh scripts/smoke_run.sh
 ```
 
-## Guided Self-Evolution
-
-- Run the autonomous controller with `uv run scripts/self_evolve.py` and a search-space file (sample: `configs/self_evolution/sample_equity_space.json`).
-- After each pipeline run the agent writes its analysis to `agent_briefings.jsonl` and pauses until you edit `pending_action.json` to approve/reject the next iteration.
-- The handshake file also embeds the proposed config; tweak it before setting `status: approved` if you want to adjust parameters manually.
-- Artefacts (run dirs, briefing log, pending action, generated configs) live in `pipeline_runs_cs/self_evolution/self_evo_session_*`. The CLI exposes `--auto-approve` for unattended loops.
-- Open the dashboard’s Self-Play page (via the top-bar Self-Play button) to see the same information, launch sessions, and send approve/request/stop actions without editing JSON manually. Notes entered there are persisted to `pending_action.json`.
-- See `docs/guides/self-evolution.md` for full details on the approval workflow and available configuration knobs.
-
 ## Configuration layering (TOML/YAML, env, CLI)
 
 You can now provide configuration via a file and environment variables, with the

@@ -9,7 +9,6 @@ from django.views.generic import RedirectView
 from alpha_evolve.dashboard.api import health, metrics, ui_meta
 from alpha_evolve.dashboard.api.routes import (
     config,
-    experiments,
     run_pipeline,
     runs,
 )
@@ -70,27 +69,6 @@ urlpatterns = [
     path("api/config/presets", config.get_presets),
     path("api/config/preset-values", config.get_preset_values),
     path("api/config/save", config.save_config),
-    path("api/experiments/search-spaces", experiments.search_spaces),
-    path("api/experiments/start", experiments.start_session),
-    path("api/experiments/sessions", experiments.list_sessions),
-    path("api/experiments/sessions/<str:session_id>", experiments.get_session),
-    path(
-        "api/experiments/sessions/<str:session_id>/iterations",
-        experiments.list_iterations,
-    ),
-    path(
-        "api/experiments/sessions/<str:session_id>/proposals",
-        experiments.list_proposals,
-    ),
-    path(
-        "api/experiments/sessions/<str:session_id>/proposals/<int:proposal_id>/decision",
-        experiments.decide_proposal,
-    ),
-    path("api/experiments/sessions/<str:session_id>/stop", experiments.stop_session),
-    path(
-        "api/experiments/sessions/<str:session_id>/export-best-config",
-        experiments.export_best_config,
-    ),
     path("api/pipeline/run", run_pipeline.start_pipeline_run),
     path("api/pipeline/stop/<str:job_id>", run_pipeline.stop),
     path("api/pipeline/events/<str:job_id>", run_pipeline.sse_events),

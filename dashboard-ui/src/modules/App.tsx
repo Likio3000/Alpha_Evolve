@@ -14,7 +14,6 @@ import { HeaderNav, TabId } from "./components/HeaderNav";
 import { RunnerCanvas } from "./components/RunnerCanvas";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { IntroductionPage } from "./components/IntroductionPage";
-import { ExperimentManager } from "./components/ExperimentManager";
 import { Zap } from "lucide-react";
 
 // Hooks
@@ -219,19 +218,19 @@ export function App(): React.ReactElement {
                   </h2>
                   <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">{selectedRun.path}</div>
                 </div>
-              ) : (
-                <div className="flex h-[300px] w-full items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-white/[0.02] group transition-all duration-500 hover:bg-white/[0.04]">
-                  <div className="flex flex-col items-center gap-4 text-center">
-                    <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10 group-hover:rotate-12 transition-transform duration-500">
-                      <Zap className="w-8 h-8 text-muted-foreground" />
-                    </div>
-                    <div className="space-y-1">
-                      <h3 className="text-xl font-bold">No Run Selected</h3>
-                      <p className="text-sm text-muted-foreground max-w-[200px]">Select an experiment from the sidebar to view detailed analytics.</p>
-                    </div>
-                  </div>
-                </div>
-              )}
+	              ) : (
+	                <div className="flex h-[300px] w-full items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-white/[0.02] group transition-all duration-500 hover:bg-white/[0.04]">
+	                  <div className="flex flex-col items-center gap-4 text-center">
+	                    <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10 group-hover:rotate-12 transition-transform duration-500">
+	                      <Zap className="w-8 h-8 text-muted-foreground" />
+	                    </div>
+	                    <div className="space-y-1">
+	                      <h3 className="text-xl font-bold">No Run Selected</h3>
+	                      <p className="text-sm text-muted-foreground max-w-[200px]">Select a run from the sidebar to view detailed analytics.</p>
+	                    </div>
+	                  </div>
+	                </div>
+	              )}
 
               {backtestLoading && (
                 <div className="flex items-center gap-3 text-muted-foreground text-sm font-mono animate-pulse">
@@ -310,17 +309,6 @@ export function App(): React.ReactElement {
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-700">
             <div className="glass-panel p-8 rounded-[2rem] border-white/5 shadow-2xl">
               <SettingsPanel onNotify={(msg) => setBanner(msg)} />
-            </div>
-          </div>
-        )}
-
-        {activeTab === "experiments" && (
-          <div className="animate-in fade-in slide-in-from-bottom-2 duration-700">
-            <div className="glass-panel p-8 rounded-[2rem] border-white/5 shadow-2xl">
-              <ExperimentManager
-                onNotify={(msg) => setBanner(msg)}
-                onReplayPipeline={handleStartPipeline}
-              />
             </div>
           </div>
         )}

@@ -96,7 +96,7 @@ export function IntroductionPage(): React.ReactElement {
               <span className="text-xl font-bold text-primary">03</span>
             </div>
             <div className="space-y-2">
-              <h4 className="font-bold text-lg">Experiment Orchestration</h4>
+              <h4 className="font-bold text-lg">Dashboard Orchestration</h4>
               <p className="text-sm text-muted-foreground leading-relaxed max-w-3xl">
                 Isolated dashboard server streams SSE updates (<code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">status</code>, <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-xs">progress</code>), persists artefacts under <code className="bg-white/5 px-2 py-0.5 rounded font-mono text-primary text-xs">pipeline_runs_cs/</code>, and exposes REST endpoints for closed-loop self-evolution.
               </p>

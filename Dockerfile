@@ -14,8 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOST=0.0.0.0 \
     PORT=8000 \
-    AE_PIPELINE_DIR=/app/pipeline_runs_cs \
-    AE_EXPERIMENTS_DB=/app/artifacts/experiments/experiments.sqlite
+    AE_PIPELINE_DIR=/app/pipeline_runs_cs
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -37,4 +36,3 @@ RUN pip install --no-cache-dir -r requirements.txt && pip install -e .
 EXPOSE 8000
 
 CMD ["python", "scripts/run_dashboard.py"]
-

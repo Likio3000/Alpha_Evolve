@@ -35,10 +35,6 @@ echo "[smoke] api meta OK" >&2
 curl -fsS "$BASE_URL/ui-meta/pipeline-params" >/dev/null
 curl -fsS "$BASE_URL/ui-meta/evolution-params" >/dev/null
 
-echo "[smoke] experiments endpoints OK" >&2
-curl -fsS "$BASE_URL/api/experiments/search-spaces" >/dev/null
-curl -fsS "$BASE_URL/api/experiments/sessions?limit=5" >/dev/null
-
 if [ "$SKIP_UI_CAPTURE" != "1" ]; then
   echo "[smoke] playwright UI navigation (capture:screens)" >&2
   npm --prefix "$root/dashboard-ui" run capture:screens

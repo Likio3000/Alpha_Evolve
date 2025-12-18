@@ -53,7 +53,7 @@ export function RunList({
         <div className="flex flex-row items-center justify-between py-4 px-6 border-b border-white/5">
           <div className="flex flex-col">
             <h3 className="text-xs font-heading font-bold uppercase tracking-[0.2em] text-primary glow-text">Recent Runs</h3>
-            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-0.5">Experiment History</span>
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-0.5">Pipeline History</span>
           </div>
           <Button
             variant="ghost"
