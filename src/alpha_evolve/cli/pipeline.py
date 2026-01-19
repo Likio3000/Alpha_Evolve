@@ -410,7 +410,37 @@ def _evolve_and_save(cfg: EvolutionConfig, run_output_dir: Path) -> tuple[Path, 
     return out_file, len(hof)
 
 
-def _train_baselines(data_dir: str, out_dir: Path, *, retrain: bool = False) -> None:
+def _baseline_signature(cfg: BacktestConfig) -> dict:
+    return {
+        "data_dir": cfg.data_dir,
+        "strategy": cfg.max_lookback_data_option,
+        "min_common_points": cfg.min_common_points,
+        "eval_lag": cfg.eval_lag,
+        "hold": cfg.hold,
+        "scale": cfg.scale,
+        "winsor_p": cfg.winsor_p,
+        "long_short_n": cfg.long_short_n,
+        "net_exposure_target": cfg.net_exposure_target,
+        "fee": cfg.fee,
+        "stop_loss_pct": cfg.stop_loss_pct,
+        "sector_neutralize_positions": cfg.sector_neutralize_positions,
+        "volatility_target": cfg.volatility_target,
+        "volatility_lookback": cfg.volatility_lookback,
+        "max_leverage": cfg.max_leverage,
+        "min_leverage": cfg.min_leverage,
+        "dd_limit": cfg.dd_limit,
+        "dd_reduction": cfg.dd_reduction,
+        "annualization_factor": cfg.annualization_factor,
+    }
+
+
+def _normalize_baseline_cfg(cfg: BacktestConfig | str) -> BacktestConfig:
+    if isinstance(cfg, BacktestConfig):
+        return cfg
+    return BacktestConfig(data_dir=str(cfg))
+
+
+def _train_baselines(cfg: BacktestConfig | str, out_dir: Path, *, retrain: bool = False) -> None:
     """Train baseline models and dump their metrics as JSON.
 
     If a ``baseline_metrics.json`` file already exists inside ``data_dir`` and
@@ -418,31 +448,40 @@ def _train_baselines(data_dir: str, out_dir: Path, *, retrain: bool = False) -> 
     models.  Metrics are always written to ``out_dir``.
     """
     import json
-    from alpha_evolve.baselines.ga_tree import train_ga_tree
-    from alpha_evolve.baselines.rank_lstm import train_rank_lstm
+    from alpha_evolve.baselines.ml_ranker import train_ml_ranker
 
-    cache_path = Path(data_dir) / "baseline_metrics.json"
+    baseline_cfg = _normalize_baseline_cfg(cfg)
+    cache_path = Path(baseline_cfg.data_dir) / "baseline_metrics.json"
+    expected_sig = _baseline_signature(baseline_cfg)
 
     logger = logging.getLogger(__name__)
 
     if not retrain and cache_path.exists():
         with open(cache_path) as fh:
             metrics = json.load(fh)
-        logger.info(f"Loaded baseline metrics from cache → {cache_path}")
+        if metrics.get("_signature") == expected_sig:
+            logger.info(f"Loaded baseline metrics from cache → {cache_path}")
+        else:
+            metrics = None
+            logger.info("Baseline cache signature mismatch; retraining.")
     else:
+        metrics = None
+
+    if metrics is None:
         metrics = {
-            "ga_tree": train_ga_tree(data_dir),
-            "rank_lstm": train_rank_lstm(data_dir),
+            "_signature": expected_sig,
+            "ml_histgbm": train_ml_ranker(baseline_cfg, seed=baseline_cfg.seed),
         }
         with open(cache_path, "w") as fh:
             json.dump(metrics, fh, indent=2)
         logger.info(f"Trained baseline models and cached metrics → {cache_path}")
 
     name_map = {
-        "ga_tree": "GA tree",
-        "rank_lstm": "RankLSTM",
+        "ml_histgbm": "ML (HistGBM)",
     }
     for name, m in metrics.items():
+        if name.startswith("_"):
+            continue
         nm = name_map.get(name, name)
         logger.info(f"{nm} IC: {m['IC']:.4f} Sharpe: {m['Sharpe']:.4f}")
 
@@ -644,11 +683,7 @@ def run_pipeline_programmatic(
         except Exception:
             logger.info("Failed to write SUMMARY.json; continuing.")
         if opts.run_baselines:
-            _train_baselines(
-                bt_cfg.data_dir,
-                run_dir,
-                retrain=opts.retrain_baselines,
-            )
+            _train_baselines(bt_cfg, run_dir, retrain=opts.retrain_baselines)
         logger.info("\n✔  Pipeline finished – no programmes to back-test; artefacts in  %s", run_dir)
         return run_dir
 
@@ -716,11 +751,7 @@ def run_pipeline_programmatic(
         logger.info("Backtest plots skipped: %s", e)
 
     if opts.run_baselines:
-        _train_baselines(
-            bt_cfg.data_dir,
-            run_dir,
-            retrain=opts.retrain_baselines,
-        )
+        _train_baselines(bt_cfg, run_dir, retrain=opts.retrain_baselines)
 
     logger.info("\n✔  Pipeline finished – artefacts in  %s", run_dir)
     return run_dir

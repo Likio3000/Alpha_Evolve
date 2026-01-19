@@ -1,7 +1,13 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 
-export type TabId = "introduction" | "controls" | "overview" | "settings";
+export type TabId =
+  | "introduction"
+  | "controls"
+  | "overview"
+  | "ml-lab"
+  | "codex-mode"
+  | "settings";
 
 interface HeaderNavProps {
   active: TabId;
@@ -12,6 +18,8 @@ const TABS: Array<{ id: TabId; label: string }> = [
   { id: "introduction", label: "Introduction" },
   { id: "controls", label: "Pipeline Controls" },
   { id: "overview", label: "Backtest Analysis" },
+  { id: "ml-lab", label: "ML Lab" },
+  { id: "codex-mode", label: "Codex Mode" },
   { id: "settings", label: "Settings & Presets" },
 ];
 

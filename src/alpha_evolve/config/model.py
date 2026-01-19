@@ -67,7 +67,7 @@ class EvolutionConfig(DataConfig):
     parsimony_penalty: float = 0.002
     corr_penalty_w: float = 0.35
     corr_cutoff: float = 0.15
-    sharpe_proxy_w: float = 0.0
+    sharpe_proxy_w: float = 0.5
     ic_std_penalty_w: float = 0.10
     turnover_penalty_w: float = 0.05
     ic_tstat_w: float = 0.0  # weight for IC t-stat component
@@ -113,6 +113,7 @@ class EvolutionConfig(DataConfig):
     scale: str = "madz"
     # Optional preprocessing tweaks
     sector_neutralize: bool = True  # Demean positions by sector before IC
+    net_exposure_target: float = 0.25  # net long bias for IC/PNL evaluation
     winsor_p: float = 0.02  # Tail prob for 'winsor' scale
     # When using train/val splits, how to combine metrics: 'equal' or 'by_points'
     split_weighting: str = "equal"
@@ -153,8 +154,9 @@ class EvolutionConfig(DataConfig):
     ramp_min_gens: int = 5  # minimum generations to ramp over
 
     # selection criterion for breeding/elites while logging can still show ramped
-    # Options: 'ramped' (default fitness), 'fixed' (fitness_static), 'ic' (mean_ic)
-    selection_metric: str = "ramped"
+    # Options: 'ramped' (default fitness), 'fixed' (fitness_static), 'ic' (mean_ic),
+    # 'lcb'/'psr' (Sharpe-aware), or 'sharpe' (raw Sharpe proxy).
+    selection_metric: str = "psr"
     # One-sided z-score used when selection_metric="lcb" (lower confidence bound).
     selection_lcb_z: float = 1.645
     # optional: boost selection for novelty against HOF (0.0 disables)
@@ -206,6 +208,7 @@ class BacktestConfig(DataConfig):
     scale: str = "zscore"
     winsor_p: float = 0.02  # Tail prob for 'winsor' scale
     long_short_n: int = 0  # 0 → use all symbols
+    net_exposure_target: float = 0.25  # net long bias (0.0 = market neutral)
     # For daily equities use trading-day annualization (≈252)
     annualization_factor: float = 252
     seed: int = 42
@@ -217,12 +220,12 @@ class BacktestConfig(DataConfig):
     # Sector-neutralize daily target positions before final normalization.
     sector_neutralize_positions: bool = False
     # Volatility targeting on portfolio returns (daily). If <= 0, disabled.
-    volatility_target: float = 0.0  # target daily vol (e.g., 0.01 for 1%)
+    volatility_target: float = 0.012  # target daily vol (e.g., 0.01 for 1%)
     volatility_lookback: int = 30  # bars to estimate realized vol
-    max_leverage: float = 2.0  # cap on exposure multiplier
+    max_leverage: float = 3.0  # cap on exposure multiplier
     min_leverage: float = 0.25  # floor on exposure multiplier
     # Drawdown limiter: reduce exposure when DD exceeds threshold.
-    dd_limit: float = 0.0  # e.g., 0.15 for 15%; if <=0 disabled
+    dd_limit: float = 0.15  # e.g., 0.15 for 15%; if <=0 disabled
     dd_reduction: float = 0.5  # multiply exposure when beyond dd_limit
 
     # Optional ensemble backtest (disabled by default)

@@ -471,4 +471,17 @@ def run_details(request: HttpRequest):
         if extra_meta:
             payload["meta"] = extra_meta
 
+    baseline_metrics = _safe_read_json(resolved / "baseline_metrics.json")
+    if baseline_metrics is None:
+        bt_cfg = payload.get("meta", {}).get("backtest_config")
+        if isinstance(bt_cfg, dict):
+            data_dir = bt_cfg.get("data_dir")
+            if isinstance(data_dir, str) and data_dir:
+                base_path = Path(data_dir)
+                if not base_path.is_absolute():
+                    base_path = (ROOT / base_path).resolve()
+                baseline_metrics = _safe_read_json(base_path / "baseline_metrics.json")
+    if baseline_metrics is not None:
+        payload["baseline_metrics"] = baseline_metrics
+
     return json_response(payload)

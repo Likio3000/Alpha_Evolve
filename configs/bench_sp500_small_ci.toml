@@ -3,6 +3,7 @@ data_dir = "data_sp500_small"
 max_lookback_data_option = "full_overlap"
 min_common_points = 500
 eval_lag = 1
+net_exposure_target = 0.25
 
 # CI-friendly: keep runtime bounded.
 generations = 1
@@ -31,11 +32,17 @@ hold = 1
 scale = "zscore"
 winsor_p = 0.02
 long_short_n = 0
+net_exposure_target = 0.25
 annualization_factor = 252
+volatility_target = 0.012
+volatility_lookback = 30
+max_leverage = 3.0
+min_leverage = 0.25
+dd_limit = 0.15
+dd_reduction = 0.5
 
 ensemble_mode = true
 ensemble_size = 2
 ensemble_max_corr = 0.7
 ensemble_corr_lambda = 0.2
 ensemble_weighting = "equal"
-

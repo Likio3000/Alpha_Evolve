@@ -9,6 +9,8 @@ from django.views.generic import RedirectView
 from alpha_evolve.dashboard.api import health, metrics, ui_meta
 from alpha_evolve.dashboard.api.routes import (
     config,
+    codex_mode,
+    ml_lab,
     run_pipeline,
     runs,
 )
@@ -83,6 +85,15 @@ urlpatterns = [
     path("api/run-details", runs.run_details),
     path("api/run-asset", runs.run_asset),
     path("api/run-assets", runs.run_assets),
+    path("api/ml-lab/models", ml_lab.list_models),
+    path("api/ml-lab/runs", ml_lab.list_runs),
+    path("api/ml-lab/run-details", ml_lab.run_details),
+    path("api/ml-lab/run", ml_lab.start_run),
+    path("api/ml-lab/stop/<str:job_id>", ml_lab.stop_run),
+    path("api/codex-mode/summary", codex_mode.summary),
+    path("api/codex-mode/settings", codex_mode.update_settings),
+    path("api/codex-mode/start", codex_mode.start_watcher),
+    path("api/codex-mode/stop", codex_mode.stop_watcher),
     path("favicon.ico", _serve_favicon),
     path(".well-known/appspecific/com.chrome.devtools.json", _chrome_devtools_manifest),
 ]

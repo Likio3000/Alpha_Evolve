@@ -17,6 +17,7 @@ from alpha_evolve.programs.types import (
     SCALAR_FEATURE_NAMES,
 )
 from alpha_evolve.backtesting.metrics import compute_max_drawdown
+from alpha_evolve.utils.exposure import apply_net_exposure_target
 from alpha_evolve.utils import stats as ae_stats
 
 
@@ -113,6 +114,7 @@ _EVAL_CONFIG = {
     "ic_scale_method": "zscore",  # from args.scale
     "winsor_p": 0.01,  # winsorization tail prob for 'winsor'
     "sector_neutralize": False,  # optionally demean by sector before IC
+    "net_exposure_target": 0.0,  # net long bias applied to PnL/turnover
     "sharpe_proxy_weight": 0.0,
     "ic_std_penalty_weight": 0.0,
     "turnover_penalty_weight": 0.0,
@@ -239,6 +241,7 @@ def configure_evaluation(
     *,
     split_weighting: str | None = None,
     sector_neutralize: bool = False,
+    net_exposure_target: float = 0.0,
     winsor_p: float = 0.01,
     # Optional: add deterministic jitter to parsimony penalty to improve ops variance
     parsimony_jitter_pct: float = 0.0,
@@ -267,6 +270,7 @@ def configure_evaluation(
     _EVAL_CONFIG["flat_bar_threshold"] = flat_bar_threshold
     _EVAL_CONFIG["ic_scale_method"] = scale_method
     _EVAL_CONFIG["sector_neutralize"] = bool(sector_neutralize)
+    _EVAL_CONFIG["net_exposure_target"] = float(net_exposure_target)
     _EVAL_CONFIG["winsor_p"] = float(winsor_p)
     _EVAL_CONFIG["sharpe_proxy_weight"] = sharpe_proxy_weight
     _EVAL_CONFIG["ic_std_penalty_weight"] = ic_std_penalty_weight
@@ -803,6 +807,7 @@ def evaluate_program(
     ic_values_by_h: Dict[int, List[float]] = {h: [] for h in horizons}
     pnl_values_by_h: Dict[int, List[float]] = {h: [] for h in horizons}
 
+    net_target = float(_EVAL_CONFIG.get("net_exposure_target", 0.0) or 0.0)
     factor_penalty_weight = float(_EVAL_CONFIG.get("factor_penalty_weight", 0.0) or 0.0)
     factor_names_cfg = _EVAL_CONFIG.get("factor_penalty_factors", tuple())
     factor_names: tuple[str, ...]
@@ -1022,6 +1027,12 @@ def evaluate_program(
                     _cache_set(fp, result)
                     return result
 
+            if net_target > 0.0:
+                pnl_positions_t = apply_net_exposure_target(
+                    processed_predictions_t, net_target
+                )
+            else:
+                pnl_positions_t = processed_predictions_t
             # IC calculation
             for horizon in horizons:
                 ret_matrix = returns_by_horizon.get(horizon)
@@ -1036,7 +1047,7 @@ def evaluate_program(
                     r_rets = _average_rank_ties(actual_returns_t)
                     ic_t = _safe_corr_eval(r_pred, r_rets)
                     ic_value = 0.0 if np.isnan(ic_t) else ic_t
-                    pnl_val = float(np.mean(processed_predictions_t * actual_returns_t))
+                    pnl_val = float(np.mean(pnl_positions_t * actual_returns_t))
                 ic_values_by_h[horizon].append(ic_value)
                 pnl_values_by_h[horizon].append(pnl_val)
                 if horizon == primary_horizon:
@@ -1067,11 +1078,9 @@ def evaluate_program(
     def _neutralize(mat: np.ndarray) -> np.ndarray:
         if mat.ndim != 2 or mat.shape[1] == 0:
             return mat
-        centered = mat - mat.mean(axis=1, keepdims=True)
-        l1 = np.sum(np.abs(centered), axis=1, keepdims=True)
-        # Use np.divide with a mask to avoid RuntimeWarning on 0/0
-        out = np.zeros_like(centered)
-        np.divide(centered, l1, out=out, where=l1 > 1e-9)
+        out = np.zeros_like(mat)
+        for row in range(mat.shape[0]):
+            out[row] = apply_net_exposure_target(mat[row], net_target)
         return out
 
     total_steps = len(daily_ic_values)

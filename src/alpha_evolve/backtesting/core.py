@@ -17,6 +17,7 @@ import pandas as pd  # For DataFrame rolling in hold period
 
 from alpha_evolve.evolution.data import DERIVED_VECTOR_FEATURES, get_sector_groups
 from .metrics import compute_max_drawdown
+from alpha_evolve.utils.exposure import apply_net_exposure_target
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,7 @@ def backtest_cross_sectional_alpha(
     initial_state_vars_config: Dict[str, str],  # e.g. {"prev_s1_vec": "vector"}
     scalar_feature_names: List[str],  # Pass these from calling script
     cross_sectional_feature_vector_names: List[str],  # Pass these
+    net_exposure_target: float = 0.0,
     winsor_p: float | None = None,
     debug_prints: bool = False,  # For optional debug prints
     annualization_factor: float
@@ -426,6 +428,8 @@ def backtest_cross_sectional_alpha(
     long_short_n : int
         When positive, constructs an equal‑weighted long/short basket of the
         top/bottom ``long_short_n`` names each bar.
+    net_exposure_target : float
+        Target net exposure (0 = market neutral, positive = net long bias).
     initial_state_vars_config : Dict[str, str]
         Mapping of state variable names to their type (``vector``, ``matrix``,
         or scalar) used to initialise ``program_state`` returned by
@@ -583,13 +587,9 @@ def backtest_cross_sectional_alpha(
             # Demean within sector buckets using precomputed groups
             for mask in sector_bucket_masks:
                 neutralized_signal_t[mask] -= np.mean(neutralized_signal_t[mask])
-        # Final L1 neutralization
-        sum_abs_centered_signal = np.sum(np.abs(neutralized_signal_t))
-        if sum_abs_centered_signal > 1e-9:
-            neutralized_signal_t = neutralized_signal_t / sum_abs_centered_signal
-        else:
-            neutralized_signal_t = np.zeros_like(neutralized_signal_t)
-        target_positions_matrix[t, :] = neutralized_signal_t
+        target_positions_matrix[t, :] = apply_net_exposure_target(
+            neutralized_signal_t, net_exposure_target
+        )
 
     if debug_prints:
         logger.debug(
@@ -602,13 +602,8 @@ def backtest_cross_sectional_alpha(
         held_positions_temp = df_held_pos.values
         for t in range(held_positions_temp.shape[0]):  # Re-neutralize after rolling
             current_pos_t = held_positions_temp[t, :]
-            mean_pos_t = np.mean(current_pos_t)
-            centered_pos_t = current_pos_t - mean_pos_t
-            sum_abs_centered_pos = np.sum(np.abs(centered_pos_t))
-            target_positions_matrix[t, :] = (
-                (centered_pos_t / sum_abs_centered_pos)
-                if sum_abs_centered_pos > 1e-9
-                else np.zeros_like(centered_pos_t)
+            target_positions_matrix[t, :] = apply_net_exposure_target(
+                current_pos_t, net_exposure_target
             )
 
     actual_positions = np.zeros_like(target_positions_matrix)
@@ -811,6 +806,8 @@ def backtest_cross_sectional_alpha(
     annualized_volatility = std_ret * np.sqrt(annualization_factor)
     max_dd = _max_drawdown(equity_curve)
     avg_daily_turnover_fraction = np.mean(abs_pos_diff_sum) / 2.0
+    net_exposure_series = np.sum(scaled_positions, axis=1)
+    gross_exposure_series = np.sum(np.abs(scaled_positions), axis=1)
 
     result = {
         "Sharpe": sharpe_ratio,
@@ -823,6 +820,9 @@ def backtest_cross_sectional_alpha(
         "StopBars": stop_hit_bars,
         "VolTarget": float(volatility_target),
         "DDLimit": float(dd_limit),
+        "NetExposureMean": float(np.mean(net_exposure_series)),
+        "NetExposureMedian": float(np.median(net_exposure_series)),
+        "GrossExposureMean": float(np.mean(gross_exposure_series)),
         # Time series for diagnostics
         "EquityCurve": equity_curve,
         "ExposureMult": exposure_mult,

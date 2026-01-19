@@ -18,7 +18,7 @@ Use this reference as the canonical description of the knobs exposed through the
 - `hof_size`, `hof_per_gen` – hall-of-fame capacity and per-generation additions.
 
 ## Selection & Ramping
-- `selection_metric` – ranking strategy (`ramped`, `fixed`, `pure_ic`, `auto`, `phased`).
+- `selection_metric` – ranking strategy (`ramped`, `fixed`, `ic`, `lcb`, `psr`, `sharpe`, `auto`, `phased`).
 - `ramp_fraction`, `ramp_min_gens` – progression speed from exploratory to final weights.
 - `ic_phase_gens` – IC-only warmup for the phased schedule.
 - `rank_softmax_beta_floor/target` – temperature bounds for rank-based sampling.

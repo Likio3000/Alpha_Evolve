@@ -117,12 +117,21 @@ def _sync_evolution_configs_from_config(
         ic_tstat_weight=cfg.ic_tstat_w,
         factor_penalty_weight=getattr(cfg, "factor_penalty_w", 0.0),
         factor_penalty_factors=getattr(cfg, "factor_penalty_factors", ""),
+        stress_penalty_weight=getattr(cfg, "stress_penalty_w", 0.0),
+        stress_fee_bps=getattr(cfg, "stress_fee_bps", 5.0),
+        stress_slippage_bps=getattr(cfg, "stress_slippage_bps", 2.0),
+        stress_shock_scale=getattr(cfg, "stress_shock_scale", 1.5),
+        stress_tail_fee_bps=getattr(cfg, "stress_tail_fee_bps", 10.0),
+        stress_tail_slippage_bps=getattr(cfg, "stress_tail_slippage_bps", 3.5),
+        stress_tail_shock_scale=getattr(cfg, "stress_tail_shock_scale", 2.5),
+        transaction_cost_bps=getattr(cfg, "transaction_cost_bps", 0.0),
         evaluation_horizons=horizons,
         use_train_val_splits=cfg.use_train_val_splits,
         train_points=cfg.train_points,
         val_points=cfg.val_points,
         split_weighting=getattr(cfg, "split_weighting", "equal"),
         sector_neutralize=cfg.sector_neutralize,
+        net_exposure_target=getattr(cfg, "net_exposure_target", 0.0),
         winsor_p=cfg.winsor_p,
         parsimony_jitter_pct=cfg.parsimony_jitter_pct,
         # Provide fixed weights for logging/secondary fitness (no ramp)
@@ -137,6 +146,7 @@ def _sync_evolution_configs_from_config(
         cv_embargo=getattr(cfg, "cv_embargo", 0),
         cv_agg_mode=getattr(cfg, "cv_agg_mode", "mean"),
         cv_trim_frac=getattr(cfg, "cv_trim_frac", 0.1),
+        regime_diagnostic_factors=getattr(cfg, "regime_diagnostic_factors", None),
     )
     _initialize_qd_archive(cfg)
     initialize_hof(
@@ -391,6 +401,7 @@ def evolve_with_context(
                     val_points=cfg.val_points,
                     split_weighting=getattr(cfg, "split_weighting", "equal"),
                     sector_neutralize=cfg.sector_neutralize,
+                    net_exposure_target=getattr(cfg, "net_exposure_target", 0.0),
                     winsor_p=cfg.winsor_p,
                     hof_corr_mode=getattr(cfg, "hof_corr_mode", "flat"),
                     temporal_decay_half_life=getattr(
@@ -574,6 +585,12 @@ def evolve_with_context(
                             )
                         else:
                             base_score = float(res.mean_ic)
+                elif sel == "sharpe":
+                    sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
+                    if np.isfinite(sharpe):
+                        base_score = sharpe
+                    else:
+                        base_score = float(res.mean_ic)
                 elif sel == "phased":
                     # Early phase: pure IC, mid: ramped, late: fixed
                     if gen < int(getattr(cfg, "ic_phase_gens", 0)):
@@ -741,6 +758,11 @@ def evolve_with_context(
                         ic_std = float(getattr(res, "ic_std", 0.0))
                         if ic_n > 1 and np.isfinite(ic_std) and ic_std > 1e-12:
                             return float(res.mean_ic) * float(math.sqrt(ic_n)) / ic_std
+                        return float(res.mean_ic)
+                    if sel == "sharpe":
+                        sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
+                        if np.isfinite(sharpe):
+                            return sharpe
                         return float(res.mean_ic)
                     if sel == "phased" and (
                         gen < int(getattr(cfg, "ic_phase_gens", 0))

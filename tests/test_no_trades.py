@@ -31,6 +31,7 @@ def test_constant_signal_no_trades():
         lag=1,
         hold=1,
         long_short_n=0,
+        net_exposure_target=0.0,
         scale_method="zscore",
         initial_state_vars_config={"prev_s1_vec": "vector"},
         scalar_feature_names=SCALAR_FEATURE_NAMES,

@@ -14,6 +14,13 @@ import {
   ParamMetaResponse,
   PipelineRunRequest,
   PipelineRunResponse,
+  MLModelSpec,
+  MLRunDetails,
+  MLRunRequest,
+  MLRunResponse,
+  MLRunSummary,
+  CodexModeSettings,
+  CodexModeSummary,
   RunDetails,
   RunLabelPayload,
   RunSummary,
@@ -112,6 +119,7 @@ interface RunDetailsResponse {
   summary?: Record<string, unknown>;
   ui_context?: RunDetails["uiContext"];
   meta?: Record<string, unknown> | null;
+  baseline_metrics?: Record<string, unknown> | null;
 }
 
 export async function fetchRunDetails(runDir: string): Promise<RunDetails> {
@@ -125,6 +133,7 @@ export async function fetchRunDetails(runDir: string): Promise<RunDetails> {
     summary: data.summary ?? null,
     uiContext: data.ui_context ?? null,
     meta: data.meta ?? null,
+    baselineMetrics: data.baseline_metrics ?? null,
   };
 }
 
@@ -189,4 +198,210 @@ export async function fetchPipelineParamsMeta(): Promise<ParamMetaResponse> {
 
 export async function fetchEvolutionParamsMeta(): Promise<ParamMetaResponse> {
   return request<ParamMetaResponse>("/ui-meta/evolution-params");
+}
+
+interface MlModelsResponse {
+  models: Array<{
+    id: string;
+    label: string;
+    description?: string | null;
+    presets?: Array<{
+      name: string;
+      description?: string | null;
+      params?: Record<string, unknown>;
+    }>;
+    default_preset?: string | null;
+  }>;
+}
+
+export async function fetchMlModels(): Promise<MLModelSpec[]> {
+  const data = await request<MlModelsResponse>("/api/ml-lab/models");
+  const models = Array.isArray(data.models) ? data.models : [];
+  return models.map((model) => ({
+    id: model.id,
+    label: model.label,
+    description: model.description ?? null,
+    presets: (model.presets ?? []).map((preset) => ({
+      name: preset.name,
+      description: preset.description ?? null,
+      params: preset.params ?? {},
+    })),
+    defaultPreset: model.default_preset ?? null,
+  }));
+}
+
+interface MlRunSummaryResponse {
+  name: string;
+  path: string;
+  status?: string | null;
+  best_sharpe?: number | null;
+  completed?: number | null;
+  total?: number | null;
+  started_at?: string | null;
+}
+
+export async function fetchMlRuns(limit = 50): Promise<MLRunSummary[]> {
+  const data = await request<MlRunSummaryResponse[]>(`/api/ml-lab/runs?limit=${encodeURIComponent(limit)}`);
+  return data.map((item) => ({
+    name: item.name,
+    path: item.path,
+    status: item.status ?? null,
+    bestSharpe: item.best_sharpe ?? null,
+    completed: item.completed ?? null,
+    total: item.total ?? null,
+    startedAt: item.started_at ?? null,
+  }));
+}
+
+interface MlRunDetailsResponse {
+  name: string;
+  path: string;
+  summary?: Record<string, unknown> | null;
+  results?: Array<Record<string, unknown>> | null;
+  spec?: Record<string, unknown> | null;
+  meta?: Record<string, unknown> | null;
+}
+
+export async function fetchMlRunDetails(runDir: string): Promise<MLRunDetails> {
+  const params = new URLSearchParams({ run_dir: runDir });
+  const data = await request<MlRunDetailsResponse>(`/api/ml-lab/run-details?${params.toString()}`);
+  const results = Array.isArray(data.results) ? data.results : [];
+  const asNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    name: data.name,
+    path: data.path,
+    summary: data.summary ?? null,
+    results: results.map((item) => ({
+      modelId: typeof item.model_id === "string" ? item.model_id : String(item.model_id ?? ""),
+      modelLabel: typeof item.model_label === "string" ? item.model_label : null,
+      variant: typeof item.variant === "string" ? item.variant : String(item.variant ?? ""),
+      preset: typeof item.preset === "string" ? item.preset : null,
+      params: (item.params as Record<string, unknown>) ?? null,
+      status: typeof item.status === "string" ? item.status : null,
+      error: typeof item.error === "string" ? item.error : null,
+      Sharpe: asNumber(item.Sharpe),
+      AnnReturn: asNumber(item.AnnReturn),
+      AnnVol: asNumber(item.AnnVol),
+      MaxDD: asNumber(item.MaxDD),
+      Turnover: asNumber(item.Turnover),
+      IC: asNumber(item.IC),
+      NetExposureMean: asNumber(item.NetExposureMean),
+      NetExposureMedian: asNumber(item.NetExposureMedian),
+      GrossExposureMean: asNumber(item.GrossExposureMean),
+    })),
+    spec: data.spec ?? null,
+    meta: data.meta ?? null,
+  };
+}
+
+export async function startMlRun(data: MLRunRequest): Promise<MLRunResponse> {
+  return request<MLRunResponse>("/api/ml-lab/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function stopMlRun(jobId: string): Promise<{ stopped: boolean }> {
+  return request<{ stopped: boolean }>(`/api/ml-lab/stop/${encodeURIComponent(jobId)}`, {
+    method: "POST",
+  });
+}
+
+interface CodexSummaryResponse {
+  settings?: CodexModeSettings;
+  state?: Record<string, unknown>;
+  events?: Array<Record<string, unknown>>;
+  inbox?: string | null;
+  experiments?: string | null;
+  session_prompt?: string | null;
+  review_needed?: boolean;
+  watcher?: {
+    running?: boolean;
+    pid?: number | null;
+    log_file?: string | null;
+  } | null;
+  updated_at?: string | null;
+}
+
+export async function fetchCodexSummary(): Promise<CodexModeSummary> {
+  const data = await request<CodexSummaryResponse>("/api/codex-mode/summary");
+  const events = Array.isArray(data.events) ? data.events : [];
+  const asNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    settings: data.settings ?? {
+      notify: true,
+      review_interval: 3,
+      sleep_seconds: 15,
+      yolo_mode: false,
+      auto_run: false,
+      auto_run_command: "codex",
+      auto_run_mode: "terminal",
+      auto_run_cooldown: 300,
+    },
+    state: (data.state ?? {}) as CodexModeSummary["state"],
+    events: events.map((item) => ({
+      ts: typeof item.ts === "string" ? item.ts : null,
+      kind: typeof item.kind === "string" ? item.kind : null,
+      run_name: typeof item.run_name === "string" ? item.run_name : null,
+      run_dir: typeof item.run_dir === "string" ? item.run_dir : null,
+      sharpe: asNumber(item.sharpe),
+      status: typeof item.status === "string" ? item.status : null,
+      label: typeof item.label === "string" ? item.label : null,
+    })),
+    inbox: data.inbox ?? null,
+    experiments: data.experiments ?? null,
+    session_prompt: data.session_prompt ?? null,
+    review_needed: Boolean(data.review_needed),
+    watcher: data.watcher ?? null,
+    updated_at: data.updated_at ?? null,
+  };
+}
+
+export async function updateCodexSettings(payload: Partial<CodexModeSettings>): Promise<CodexModeSummary["settings"]> {
+  const data = await request<{ settings?: CodexModeSettings }>("/api/codex-mode/settings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return data.settings ?? {
+    notify: true,
+    review_interval: 3,
+    sleep_seconds: 15,
+    yolo_mode: false,
+    auto_run: false,
+    auto_run_command: "codex",
+    auto_run_mode: "terminal",
+    auto_run_cooldown: 300,
+  };
+}
+
+export async function startCodexWatcher(): Promise<{ started: boolean; pid?: number | null; detail?: string | null }> {
+  return request<{ started: boolean; pid?: number | null; detail?: string | null }>("/api/codex-mode/start", {
+    method: "POST",
+  });
+}
+
+export async function stopCodexWatcher(): Promise<{ stopped: boolean; detail?: string | null }> {
+  return request<{ stopped: boolean; detail?: string | null }>("/api/codex-mode/stop", {
+    method: "POST",
+  });
 }

@@ -29,14 +29,13 @@ def test_parse_args_run_baselines():
 
 
 def test_train_baselines_logs(tmp_path, caplog):
-    """Run baseline training helper and assert both baseline names are logged."""
+    """Run baseline training helper and assert ML baseline name is logged."""
     from alpha_evolve.cli.pipeline import _train_baselines
 
     caplog.set_level(logging.INFO)
     _train_baselines("tests/data/good", tmp_path)
     logged = "\n".join(r.message for r in caplog.records)
-    assert "GA tree" in logged
-    assert "RankLSTM" in logged
+    assert "ML (HistGBM)" in logged
 
 
 def test_write_summary_json_without_csv(tmp_path):

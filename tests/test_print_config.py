@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from pathlib import Path
 
 from alpha_evolve.cli.pipeline import parse_args
 
@@ -19,7 +20,7 @@ def test_pipeline_config_layering(tmp_path):
     evo_cfg, bt_cfg, ns = parse_args(["5", "--config", str(cfg_path)])
 
     assert evo_cfg.generations == 5  # positional overrides file
-    assert evo_cfg.data_dir == "file_data"
+    assert Path(evo_cfg.data_dir).name == "file_data"
     assert bt_cfg.top_to_backtest == 2
 
     payload = {"evolution": asdict(evo_cfg), "backtest": asdict(bt_cfg)}

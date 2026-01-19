@@ -1,5 +1,6 @@
 import sys
 from dataclasses import asdict
+from pathlib import Path
 
 
 def test_backtest_config_layering_precedence(monkeypatch, tmp_path):
@@ -81,8 +82,8 @@ def test_pipeline_config_layering_precedence(monkeypatch, tmp_path):
 
     # Positional generations wins; CLI data_dir wins, env overrides seed
     assert evo_cfg.generations == 7
-    assert evo_cfg.data_dir == "cli_data"
-    assert bt_cfg.data_dir == "cli_data"
+    assert Path(evo_cfg.data_dir).name == "cli_data"
+    assert Path(bt_cfg.data_dir).name == "cli_data"
     assert evo_cfg.seed == 123
     # backtest hold remains from file when no override
     assert bt_cfg.hold == 2

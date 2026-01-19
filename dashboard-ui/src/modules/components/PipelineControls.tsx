@@ -42,6 +42,7 @@ export function PipelineControls({
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [runBaselines, setRunBaselines] = useState(false);
 
   useEffect(() => {
     setDataset(defaultDataset);
@@ -147,6 +148,7 @@ export function PipelineControls({
       config: configPath || undefined,
       overrides,
       runner_mode: runnerMode || undefined,
+      run_baselines: runBaselines || undefined,
     };
     try {
       setMessage(null);
@@ -247,6 +249,23 @@ export function PipelineControls({
                 onChange={(event) => setPopSizeInput(event.target.value)}
                 disabled={busy}
               />
+            </div>
+
+            <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex items-center gap-2">
+                <input
+                  id="runBaselines"
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-white/20 text-primary focus:ring-primary"
+                  checked={runBaselines}
+                  onChange={(event) => setRunBaselines(event.target.checked)}
+                  disabled={busy}
+                />
+                <Label htmlFor="runBaselines" className="text-sm">Run ML baseline</Label>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Trains or reuses the ML baseline so you can compare Sharpe in the dashboard.
+              </p>
             </div>
 
             <div className="grid gap-2 md:col-span-2">

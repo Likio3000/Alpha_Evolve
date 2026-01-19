@@ -48,7 +48,7 @@ default_op_weight = 1.0
 parsimony_penalty = 0.002
 corr_penalty_w = 0.35
 corr_cutoff = 0.15
-sharpe_proxy_w = 0.0
+sharpe_proxy_w = 0.5
 ic_std_penalty_w = 0.10
 turnover_penalty_w = 0.05
 # Weight for IC t-stat contribution
@@ -74,6 +74,7 @@ stress_tail_shock_scale = 2.5
 scale = "madz"                            # zscore | rank | sign | madz | winsor
 winsor_p = 0.02
 sector_neutralize = true
+net_exposure_target = 0.25
 
 # Splits & caching
 use_train_val_splits = true
@@ -89,7 +90,7 @@ qd_max_entries = 256
 # Ramping / selection strategy
 ramp_fraction = 0.3333333333              # fraction of generations to ramp
 ramp_min_gens = 5
-selection_metric = "ramped"               # ramped | fixed | ic | lcb | psr | auto | phased
+selection_metric = "psr"                  # ramped | fixed | ic | lcb | psr | sharpe | auto | phased
 selection_lcb_z = 1.645                   # one-sided z-score for selection_metric=lcb
 novelty_boost_w = 0.0
 novelty_struct_w = 0.0
@@ -121,6 +122,7 @@ data_dir = "./data_sp500"
 max_lookback_data_option = "common_1200"
 min_common_points = 1200
 eval_lag = 1
+net_exposure_target = 0.25
 
 # Universe/selection
 top_to_backtest = 10
@@ -141,11 +143,11 @@ ensemble_corr_lambda = 0.0
 ensemble_weighting = "equal"
 
 # Risk controls
-volatility_target = 0.0
+volatility_target = 0.012
 volatility_lookback = 30
-max_leverage = 2.0
+max_leverage = 3.0
 min_leverage = 0.25
-dd_limit = 0.0
+dd_limit = 0.15
 dd_reduction = 0.5
 
 # Common seed (used by scripts that need repeatability)

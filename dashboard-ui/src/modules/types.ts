@@ -24,6 +24,9 @@ export interface BacktestRow {
   Ops: string | null;
   OriginalMetric: number | null;
   Program: string | null;
+  NetExposureMean?: number | null;
+  NetExposureMedian?: number | null;
+  GrossExposureMean?: number | null;
 }
 
 export interface AlphaTimeseries {
@@ -58,6 +61,8 @@ export interface PipelineRunRequest {
   data_dir?: string;
   overrides?: Record<string, Scalar>;
   runner_mode?: "auto" | "multiprocessing" | "subprocess";
+  run_baselines?: boolean;
+  retrain_baselines?: boolean;
 }
 
 export interface PipelineJobState {
@@ -156,6 +161,7 @@ export interface RunDetails {
   summary?: Record<string, unknown> | null;
   uiContext?: RunUIContext | null;
   meta?: Record<string, unknown> | null;
+  baselineMetrics?: Record<string, unknown> | null;
 }
 
 export interface ConfigDefaultsResponse {
@@ -208,4 +214,122 @@ export interface ParamMetaGroup {
 export interface ParamMetaResponse {
   schema_version: number;
   groups: ParamMetaGroup[];
+}
+
+export interface MLModelPreset {
+  name: string;
+  description?: string | null;
+  params: Record<string, unknown>;
+}
+
+export interface MLModelSpec {
+  id: string;
+  label: string;
+  description?: string | null;
+  presets: MLModelPreset[];
+  defaultPreset?: string | null;
+}
+
+export interface MLRunSummary {
+  name: string;
+  path: string;
+  status?: string | null;
+  bestSharpe?: number | null;
+  completed?: number | null;
+  total?: number | null;
+  startedAt?: string | null;
+}
+
+export interface MLRunResult {
+  modelId: string;
+  modelLabel?: string | null;
+  variant: string;
+  preset?: string | null;
+  params?: Record<string, unknown> | null;
+  status?: string | null;
+  error?: string | null;
+  Sharpe?: number | null;
+  AnnReturn?: number | null;
+  AnnVol?: number | null;
+  MaxDD?: number | null;
+  Turnover?: number | null;
+  IC?: number | null;
+  NetExposureMean?: number | null;
+  NetExposureMedian?: number | null;
+  GrossExposureMean?: number | null;
+}
+
+export interface MLRunDetails {
+  name: string;
+  path: string;
+  summary?: Record<string, unknown> | null;
+  results?: MLRunResult[] | null;
+  spec?: Record<string, unknown> | null;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface MLRunRequest {
+  dataset?: string;
+  config?: string;
+  data_dir?: string;
+  models: Array<{
+    id: string;
+    preset?: string | null;
+    params?: Record<string, unknown> | null;
+  }>;
+  train_fraction?: number;
+  train_points?: number;
+  test_points?: number;
+  seed?: number;
+  exclude_features?: string[];
+}
+
+export interface MLRunResponse {
+  job_id: string;
+  run_dir: string;
+}
+
+export interface CodexModeSettings {
+  notify: boolean;
+  review_interval: number;
+  sleep_seconds: number;
+  yolo_mode: boolean;
+  auto_run?: boolean;
+  auto_run_command?: string;
+  auto_run_mode?: string;
+  auto_run_cooldown?: number;
+}
+
+export interface CodexModeState {
+  seen_pipeline_runs?: string[];
+  seen_ml_runs?: string[];
+  runs_since_review?: number;
+  last_scan?: number;
+  last_autorun_ts?: number;
+}
+
+export interface CodexModeEvent {
+  ts?: string | null;
+  kind?: string | null;
+  run_name?: string | null;
+  run_dir?: string | null;
+  sharpe?: number | null;
+  status?: string | null;
+  label?: string | null;
+}
+
+export interface CodexModeSummary {
+  settings: CodexModeSettings;
+  state: CodexModeState;
+  events: CodexModeEvent[];
+  inbox?: string | null;
+  experiments?: string | null;
+  session_prompt?: string | null;
+  review_needed?: boolean;
+  watcher?: {
+    running?: boolean;
+    pid?: number | null;
+    log_file?: string | null;
+  } | null;
+  updated_at?: string | null;
 }

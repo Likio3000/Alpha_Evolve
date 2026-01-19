@@ -432,6 +432,7 @@ def run(
             lag=cfg.eval_lag,
             hold=cfg.hold,
             long_short_n=cfg.long_short_n,
+            net_exposure_target=cfg.net_exposure_target,
             scale_method=cfg.scale,
             winsor_p=cfg.winsor_p,
             initial_state_vars_config=_derive_state_vars(prog),

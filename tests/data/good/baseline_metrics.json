@@ -1,10 +1,28 @@
 {
-  "ga_tree": {
-    "IC": 0.7697275484443452,
-    "Sharpe": NaN
+  "_signature": {
+    "data_dir": "tests/data/good",
+    "strategy": "common_1200",
+    "min_common_points": 1200,
+    "eval_lag": 1,
+    "hold": 1,
+    "scale": "zscore",
+    "winsor_p": 0.02,
+    "long_short_n": 0,
+    "net_exposure_target": 0.25,
+    "fee": 1.0,
+    "stop_loss_pct": 0.0,
+    "sector_neutralize_positions": false,
+    "volatility_target": 0.012,
+    "volatility_lookback": 30,
+    "max_leverage": 3.0,
+    "min_leverage": 0.25,
+    "dd_limit": 0.15,
+    "dd_reduction": 0.5,
+    "annualization_factor": 252
   },
-  "rank_lstm": {
-    "IC": 0.9999999999999998,
-    "Sharpe": 0.0
+  "ml_histgbm": {
+    "IC": 0.0,
+    "Sharpe": 0.0,
+    "Error": "Not enough common history. Need 1200, got 4. After pruning 0 symbols, only 2 remain."
   }
 }

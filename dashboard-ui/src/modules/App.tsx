@@ -14,6 +14,8 @@ import { HeaderNav, TabId } from "./components/HeaderNav";
 import { RunnerCanvas } from "./components/RunnerCanvas";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { IntroductionPage } from "./components/IntroductionPage";
+import { MLLabPage } from "./components/MLLabPage";
+import { CodexModePage } from "./components/CodexModePage";
 import { Zap } from "lucide-react";
 
 // Hooks
@@ -23,7 +25,8 @@ import {
   useAlphaTimeseries,
   useStartPipeline,
   useStopJob,
-  useUpdateRunLabel
+  useUpdateRunLabel,
+  useRunDetails
 } from "@/hooks/use-dashboard";
 import { usePipelineStream } from "@/hooks/use-pipeline-stream";
 
@@ -44,6 +47,7 @@ export function App(): React.ReactElement {
 
   // Queries
   const { data: runs = [], isLoading: runsLoading, error: runsError } = useRuns();
+  const { data: runDetails, isLoading: runDetailsLoading, error: runDetailsError } = useRunDetails(selectedRunPath);
   const { data: backtestRows = [], isLoading: backtestLoading, error: backtestError } = useBacktestSummary(selectedRunPath);
   const selectedAlphaKey = useMemo(() => {
     if (!selectedRow) return null;
@@ -89,6 +93,38 @@ export function App(): React.ReactElement {
     if (!selectedRunPath) return null;
     return runs.find((run) => run.path === selectedRunPath) ?? null;
   }, [runs, selectedRunPath]);
+
+  const baselineInfo = useMemo(() => {
+    const metrics = runDetails?.baselineMetrics;
+    if (!metrics || typeof metrics !== "object") return null;
+    const entries = Object.entries(metrics as Record<string, unknown>)
+      .filter(([key, value]) => !key.startsWith("_") && value && typeof value === "object");
+    if (!entries.length) return null;
+    let best: { name: string; sharpe: number; annReturn?: number; maxDd?: number; turnover?: number } | null = null;
+    for (const [name, value] of entries) {
+      const payload = value as Record<string, unknown>;
+      const sharpeRaw = payload.Sharpe ?? payload.sharpe;
+      const sharpe = typeof sharpeRaw === "number" ? sharpeRaw : Number(sharpeRaw);
+      if (!Number.isFinite(sharpe)) continue;
+      if (!best || sharpe > best.sharpe) {
+        best = {
+          name,
+          sharpe,
+          annReturn: typeof payload.AnnReturn === "number" ? payload.AnnReturn : Number(payload.AnnReturn),
+          maxDd: typeof payload.MaxDD === "number" ? payload.MaxDD : Number(payload.MaxDD),
+          turnover: typeof payload.Turnover === "number" ? payload.Turnover : Number(payload.Turnover),
+        };
+      }
+    }
+    return best;
+  }, [runDetails?.baselineMetrics]);
+
+  const baselineDelta = useMemo(() => {
+    if (!baselineInfo || selectedRun?.sharpeBest === null || selectedRun?.sharpeBest === undefined) {
+      return null;
+    }
+    return selectedRun.sharpeBest - baselineInfo.sharpe;
+  }, [baselineInfo, selectedRun?.sharpeBest]);
 
   // Handlers
   const handleSelectRun = useCallback((run: RunSummary) => {
@@ -146,7 +182,7 @@ export function App(): React.ReactElement {
   }, []);
 
   return (
-    <div className="min-h-screen font-sans text-foreground flex flex-col antialiased relative overflow-x-hidden">
+    <div className="min-h-screen font-sans text-foreground flex flex-col antialiased relative overflow-x-auto">
       {/* Background decoration */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/20 blur-[120px] rounded-full" />
@@ -263,6 +299,51 @@ export function App(): React.ReactElement {
 
               {selectedRun && (
                 <div className="space-y-8 animate-in fade-in duration-500">
+                  {runDetailsError && (
+                    <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+                      {formatError(runDetailsError)}
+                    </div>
+                  )}
+                  {baselineInfo ? (
+                    <div className="grid md:grid-cols-3 gap-4">
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">ML Baseline</div>
+                        <div className="text-2xl font-bold font-mono mt-1">{baselineInfo.sharpe.toFixed(3)}</div>
+                        <div className="text-[11px] text-muted-foreground font-mono mt-2">
+                          {baselineInfo.name}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Run Best Sharpe</div>
+                        <div className="text-2xl font-bold font-mono mt-1">
+                          {selectedRun?.sharpeBest === null || selectedRun?.sharpeBest === undefined
+                            ? "—"
+                            : selectedRun.sharpeBest.toFixed(3)}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground font-mono mt-2">
+                          {selectedRun?.label || selectedRun?.name || "Selected run"}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Delta vs Baseline</div>
+                        <div className={`text-2xl font-bold font-mono mt-1 ${baselineDelta !== null && baselineDelta >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {baselineDelta === null ? "—" : `${baselineDelta >= 0 ? "+" : ""}${baselineDelta.toFixed(3)}`}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground font-mono mt-2">
+                          {baselineInfo.annReturn !== undefined && Number.isFinite(baselineInfo.annReturn)
+                            ? `AnnRet ${(baselineInfo.annReturn * 100).toFixed(1)}%`
+                            : "AnnRet —"}
+                        </div>
+                      </div>
+                    </div>
+                  ) : runDetailsLoading ? (
+                    <div className="text-xs text-muted-foreground font-mono">Loading ML baseline…</div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground font-mono">
+                      ML baseline not available. Enable "Run ML baseline" in Pipeline Controls or run with `--run_baselines`.
+                    </div>
+                  )}
+
                   <div className="glass-panel overflow-hidden rounded-2xl border-white/5 shadow-xl">
                     <BacktestTable
                       rows={backtestRows}
@@ -320,6 +401,14 @@ export function App(): React.ReactElement {
               </div>
             </div>
           </div>
+        )}
+
+        {activeTab === "ml-lab" && (
+          <MLLabPage onNotify={(msg) => setBanner(msg)} />
+        )}
+
+        {activeTab === "codex-mode" && (
+          <CodexModePage onNotify={(msg) => setBanner(msg)} />
         )}
 
         {activeTab === "settings" && (

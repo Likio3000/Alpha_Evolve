@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "../modules/api"; // Adjust path if needed
-import { RunSummary, BacktestRow, AlphaTimeseries, PipelineRunRequest } from "../modules/types";
+import {
+    RunSummary,
+    BacktestRow,
+    AlphaTimeseries,
+    PipelineRunRequest,
+    MLRunRequest,
+    CodexModeSettings,
+} from "../modules/types";
 
 // Keys
 export const keys = {
@@ -9,6 +16,11 @@ export const keys = {
     backtest: (path: string) => ["backtest", path],
     timeseries: (path: string, alphaId?: string, file?: string) => ["timeseries", path, alphaId, file],
     job: (id: string) => ["job", id],
+    mlModels: ["ml", "models"],
+    mlRuns: ["ml", "runs"],
+    mlRunDetails: (path: string) => ["ml", "run", path],
+    jobActivity: (id: string) => ["job", "activity", id],
+    codexSummary: ["codex", "summary"],
 };
 
 // Hooks
@@ -72,4 +84,93 @@ export function useUpdateRunLabel() {
             queryClient.invalidateQueries({ queryKey: keys.runDetails(vars.path) });
         }
     })
+}
+
+export function useMlModels() {
+    return useQuery({
+        queryKey: keys.mlModels,
+        queryFn: () => api.fetchMlModels(),
+        staleTime: 60 * 1000,
+    });
+}
+
+export function useMlRuns(limit = 50) {
+    return useQuery({
+        queryKey: keys.mlRuns,
+        queryFn: () => api.fetchMlRuns(limit),
+        staleTime: 10 * 1000,
+        refetchInterval: 30 * 1000,
+    });
+}
+
+export function useMlRunDetails(path: string | null) {
+    return useQuery({
+        queryKey: keys.mlRunDetails(path!),
+        queryFn: () => api.fetchMlRunDetails(path!),
+        enabled: !!path,
+    });
+}
+
+export function useStartMlRun() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (data: MLRunRequest) => api.startMlRun(data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: keys.mlRuns });
+        },
+    });
+}
+
+export function useStopMlRun() {
+    return useMutation({
+        mutationFn: (jobId: string) => api.stopMlRun(jobId),
+    });
+}
+
+export function useJobActivity(jobId: string | null, enabled = true) {
+    return useQuery({
+        queryKey: jobId ? keys.jobActivity(jobId) : ["job", "activity", "none"],
+        queryFn: () => api.fetchJobActivity(jobId as string),
+        enabled: Boolean(jobId && enabled),
+        refetchInterval: 5000,
+    });
+}
+
+export function useCodexSummary() {
+    return useQuery({
+        queryKey: keys.codexSummary,
+        queryFn: () => api.fetchCodexSummary(),
+        staleTime: 10 * 1000,
+        refetchInterval: 15 * 1000,
+    });
+}
+
+export function useUpdateCodexSettings() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (payload: Partial<CodexModeSettings>) => api.updateCodexSettings(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: keys.codexSummary });
+        },
+    });
+}
+
+export function useStartCodexWatcher() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: () => api.startCodexWatcher(),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: keys.codexSummary });
+        },
+    });
+}
+
+export function useStopCodexWatcher() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: () => api.stopCodexWatcher(),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: keys.codexSummary });
+        },
+    });
 }
