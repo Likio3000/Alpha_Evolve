@@ -35,6 +35,13 @@ _hof_raw_pred_matrix: List[
 ] = []  # store raw flattened predictions for exact-match fast path
 # Default correlation penalty configuration mirrors Section 9
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
+# Monotonic counter used to invalidate cross-generation eval caches when HOF state changes.
+_hof_state_version: int = 0
+
+
+def _bump_hof_state_version() -> None:
+    global _hof_state_version
+    _hof_state_version += 1
 
 
 def initialize_hof(
@@ -51,7 +58,11 @@ def initialize_hof(
         _hof_fingerprints_set, \
         _keep_dupes_in_hof_config, \
         _hof_min_fill
-    global _hof_rank_pred_matrix, _corr_penalty_config, _hof_corr_fingerprints
+    global \
+        _hof_rank_pred_matrix, \
+        _corr_penalty_config, \
+        _hof_corr_fingerprints, \
+        _hof_raw_pred_matrix
 
     _hof_programs_data = []
     _hof_max_size = max_size
@@ -63,6 +74,7 @@ def initialize_hof(
     _hof_corr_fingerprints = []
     _hof_raw_pred_matrix = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
+    _bump_hof_state_version()
     logging.getLogger(__name__).info(
         "Hall of Fame initialized: max_size=%s, keep_dupes=%s, corr_penalty_w=%s, corr_cutoff=%s, min_fill=%s",
         max_size,
@@ -82,10 +94,24 @@ def set_correlation_penalty(
     generations, then ramp up to the configured target weight.
     """
     global _corr_penalty_config
+    changed = False
     if weight is not None:
-        _corr_penalty_config["weight"] = float(weight)
+        w = float(weight)
+        if _corr_penalty_config.get("weight") != w:
+            _corr_penalty_config["weight"] = w
+            changed = True
     if cutoff is not None:
-        _corr_penalty_config["cutoff"] = float(cutoff)
+        c = float(cutoff)
+        if _corr_penalty_config.get("cutoff") != c:
+            _corr_penalty_config["cutoff"] = c
+            changed = True
+    if changed:
+        _bump_hof_state_version()
+
+
+def get_hof_state_version() -> int:
+    """Return a monotonic version for HOF/correlation state changes."""
+    return int(_hof_state_version)
 
 
 def _safe_corr(
@@ -401,10 +427,20 @@ def add_program_to_hof(
     ):
         cand_rank = _rank_vector(processed_preds_matrix.ravel())
         enforce_cutoff = len(_hof_programs_data) >= _hof_min_fill
+        hard_duplicate_cutoff = 0.995
         for hof_rank, hof_fp in zip(_hof_rank_pred_matrix, _hof_corr_fingerprints):
             if hof_fp == fp or len(hof_rank) != len(cand_rank):
                 continue
             corr = abs(_safe_corr(cand_rank, hof_rank))
+            if not np.isnan(corr) and corr >= hard_duplicate_cutoff:
+                logger.debug(
+                    "HOF hard-reject %s vs %s | corr=%.3f >= %.3f",
+                    fp[:8],
+                    hof_fp[:8],
+                    corr,
+                    hard_duplicate_cutoff,
+                )
+                return
             if (
                 enforce_cutoff
                 and not np.isnan(corr)
@@ -436,6 +472,7 @@ def add_program_to_hof(
 
     # Logic for adding to _hof_programs_data (main HOF for output)
     inserted = False
+    state_changed = False
     if not _keep_dupes_in_hof_config and fp in _hof_fingerprints_set:
         existing_idx = -1
         for i, entry in enumerate(_hof_programs_data):
@@ -450,40 +487,38 @@ def add_program_to_hof(
                 fp, metrics, program, generation
             )
             inserted = True
+            state_changed = True
         elif existing_idx == -1:
             _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
-            _hof_fingerprints_set.add(fp)
             inserted = True
+            state_changed = True
     else:
         _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
-        _hof_fingerprints_set.add(fp)
         inserted = True
-    if len(_hof_programs_data) > _hof_max_size:
-        removed_prog_data = _hof_programs_data.pop()
-        # If we remove a unique program, ensure its fingerprint is also removed from the set
-        # This needs care if multiple entries could share an fp (if _keep_dupes_in_hof_config was true)
-        # For now, assuming if _keep_dupes_in_hof_config is false, fingerprints in _hof_programs_data are unique.
-        if not any(
-            item.fingerprint == removed_prog_data.fingerprint
-            for item in _hof_programs_data
-        ):
-            _hof_fingerprints_set.discard(removed_prog_data.fingerprint)
+        state_changed = True
+    if inserted:
+        # Keep only the globally best entries; do not pop before sorting.
+        _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)
+        if len(_hof_programs_data) > _hof_max_size:
+            _hof_programs_data[:] = _hof_programs_data[:_hof_max_size]
+        _hof_fingerprints_set = {entry.fingerprint for entry in _hof_programs_data}
 
     # Logic for maintaining the list used for correlation penalty.
+    corr_state_changed = False
     if processed_preds_matrix is not None and metrics.fitness > -float("inf"):
         if fp not in _hof_corr_fingerprints:
             flat = processed_preds_matrix.ravel()
             _hof_rank_pred_matrix.append(_rank_vector(flat))
             _hof_raw_pred_matrix.append(flat.copy())
             _hof_corr_fingerprints.append(fp)
+            corr_state_changed = True
             if len(_hof_rank_pred_matrix) > _hof_max_size:
                 _hof_rank_pred_matrix.pop(0)
                 _hof_corr_fingerprints.pop(0)
                 _hof_raw_pred_matrix.pop(0)
+                corr_state_changed = True
 
     if inserted:
-        # Always keep HOF sorted by fitness, even on in-place updates
-        _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)
         top_entry = _hof_programs_data[0] if _hof_programs_data else None
         still_in_hof = any(entry.fingerprint == fp for entry in _hof_programs_data)
         new_best_fp = top_entry.fingerprint if top_entry is not None else None
@@ -504,6 +539,8 @@ def add_program_to_hof(
                 metrics.mean_ic,
                 program.size,
             )
+    if state_changed or corr_state_changed:
+        _bump_hof_state_version()
 
 
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
@@ -517,10 +554,14 @@ def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
     _hof_rank_pred_matrix.append(_rank_vector(flat))
     _hof_raw_pred_matrix.append(flat.copy())
     _hof_corr_fingerprints.append(program_fp)
+    changed = True
     if len(_hof_rank_pred_matrix) > _hof_max_size:
         _hof_rank_pred_matrix.pop(0)
         _hof_corr_fingerprints.pop(0)
         _hof_raw_pred_matrix.pop(0)
+        changed = True
+    if changed:
+        _bump_hof_state_version()
 
 
 def get_final_hof_programs() -> List[Tuple[AlphaProgram, float]]:
@@ -617,6 +658,7 @@ def clear_hof():
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _hof_raw_pred_matrix = []
+    _bump_hof_state_version()
     data.clear_feature_cache()
     logging.getLogger(__name__).info("Hall of Fame cleared.")
 

@@ -61,6 +61,7 @@ Use this reference as the canonical description of the knobs exposed through the
 - `rebalance_every` – rebalance cadence in bars.
 - `max_position_change` – optional turnover clamp per step.
 - `ensemble_mode`, `ensemble_size`, `ensemble_max_corr` – ensemble backtesting parameters.
+- `dedup_return_corr` – remove near-duplicate alphas (by net-return correlation) before summary/ensemble construction.
 
 ## Data Management
 - `data_dir` – directory containing input CSVs.

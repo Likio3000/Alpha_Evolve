@@ -59,15 +59,36 @@ class EvalResult:
 
 
 _eval_cache: "OrderedDict[str, EvalResult]" = OrderedDict()
+_eval_cache_tokens: Dict[str, tuple[int, int]] = {}
 _EVAL_CACHE_MAX_SIZE = 128
+# Monotonic version for evaluation configuration changes.
+_EVAL_CONFIG_VERSION = 0
+# Active token used by _cache_set during one evaluate_program call.
+_ACTIVE_CACHE_TOKEN: tuple[int, int] = (0, 0)
 
-
-def _cache_set(fp: str, value: EvalResult) -> None:
+def _cache_set(fp: str, value: EvalResult, cache_token: tuple[int, int] | None = None) -> None:
+    token = cache_token if cache_token is not None else _ACTIVE_CACHE_TOKEN
     if fp in _eval_cache:
         _eval_cache.move_to_end(fp)
     elif len(_eval_cache) >= _EVAL_CACHE_MAX_SIZE:
-        _eval_cache.popitem(last=False)
+        old_fp, _ = _eval_cache.popitem(last=False)
+        _eval_cache_tokens.pop(old_fp, None)
     _eval_cache[fp] = value
+    _eval_cache_tokens[fp] = token
+
+
+def _get_hof_state_version(hof_module: Any) -> int:
+    getter = getattr(hof_module, "get_hof_state_version", None)
+    if not callable(getter):
+        return 0
+    try:
+        return int(getter())
+    except Exception:
+        return 0
+
+
+def _build_cache_token(hof_module: Any) -> tuple[int, int]:
+    return (int(_EVAL_CONFIG_VERSION), _get_hof_state_version(hof_module))
 
 
 def _resolve_factor_vector(
@@ -259,7 +280,7 @@ def configure_evaluation(
     cv_trim_frac: float | None = None,
     regime_diagnostic_factors: Iterable[str] | None = None,
 ):
-    global _EVAL_CONFIG
+    global _EVAL_CONFIG, _EVAL_CONFIG_VERSION
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
     _EVAL_CONFIG["max_ops_for_parsimony"] = max_ops
     _EVAL_CONFIG["xs_flatness_guard_threshold"] = xs_flatness_guard
@@ -384,6 +405,7 @@ def configure_evaluation(
             names = tuple()
         if names:
             _EVAL_CONFIG["regime_diagnostic_factors"] = names
+    _EVAL_CONFIG_VERSION += 1
     logging.getLogger(__name__).debug(
         "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s factor_w=%s factors=%s horizons=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f jitter=%.3f",
         scale_method,
@@ -444,9 +466,11 @@ def _compute_cv_fold_slices(
 
 
 def initialize_evaluation_cache(max_size: int = 128):
-    global _eval_cache, _EVAL_CACHE_MAX_SIZE
+    global _eval_cache, _eval_cache_tokens, _EVAL_CACHE_MAX_SIZE, _ACTIVE_CACHE_TOKEN
     _EVAL_CACHE_MAX_SIZE = max_size
     _eval_cache = OrderedDict()
+    _eval_cache_tokens = {}
+    _ACTIVE_CACHE_TOKEN = (0, 0)
     logging.getLogger(__name__).debug("Evaluation cache cleared and initialized.")
 
 
@@ -642,16 +666,24 @@ def evaluate_program(
 ) -> EvalResult:
     # Uses _EVAL_CONFIG for various thresholds and penalties
 
+    global _ACTIVE_CACHE_TOKEN
     logger = logging.getLogger(__name__)
 
     fp = prog.fingerprint
+    cache_token = _build_cache_token(hof_module)
+    _ACTIVE_CACHE_TOKEN = cache_token
     if fp in _eval_cache:
-        _eval_cache.move_to_end(fp)
-        cached = _eval_cache[fp]
-        _EVAL_STATS["cache_hits"] += 1
-        logger.debug("Cache hit for %s with fitness %.6f", fp, cached.fitness)
-        return cached
-    else:
+        cached_token = _eval_cache_tokens.get(fp)
+        if cached_token == cache_token:
+            _eval_cache.move_to_end(fp)
+            cached = _eval_cache[fp]
+            _EVAL_STATS["cache_hits"] += 1
+            logger.debug("Cache hit for %s with fitness %.6f", fp, cached.fitness)
+            return cached
+        # Stale cache entry under a previous config/HOF state.
+        _eval_cache.pop(fp, None)
+        _eval_cache_tokens.pop(fp, None)
+    if fp not in _eval_cache:
         _EVAL_STATS["cache_misses"] += 1
 
     if not _uses_feature_vector_check(prog):
@@ -1424,7 +1456,9 @@ def evaluate_program(
         pnl_series = np.array(pnl_values_by_h.get(horizon, []), dtype=float)
         dd_value = 0.0
         if pnl_series.size:
-            equity_curve = np.cumsum(pnl_series)
+            # Compute drawdown on equity, not cumulative raw PnL, to avoid
+            # pathological magnitudes when cumulative PnL crosses zero.
+            equity_curve = np.cumprod(np.clip(1.0 + pnl_series, 1e-9, None))
             dd_value = float(compute_max_drawdown(equity_curve))
         bucket = horizon_metrics.setdefault(horizon, {})
         bucket["max_drawdown"] = dd_value
@@ -1465,7 +1499,7 @@ def evaluate_program(
             stressed[neg_mask] *= scale
             if scale > 1.0:
                 stressed[pos_mask] /= scale
-        stress_equity = np.cumsum(stressed)
+        stress_equity = np.cumprod(np.clip(1.0 + stressed, 1e-9, None))
         stress_dd_local = float(compute_max_drawdown(stress_equity))
         stress_mean_local = float(np.mean(stressed)) - stress_cost_local
         metrics_local = {

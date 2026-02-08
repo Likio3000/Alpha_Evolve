@@ -236,6 +236,10 @@ class BacktestConfig(DataConfig):
         0.0  # soft return-correlation penalty weight (0 disables)
     )
     ensemble_weighting: str = "equal"  # equal | risk_parity (reserved)
+    # Deduplicate highly similar alphas before summary/ensemble construction by
+    # comparing pairwise correlation of net return series in Sharpe-ranked order.
+    # Set <=0 or >=1.0 to disable; default removes only near-identical behaviour.
+    dedup_return_corr: float = 0.999
 
 
 # keep old import path alive

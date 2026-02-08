@@ -28,6 +28,7 @@ else
 fi
 
 cd "$root"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$root/src"
 
 if [[ -n "$cfg" ]]; then
   echo "Running pipeline with $cfg (MOEA+MF+Ensemble demo)"

@@ -203,6 +203,98 @@ def _select_diversified(
     return selected, thresholds_used
 
 
+def _deduplicate_results_by_return_corr(
+    results: list[dict[str, Any]],
+    per_alpha_returns: list[tuple[str, list[float]]],
+    *,
+    max_abs_corr: float,
+) -> tuple[list[dict[str, Any]], list[tuple[str, list[float]]], dict[str, Any]]:
+    """Drop near-duplicate alphas using return correlation in Sharpe-ranked order."""
+    th = float(max_abs_corr)
+    if (
+        not np.isfinite(th)
+        or th <= 0.0
+        or th >= 1.0
+        or len(results) <= 1
+        or len(per_alpha_returns) <= 1
+    ):
+        return (
+            list(results),
+            list(per_alpha_returns),
+            {
+                "enabled": False,
+                "max_abs_corr": th,
+                "kept_count": len(results),
+                "dropped_count": 0,
+                "dropped": [],
+            },
+        )
+
+    returns_map: dict[str, np.ndarray] = {}
+    for name, vals in per_alpha_returns:
+        try:
+            returns_map[str(name)] = np.asarray(vals, dtype=float).ravel()
+        except Exception:
+            continue
+
+    ranked = sorted(results, key=lambda row: float(row.get("Sharpe", -np.inf)), reverse=True)
+    kept_rows: list[dict[str, Any]] = []
+    kept_names: list[str] = []
+    dropped: list[dict[str, Any]] = []
+
+    for row in ranked:
+        alpha_id = str(row.get("AlphaID", ""))
+        curr = returns_map.get(alpha_id)
+        if curr is None or curr.size < 2:
+            kept_rows.append(row)
+            kept_names.append(alpha_id)
+            continue
+        duplicate_match: dict[str, Any] | None = None
+        for prev_name in kept_names:
+            prev = returns_map.get(prev_name)
+            if prev is None or prev.size < 2:
+                continue
+            m = min(curr.size, prev.size)
+            if m < 2:
+                continue
+            c = abs(_safe_corr(curr[-m:], prev[-m:]))
+            if c >= th:
+                duplicate_match = {
+                    "alpha": alpha_id,
+                    "matched_with": prev_name,
+                    "abs_corr": float(c),
+                }
+                break
+        if duplicate_match is not None:
+            dropped.append(duplicate_match)
+            continue
+        kept_rows.append(row)
+        kept_names.append(alpha_id)
+
+    if not kept_rows and ranked:
+        kept_rows = [ranked[0]]
+        kept_names = [str(ranked[0].get("AlphaID", ""))]
+
+    kept_returns: list[tuple[str, list[float]]] = []
+    for name in kept_names:
+        arr = returns_map.get(name)
+        if arr is None:
+            continue
+        kept_returns.append((name, arr.tolist()))
+
+    return (
+        kept_rows,
+        kept_returns,
+        {
+            "enabled": True,
+            "max_abs_corr": float(th),
+            "kept_count": len(kept_rows),
+            "dropped_count": len(dropped),
+            "dropped": dropped,
+        },
+    )
+
+
 def _derive_state_vars(prog: AlphaProgram) -> Dict[str, str]:
     """Infer required state variables from the program structure."""
     feature_vars = set(SCALAR_FEATURE_NAMES) | set(CROSS_SECTIONAL_FEATURE_VECTOR_NAMES)
@@ -511,6 +603,33 @@ def run(
             metrics.get("MaxDD", 0.0) * 100,
             metrics.get("Turnover", 0.0),
         )
+
+    dedup_report: dict[str, Any] = {}
+    try:
+        dedup_th = float(getattr(cfg, "dedup_return_corr", 0.999) or 0.0)
+    except Exception:
+        dedup_th = 0.0
+    if results:
+        results, per_alpha_returns, dedup_report = _deduplicate_results_by_return_corr(
+            results,
+            per_alpha_returns,
+            max_abs_corr=dedup_th,
+        )
+        if dedup_report.get("enabled"):
+            dropped_count = int(dedup_report.get("dropped_count", 0) or 0)
+            kept_count = int(dedup_report.get("kept_count", len(results)) or len(results))
+            if dropped_count > 0:
+                lg.info(
+                    "Deduplicated return-correlated alphas: kept %d dropped %d (threshold %.3f)",
+                    kept_count,
+                    dropped_count,
+                    float(dedup_report.get("max_abs_corr", dedup_th)),
+                )
+            try:
+                with open(outdir / "dedup_report.json", "w") as fh:
+                    json.dump(dedup_report, fh, indent=2)
+            except Exception:
+                pass
 
     # Save summaries
     if results:

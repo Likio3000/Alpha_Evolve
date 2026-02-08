@@ -1,6 +1,10 @@
 import numpy as np
 
-from alpha_evolve.backtesting.engine import _corr_matrix, _select_diversified
+from alpha_evolve.backtesting.engine import (
+    _corr_matrix,
+    _deduplicate_results_by_return_corr,
+    _select_diversified,
+)
 
 
 def test_corr_matrix_is_finite_for_constant_series():
@@ -61,3 +65,46 @@ def test_select_diversified_relaxes_threshold_when_needed():
     assert len(selected) == 2
     assert thresholds[1] > 0.1
 
+
+def test_deduplicate_results_by_return_corr_removes_near_duplicates():
+    results = [
+        {"AlphaID": "Alpha_01", "Sharpe": 1.2},
+        {"AlphaID": "Alpha_02", "Sharpe": 1.1},
+        {"AlphaID": "Alpha_03", "Sharpe": 0.9},
+    ]
+    per_alpha_returns = [
+        ("Alpha_01", [0.01, 0.02, 0.01, 0.03]),
+        # identical behaviour to Alpha_01
+        ("Alpha_02", [0.02, 0.04, 0.02, 0.06]),
+        ("Alpha_03", [0.01, -0.01, 0.02, -0.02]),
+    ]
+    kept_rows, kept_returns, report = _deduplicate_results_by_return_corr(
+        results,
+        per_alpha_returns,
+        max_abs_corr=0.99,
+    )
+    kept_ids = [str(r["AlphaID"]) for r in kept_rows]
+    assert kept_ids == ["Alpha_01", "Alpha_03"]
+    assert [n for n, _ in kept_returns] == kept_ids
+    assert report["enabled"] is True
+    assert report["dropped_count"] == 1
+    assert report["dropped"][0]["alpha"] == "Alpha_02"
+
+
+def test_deduplicate_results_by_return_corr_disables_when_threshold_out_of_range():
+    results = [
+        {"AlphaID": "Alpha_01", "Sharpe": 1.2},
+        {"AlphaID": "Alpha_02", "Sharpe": 1.1},
+    ]
+    per_alpha_returns = [
+        ("Alpha_01", [0.01, 0.02, 0.01, 0.03]),
+        ("Alpha_02", [0.02, 0.04, 0.02, 0.06]),
+    ]
+    kept_rows, kept_returns, report = _deduplicate_results_by_return_corr(
+        results,
+        per_alpha_returns,
+        max_abs_corr=1.0,
+    )
+    assert [str(r["AlphaID"]) for r in kept_rows] == ["Alpha_01", "Alpha_02"]
+    assert [n for n, _ in kept_returns] == ["Alpha_01", "Alpha_02"]
+    assert report["enabled"] is False

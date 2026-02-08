@@ -1,0 +1,70 @@
+[evolution]
+data_dir = "data_sp500_small"
+max_lookback_data_option = "full_overlap"
+min_common_points = 500
+eval_lag = 1
+net_exposure_target = 0.25
+
+generations = 6
+pop_size = 60
+workers = 1
+seed = 0
+
+selection_metric = "auto"
+ramp_fraction = 0.40
+ramp_min_gens = 4
+selection_lcb_z = 1.645
+
+sharpe_proxy_w = 0.5
+ic_std_penalty_w = 0.1
+turnover_penalty_w = 0.05
+corr_penalty_w = 0.5
+corr_cutoff = 0.10
+hof_per_gen = 5
+hof_min_fill = 2
+
+novelty_boost_w = 0.04
+novelty_struct_w = 0.03
+novelty_pred_dist_w = 0.03
+
+moea_enabled = true
+moea_elite_frac = 0.25
+mf_enabled = true
+mf_initial_fraction = 0.5
+mf_promote_fraction = 0.4
+mf_min_promote = 12
+qd_archive_enabled = true
+qd_max_entries = 256
+
+cv_k_folds = 0
+cv_embargo = 0
+cv_agg_mode = "mean"
+cv_trim_frac = 0.1
+
+[backtest]
+data_dir = "data_sp500_small"
+max_lookback_data_option = "full_overlap"
+min_common_points = 500
+eval_lag = 1
+
+top_to_backtest = 8
+fee = 0.5
+hold = 1
+scale = "zscore"
+winsor_p = 0.02
+long_short_n = 0
+net_exposure_target = 0.25
+annualization_factor = 252
+volatility_target = 0.012
+volatility_lookback = 30
+max_leverage = 3.0
+min_leverage = 0.25
+dd_limit = 0.15
+dd_reduction = 0.5
+
+ensemble_mode = true
+ensemble_size = 4
+ensemble_max_corr = 0.45
+ensemble_corr_lambda = 0.45
+ensemble_weighting = "equal"
+dedup_return_corr = 0.90

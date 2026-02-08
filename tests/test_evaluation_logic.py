@@ -254,6 +254,100 @@ def test_eval_cache_eviction():
     assert dh.calls == 4
 
 
+def test_eval_cache_invalidates_when_config_changes():
+    """Recompute cached programs after evaluation weights/configuration updates."""
+    ret1d = np.array([[0.02, 0.01], [0.01, -0.02], [0.03, 0.02], [-0.01, 0.0]])
+    ret_fwd = ret1d * 0.9
+    ctx = build_ctx_from_returns(ret1d, ret_fwd)
+    prog = AlphaProgram(predict_ops=[
+        Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("ret1d_t",))
+    ])
+
+    hof.clear_hof()
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.0, corr_cutoff=0.0)
+    initialize_evaluation_cache(max_size=4)
+
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=8,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    res_base = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+
+    configure_evaluation(
+        parsimony_penalty=0.5,
+        max_ops=1,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    # No explicit cache reset: this call should still recompute under the new config.
+    res_reconfigured = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+    assert res_reconfigured.parsimony_penalty > res_base.parsimony_penalty
+    assert res_reconfigured.fitness < res_base.fitness
+
+
+def test_eval_cache_invalidates_when_hof_state_changes():
+    """Recompute cached programs when HOF correlation context changes."""
+    ret1d = np.array([[0.02, 0.01], [0.01, -0.02], [0.03, 0.02], [-0.01, 0.0]])
+    ret_fwd = ret1d * 0.9
+    ctx = build_ctx_from_returns(ret1d, ret_fwd)
+    prog = AlphaProgram(predict_ops=[
+        Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("ret1d_t",))
+    ])
+
+    hof.clear_hof()
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=1.0, corr_cutoff=0.0)
+    initialize_evaluation_cache(max_size=4)
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=8,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    res_without_hof = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+    assert res_without_hof.correlation_penalty == pytest.approx(0.0)
+
+    hof.update_correlation_hof("other_fp", res_without_hof.processed_predictions)
+    # No explicit cache reset: this should recompute and pick up correlation penalty.
+    res_with_hof = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+    assert res_with_hof.correlation_penalty > 0.0
+    assert res_with_hof.fitness < res_without_hof.fitness
+
+
 class FlatDH:
     def __init__(self):
         self.index = pd.RangeIndex(4)

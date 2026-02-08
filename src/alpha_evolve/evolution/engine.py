@@ -512,7 +512,7 @@ def evolve_with_context(
                     pass
 
             # Helper to choose selection score based on configuration
-            def _sel_score(res: el_module.EvalResult) -> float:
+            def _sel_score(res: el_module.EvalResult, pop_idx: int | None = None) -> float:
                 sel = getattr(cfg, "selection_metric", "ramped")
                 # Never promote invalid candidates, regardless of selection metric.
                 try:
@@ -626,11 +626,13 @@ def evolve_with_context(
                 ns_w = float(getattr(cfg, "novelty_struct_w", 0.0))
                 if ns_w > 0.0:
                     try:
+                        if pop_idx is None or pop_idx < 0 or pop_idx >= len(pop):
+                            raise IndexError("invalid population index for structural novelty")
                         # Candidate opcode set
                         ops = [
-                            *getattr(pop[i], "setup", []),
-                            *getattr(pop[i], "predict_ops", []),
-                            *getattr(pop[i], "update_ops", []),
+                            *getattr(pop[pop_idx], "setup", []),
+                            *getattr(pop[pop_idx], "predict_ops", []),
+                            *getattr(pop[pop_idx], "update_ops", []),
                         ]
                         cand_set = {
                             getattr(o, "opcode", "")
@@ -806,7 +808,7 @@ def evolve_with_context(
                             )
                         except Exception:
                             pass
-                    pop_fitness_scores[i] = _sel_score(result)
+                    pop_fitness_scores[i] = _sel_score(result, i)
             elif (cfg.workers or 0) > 1:
                 with Pool(
                     processes=cfg.workers or cpu_count(),
@@ -839,7 +841,7 @@ def evolve_with_context(
                                 )
                             except Exception:
                                 pass
-                        pop_fitness_scores[i] = _sel_score(result)
+                        pop_fitness_scores[i] = _sel_score(result, i)
                         completed += 1
                         logger.debug(
                             "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
@@ -898,7 +900,7 @@ def evolve_with_context(
                             )
                         except Exception:
                             pass
-                    pop_fitness_scores[i] = _sel_score(result)
+                    pop_fitness_scores[i] = _sel_score(result, i)
                     logger.debug(
                         "g%d p%03d fit=%+.4f IC=%+.4f ops=%d",
                         gen + 1,
@@ -996,7 +998,7 @@ def evolve_with_context(
                     )
                     # Sort a copy for diagnostics to reflect current selection metric
                     tmp_sorted = sorted(
-                        eval_results, key=lambda x: _sel_score(x[1]), reverse=True
+                        eval_results, key=lambda x: _sel_score(x[1], x[0]), reverse=True
                     )
                     valid_scores = [
                         r[1].fitness for r in tmp_sorted if np.isfinite(r[1].fitness)
@@ -1192,7 +1194,7 @@ def evolve_with_context(
                     pass
 
             # Sort by the configured selection score but keep EvalResult intact for logging
-            eval_results.sort(key=lambda x: _sel_score(x[1]), reverse=True)
+            eval_results.sort(key=lambda x: _sel_score(x[1], x[0]), reverse=True)
 
             # Add top-K from this generation into the HOF to increase saved diversity.
             if eval_results and eval_results[0][1].fitness > -np.inf:
