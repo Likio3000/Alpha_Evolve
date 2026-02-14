@@ -152,6 +152,12 @@ class EvolutionConfig(DataConfig):
     # ramp scheduling for annealed penalties (corr, ic_std, turnover, sharpe_proxy)
     ramp_fraction: float = 1.0 / 3.0  # portion of total gens to reach full weight
     ramp_min_gens: int = 5  # minimum generations to ramp over
+    # Adaptive mutation/fresh-rate patience. Keep this fixed across compute
+    # budgets so early-generation behavior is invariant when comparing runs.
+    stagnation_patience: int = 5
+    # When a generation has no valid programs, restart the population. Keeping
+    # HOF avoids discarding previously discovered alphas in longer runs.
+    clear_hof_on_restart: bool = False
 
     # selection criterion for breeding/elites while logging can still show ramped
     # Options: 'ramped' (default fitness), 'fixed' (fitness_static), 'ic' (mean_ic),
@@ -235,6 +241,10 @@ class BacktestConfig(DataConfig):
     ensemble_corr_lambda: float = (
         0.0  # soft return-correlation penalty weight (0 disables)
     )
+    # When true, the ensemble selector can relax ``ensemble_max_corr`` to reach
+    # ``ensemble_size``. Set false to keep correlation strictly capped even if
+    # that means returning fewer members.
+    ensemble_relax_corr: bool = True
     ensemble_weighting: str = "equal"  # equal | risk_parity (reserved)
     # Deduplicate highly similar alphas before summary/ensemble construction by
     # comparing pairwise correlation of net return series in Sharpe-ranked order.

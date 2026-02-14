@@ -129,6 +129,51 @@ def test_initialize_hof_resets_raw_prediction_cache():
     hof.clear_hof()
 
 
+def test_hof_capacity_preserves_high_sharpe_anchor():
+    """When capped, keep mostly top-fitness entries plus at least one Sharpe anchor."""
+    hof.initialize_hof(
+        max_size=3, keep_dupes=False, corr_penalty_weight=0.25, corr_cutoff=1.1
+    )
+    prog_a = make_prog("sa")
+    prog_b = make_prog("sb")
+    prog_c = make_prog("sc")
+    prog_d = make_prog("sd")
+    preds_a = np.array([[1.0, 2.0], [3.0, 5.0]])
+    preds_b = np.array([[-2.0, 4.0], [0.0, 1.0]])
+    preds_c = np.array([[5.0, 1.0], [2.0, -3.0]])
+    preds_d = np.array([[9.0, 0.0], [-2.0, 3.0]])
+
+    hof.add_program_to_hof(
+        prog_a,
+        EvalResult(0.90, 0.0, 0.10, 0.0, 0.0, preds_a, 0.0, 0.0, 0.0, None),
+        0,
+    )
+    hof.add_program_to_hof(
+        prog_b,
+        EvalResult(0.80, 0.0, 0.20, 0.0, 0.0, preds_b, 0.0, 0.0, 0.0, None),
+        0,
+    )
+    hof.add_program_to_hof(
+        prog_c,
+        EvalResult(0.70, 0.0, 2.00, 0.0, 0.0, preds_c, 0.0, 0.0, 0.0, None),
+        0,
+    )
+    hof.add_program_to_hof(
+        prog_d,
+        EvalResult(0.60, 0.0, 3.00, 0.0, 0.0, preds_d, 0.0, 0.0, 0.0, None),
+        0,
+    )
+
+    assert len(hof._hof_programs_data) == 3
+    kept = {entry.fingerprint for entry in hof._hof_programs_data}
+    assert prog_a.fingerprint in kept
+    assert prog_b.fingerprint in kept
+    # D has lower fitness than C but higher Sharpe and should be kept as anchor.
+    assert prog_d.fingerprint in kept
+    assert prog_c.fingerprint not in kept
+    hof.clear_hof()
+
+
 def test_relaxed_fill_still_rejects_near_identical_predictions():
     """Even before min_fill, near-identical predictions should be rejected."""
     hof.initialize_hof(

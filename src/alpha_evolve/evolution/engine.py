@@ -1227,14 +1227,19 @@ def evolve_with_context(
             print_generation_summary(gen, pop, eval_results)
 
             if not eval_results or eval_results[0][1].fitness <= -float("inf"):
+                clear_hof_on_restart = bool(
+                    getattr(cfg, "clear_hof_on_restart", False)
+                )
                 logger.info(
-                    "Gen %s | No valid programs. Restarting population and HOF.",
+                    "Gen %s | No valid programs. Restarting population%s.",
                     gen + 1,
+                    " and HOF" if clear_hof_on_restart else " (preserving HOF)",
                 )
                 pop = [_random_prog(cfg) for _ in range(cfg.pop_size)]
                 initialize_evaluation_cache(cfg.eval_cache_size)
-                clear_hof()
-                if _QD_ENABLED:
+                if clear_hof_on_restart:
+                    clear_hof()
+                if _QD_ENABLED and clear_hof_on_restart:
                     qd_archive.clear_archive()
                 gen_eval_times_history.clear()
                 continue
@@ -1474,8 +1479,9 @@ def evolve_with_context(
             except Exception:
                 diversity_ratio = 1.0
 
-            # Stagnation factor grows when no improvement; patience ~ 5 gens or 10% of total
-            patience = max(5, cfg.generations // 10 if cfg.generations > 0 else 5)
+            # Stagnation factor grows when no improvement. Keep patience
+            # generation-budget invariant for fair compute scaling comparisons.
+            patience = max(1, int(getattr(cfg, "stagnation_patience", 5) or 5))
             stagnation_factor = min(1.0, no_improve_gens / patience)
 
             # Increase exploration when stagnating or when diversity is low

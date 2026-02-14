@@ -66,6 +66,28 @@ def test_select_diversified_relaxes_threshold_when_needed():
     assert thresholds[1] > 0.1
 
 
+def test_select_diversified_strict_threshold_can_return_fewer_members():
+    sharpes = [1.0, 0.99, 0.98]
+    corr = np.array(
+        [
+            [1.0, 0.99, 0.99],
+            [0.99, 1.0, 0.99],
+            [0.99, 0.99, 1.0],
+        ],
+        dtype=float,
+    )
+    selected, thresholds = _select_diversified(
+        sharpes,
+        corr,
+        target_k=3,
+        max_corr=0.1,
+        corr_lambda=0.0,
+        allow_relax=False,
+    )
+    assert selected == [0]
+    assert thresholds == [0.1]
+
+
 def test_deduplicate_results_by_return_corr_removes_near_duplicates():
     results = [
         {"AlphaID": "Alpha_01", "Sharpe": 1.2},

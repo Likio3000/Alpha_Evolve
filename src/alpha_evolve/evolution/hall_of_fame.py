@@ -37,11 +37,110 @@ _hof_raw_pred_matrix: List[
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 # Monotonic counter used to invalidate cross-generation eval caches when HOF state changes.
 _hof_state_version: int = 0
+# Retention mix for capped HOF: keep most slots by fitness and reserve a few
+# slots for high Sharpe-proxy candidates to reduce long-run forgetting.
+_HOF_FITNESS_KEEP_FRAC: float = 0.80
 
 
 def _bump_hof_state_version() -> None:
     global _hof_state_version
     _hof_state_version += 1
+
+
+def _metric_or_neg_inf(value: Any) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        return float("-inf")
+    return v if np.isfinite(v) else float("-inf")
+
+
+def _trim_hof_entries(entries: List[HOFEntry], max_size: int) -> List[HOFEntry]:
+    """Trim HOF entries with mixed retention (fitness + Sharpe anchors).
+
+    This is budget-invariant: the same retention strategy is used regardless of
+    how many generations are run.
+    """
+    if len(entries) <= max_size:
+        return sorted(
+            entries,
+            key=lambda x: (
+                _metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
+                _metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
+                _metric_or_neg_inf(getattr(x.metrics, "mean_ic", float("-inf"))),
+            ),
+            reverse=True,
+        )
+
+    # Primary ordering remains fitness-first.
+    by_fitness = sorted(
+        entries,
+        key=lambda x: (
+            _metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
+            _metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
+            _metric_or_neg_inf(getattr(x.metrics, "mean_ic", float("-inf"))),
+        ),
+        reverse=True,
+    )
+
+    sharpe_vals = [
+        _metric_or_neg_inf(getattr(e.metrics, "sharpe_proxy", float("-inf")))
+        for e in entries
+    ]
+    finite_sharpes = [s for s in sharpe_vals if np.isfinite(s) and s > float("-inf")]
+    sharpe_has_signal = (
+        len(finite_sharpes) >= 2 and (max(finite_sharpes) - min(finite_sharpes)) > 1e-6
+    )
+    if not sharpe_has_signal:
+        return by_fitness[:max_size]
+
+    fitness_slots = int(round(max_size * _HOF_FITNESS_KEEP_FRAC))
+    fitness_slots = max(1, min(max_size - 1, fitness_slots))
+    selected: List[HOFEntry] = []
+    seen: Set[str] = set()
+    for e in by_fitness:
+        if e.fingerprint in seen:
+            continue
+        selected.append(e)
+        seen.add(e.fingerprint)
+        if len(selected) >= fitness_slots:
+            break
+
+    by_sharpe = sorted(
+        entries,
+        key=lambda x: (
+            _metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
+            _metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
+            _metric_or_neg_inf(getattr(x.metrics, "mean_ic", float("-inf"))),
+        ),
+        reverse=True,
+    )
+    for e in by_sharpe:
+        if e.fingerprint in seen:
+            continue
+        selected.append(e)
+        seen.add(e.fingerprint)
+        if len(selected) >= max_size:
+            break
+
+    if len(selected) < max_size:
+        for e in by_fitness:
+            if e.fingerprint in seen:
+                continue
+            selected.append(e)
+            seen.add(e.fingerprint)
+            if len(selected) >= max_size:
+                break
+
+    selected.sort(
+        key=lambda x: (
+            _metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
+            _metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
+            _metric_or_neg_inf(getattr(x.metrics, "mean_ic", float("-inf"))),
+        ),
+        reverse=True,
+    )
+    return selected[:max_size]
 
 
 def initialize_hof(
@@ -497,10 +596,9 @@ def add_program_to_hof(
         inserted = True
         state_changed = True
     if inserted:
-        # Keep only the globally best entries; do not pop before sorting.
-        _hof_programs_data.sort(key=lambda x: x.metrics.fitness, reverse=True)
-        if len(_hof_programs_data) > _hof_max_size:
-            _hof_programs_data[:] = _hof_programs_data[:_hof_max_size]
+        # Keep a mixed set of entries (fitness + Sharpe anchors) to reduce
+        # long-run forgetting under larger compute budgets.
+        _hof_programs_data[:] = _trim_hof_entries(_hof_programs_data, _hof_max_size)
         _hof_fingerprints_set = {entry.fingerprint for entry in _hof_programs_data}
 
     # Logic for maintaining the list used for correlation penalty.

@@ -136,6 +136,7 @@ def _select_diversified(
     max_corr: float,
     corr_lambda: float,
     relax_step: float = 0.05,
+    allow_relax: bool = True,
 ) -> tuple[list[int], list[float]]:
     """Greedy diversified selection: maximize sharpe - λ * mean_abs_corr(selected)."""
     n = len(sharpes)
@@ -156,26 +157,32 @@ def _select_diversified(
     while len(selected) < k and remaining:
         threshold = max_c
         feasible: list[int] = []
-        while True:
-            feasible = []
+
+        def _collect_feasible(th: float) -> list[int]:
+            out: list[int] = []
             for i in remaining:
                 ok = True
-                if threshold < 0.999:
+                if th < 0.999:
                     for j in selected:
                         c = float(corr[i, j]) if corr.shape == (n, n) else 0.0
                         if not np.isfinite(c):
                             c = 0.0
-                        if abs(c) > threshold:
+                        if abs(c) > th:
                             ok = False
                             break
                 if ok:
-                    feasible.append(i)
-            if feasible or threshold >= 0.999:
-                break
-            threshold = min(0.999, threshold + float(relax_step))
+                    out.append(i)
+            return out
 
-        if not feasible:
-            feasible = list(remaining)
+        feasible = _collect_feasible(threshold)
+        if allow_relax:
+            while not feasible and threshold < 0.999:
+                threshold = min(0.999, threshold + float(relax_step))
+                feasible = _collect_feasible(threshold)
+            if not feasible:
+                feasible = list(remaining)
+        elif not feasible:
+            break
 
         best_i = None
         best_score = -float("inf")
@@ -694,6 +701,9 @@ def run(
                     corr_lambda = float(
                         getattr(cfg, "ensemble_corr_lambda", 0.0) or 0.0
                     )
+                    allow_relax_corr = bool(
+                        getattr(cfg, "ensemble_relax_corr", True)
+                    )
                     selected: List[int] = []
                     target_k = ens_n if ens_n > 0 else len(names)
                     selected, thresholds_used = _select_diversified(
@@ -704,6 +714,7 @@ def run(
                         target_k=target_k,
                         max_corr=max_corr,
                         corr_lambda=corr_lambda,
+                        allow_relax=allow_relax_corr,
                     )
                     selected = [order[i] for i in selected]
                     thresholds_used = [float(t) for t in thresholds_used]
@@ -755,6 +766,7 @@ def run(
                                 "target_k": int(target_k),
                                 "corr_lambda": float(corr_lambda),
                                 "max_corr": float(max_corr),
+                                "allow_relax_corr": bool(allow_relax_corr),
                                 "thresholds_used": thresholds_used,
                             }
                             with open(outdir / "ensemble_selection.json", "w") as fh:
