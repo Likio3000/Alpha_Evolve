@@ -128,6 +128,110 @@ def _corr_clusters(
     return clusters
 
 
+def _mean_pair_abs_corr(indices: Sequence[int], corr: np.ndarray) -> float:
+    """Mean abs off-diagonal correlation among selected indices."""
+    idx = list(indices)
+    n = len(idx)
+    if n < 2 or corr.shape[0] == 0:
+        return 0.0
+    vals: list[float] = []
+    for a in range(n):
+        ia = idx[a]
+        for b in range(a + 1, n):
+            ib = idx[b]
+            c = float(corr[ia, ib])
+            if not np.isfinite(c):
+                c = 0.0
+            vals.append(abs(c))
+    return float(np.mean(vals)) if vals else 0.0
+
+
+def _selection_objective(
+    selected: Sequence[int], sharpes: Sequence[float], corr: np.ndarray, lam: float
+) -> float:
+    """Sharpe-centric set objective with soft mean-correlation penalty."""
+    idx = list(selected)
+    if not idx:
+        return -float("inf")
+    mean_sharpe = float(np.mean([float(sharpes[i]) for i in idx]))
+    return mean_sharpe - float(lam) * _mean_pair_abs_corr(idx, corr)
+
+
+def _selection_is_feasible(
+    selected: Sequence[int], corr: np.ndarray, *, max_abs_corr: float
+) -> bool:
+    """Return true when all pairwise abs correlations satisfy the cap."""
+    th = float(max_abs_corr)
+    if not np.isfinite(th) or th >= 0.999:
+        return True
+    idx = list(selected)
+    n = len(idx)
+    for a in range(n):
+        ia = idx[a]
+        for b in range(a + 1, n):
+            ib = idx[b]
+            c = float(corr[ia, ib])
+            if not np.isfinite(c):
+                c = 0.0
+            if abs(c) > th:
+                return False
+    return True
+
+
+def _refine_diversified_selection(
+    selected: list[int],
+    sharpes: Sequence[float],
+    corr: np.ndarray,
+    *,
+    max_abs_corr: float,
+    corr_lambda: float,
+    max_passes: int = 2,
+) -> list[int]:
+    """Local 1-swap improvement on diversified selection.
+
+    Keeps the first selected member anchored (highest Sharpe seed) to preserve
+    a Sharpe-first bias, then searches deterministic one-for-one replacements
+    that improve the portfolio-level objective.
+    """
+    if len(selected) < 2:
+        return selected
+    n = len(sharpes)
+    if n <= len(selected):
+        return selected
+
+    out = list(selected)
+    lam = max(0.0, float(corr_lambda))
+    curr_score = _selection_objective(out, sharpes, corr, lam)
+    rank_order = sorted(range(n), key=lambda i: (float(sharpes[i]), -i), reverse=True)
+
+    for _ in range(max(0, int(max_passes))):
+        best_swap: tuple[int, int] | None = None
+        best_score = curr_score
+        selected_set = set(out)
+
+        # Keep anchor at position 0 intact; refine only additional members.
+        for pos in range(1, len(out)):
+            for cand in rank_order:
+                if cand in selected_set:
+                    continue
+                trial = list(out)
+                trial[pos] = cand
+                if not _selection_is_feasible(trial, corr, max_abs_corr=max_abs_corr):
+                    continue
+                score = _selection_objective(trial, sharpes, corr, lam)
+                if score > best_score + 1e-12:
+                    best_score = score
+                    best_swap = (pos, cand)
+
+        if best_swap is None:
+            break
+        pos, cand = best_swap
+        out[pos] = cand
+        curr_score = best_score
+
+    return out
+
+
 def _select_diversified(
     sharpes: list[float],
     corr: np.ndarray,
@@ -137,6 +241,8 @@ def _select_diversified(
     corr_lambda: float,
     relax_step: float = 0.05,
     allow_relax: bool = True,
+    refine_swaps: bool = True,
+    refine_max_passes: int = 2,
 ) -> tuple[list[int], list[float]]:
     """Greedy diversified selection: maximize sharpe - λ * mean_abs_corr(selected)."""
     n = len(sharpes)
@@ -206,6 +312,17 @@ def _select_diversified(
         selected.append(best_i)
         thresholds_used.append(threshold)
         remaining = [i for i in remaining if i != best_i]
+
+    if refine_swaps and len(selected) >= 2 and corr.shape == (n, n):
+        final_threshold = max(thresholds_used) if thresholds_used else max_c
+        selected = _refine_diversified_selection(
+            selected,
+            sharpes,
+            corr,
+            max_abs_corr=final_threshold,
+            corr_lambda=lam,
+            max_passes=refine_max_passes,
+        )
 
     return selected, thresholds_used
 
@@ -704,6 +821,12 @@ def run(
                     allow_relax_corr = bool(
                         getattr(cfg, "ensemble_relax_corr", True)
                     )
+                    refine_swaps = bool(
+                        getattr(cfg, "ensemble_refine_swaps", True)
+                    )
+                    refine_max_passes = int(
+                        getattr(cfg, "ensemble_refine_max_passes", 2) or 0
+                    )
                     selected: List[int] = []
                     target_k = ens_n if ens_n > 0 else len(names)
                     selected, thresholds_used = _select_diversified(
@@ -715,6 +838,8 @@ def run(
                         max_corr=max_corr,
                         corr_lambda=corr_lambda,
                         allow_relax=allow_relax_corr,
+                        refine_swaps=refine_swaps,
+                        refine_max_passes=refine_max_passes,
                     )
                     selected = [order[i] for i in selected]
                     thresholds_used = [float(t) for t in thresholds_used]
@@ -767,6 +892,8 @@ def run(
                                 "corr_lambda": float(corr_lambda),
                                 "max_corr": float(max_corr),
                                 "allow_relax_corr": bool(allow_relax_corr),
+                                "refine_swaps": bool(refine_swaps),
+                                "refine_max_passes": int(refine_max_passes),
                                 "thresholds_used": thresholds_used,
                             }
                             with open(outdir / "ensemble_selection.json", "w") as fh:

@@ -88,6 +88,45 @@ def test_select_diversified_strict_threshold_can_return_fewer_members():
     assert thresholds == [0.1]
 
 
+def test_select_diversified_refine_swaps_can_escape_greedy_trap():
+    sharpes = [1.00, 0.99, 0.97, 0.96, 0.95]
+    corr = np.array(
+        [
+            [1.0, 0.1, 0.2, 0.2, 0.2],
+            [0.1, 1.0, 0.8, 0.8, 0.8],
+            [0.2, 0.8, 1.0, 0.2, 0.2],
+            [0.2, 0.8, 0.2, 1.0, 0.2],
+            [0.2, 0.8, 0.2, 0.2, 1.0],
+        ],
+        dtype=float,
+    )
+
+    greedy_selected, _ = _select_diversified(
+        sharpes,
+        corr,
+        target_k=3,
+        max_corr=0.4,
+        corr_lambda=1.0,
+        relax_step=0.2,
+        allow_relax=True,
+        refine_swaps=False,
+    )
+    refined_selected, _ = _select_diversified(
+        sharpes,
+        corr,
+        target_k=3,
+        max_corr=0.4,
+        corr_lambda=1.0,
+        relax_step=0.2,
+        allow_relax=True,
+        refine_swaps=True,
+    )
+
+    assert greedy_selected == [0, 1, 2]
+    assert set(refined_selected) == {0, 2, 3}
+    assert 1 not in refined_selected
+
+
 def test_deduplicate_results_by_return_corr_removes_near_duplicates():
     results = [
         {"AlphaID": "Alpha_01", "Sharpe": 1.2},

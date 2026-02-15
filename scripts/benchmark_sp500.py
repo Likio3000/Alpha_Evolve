@@ -459,6 +459,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--ensemble-max-corr", type=float, default=None)
     p.add_argument("--ensemble-corr-lambda", type=float, default=None)
     p.add_argument(
+        "--ensemble-refine-swaps",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable/disable local-swap refinement after greedy ensemble selection",
+    )
+    p.add_argument("--ensemble-refine-max-passes", type=int, default=None)
+    p.add_argument(
         "--checkpoint-gens",
         default=None,
         help="Comma-separated generations to checkpoint and backtest from the same run trajectory (e.g. '45,60,90')",
@@ -512,6 +519,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         base_bt.ensemble_max_corr = float(args.ensemble_max_corr)
     if args.ensemble_corr_lambda is not None:
         base_bt.ensemble_corr_lambda = float(args.ensemble_corr_lambda)
+    if args.ensemble_refine_swaps is not None:
+        base_bt.ensemble_refine_swaps = bool(args.ensemble_refine_swaps)
+    if args.ensemble_refine_max_passes is not None:
+        base_bt.ensemble_refine_max_passes = int(args.ensemble_refine_max_passes)
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     out_root = (ROOT / args.outdir).resolve() if not Path(args.outdir).is_absolute() else Path(args.outdir).resolve()

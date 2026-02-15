@@ -249,6 +249,11 @@ class BacktestConfig(DataConfig):
     # ``ensemble_size``. Set false to keep correlation strictly capped even if
     # that means returning fewer members.
     ensemble_relax_corr: bool = True
+    # Optional local-swap refinement after greedy ensemble selection.
+    # Keeps the top Sharpe anchor and swaps remaining members when it improves
+    # the Sharpe-minus-correlation objective under the final corr threshold.
+    ensemble_refine_swaps: bool = True
+    ensemble_refine_max_passes: int = 2
     ensemble_weighting: str = "equal"  # equal | risk_parity (reserved)
     # Deduplicate highly similar alphas before summary/ensemble construction by
     # comparing pairwise correlation of net return series in Sharpe-ranked order.
