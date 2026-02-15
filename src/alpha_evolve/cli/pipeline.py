@@ -578,6 +578,21 @@ def run_pipeline_programmatic(
         )
     run_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Run codename: %s", codename)
+    try:
+        ckpt_gens = []
+        for g in getattr(evo_cfg, "checkpoint_gens", ()) or ():
+            try:
+                gi = int(g)
+            except Exception:
+                continue
+            if gi > 0:
+                ckpt_gens.append(gi)
+        if ckpt_gens:
+            evo_cfg.checkpoint_gens = tuple(sorted(set(ckpt_gens)))
+            if not getattr(evo_cfg, "checkpoint_dir", None):
+                evo_cfg.checkpoint_dir = str((run_dir / "checkpoints").resolve())
+    except Exception:
+        pass
 
     try:
         import json

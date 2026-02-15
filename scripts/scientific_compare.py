@@ -227,6 +227,11 @@ def _evaluate_metric(
     std_imp = float(np.std(imp, ddof=1)) if imp.size > 1 else float("nan")
     effect = float(mean_imp / std_imp) if np.isfinite(std_imp) and std_imp > 1e-12 else float("nan")
     improved_frac = float(np.mean(imp > 0)) if imp.size else float("nan")
+    eps = 1e-12
+    positives = int(np.sum(imp > eps))
+    negatives = int(np.sum(imp < -eps))
+    zeros = int(imp.size - positives - negatives)
+    non_negative_fraction = float(np.mean(imp >= -eps)) if imp.size else float("nan")
 
     return {
         "metric": metric.name,
@@ -239,6 +244,12 @@ def _evaluate_metric(
         "std_improvement": std_imp,
         "effect_size_d": effect,
         "improved_fraction": improved_frac,
+        "positives": positives,
+        "zeros": zeros,
+        "negatives": negatives,
+        "non_negative_fraction": non_negative_fraction,
+        "monotonic_non_decreasing_all": bool(negatives == 0),
+        "scientific_pass_non_decrease": bool(negatives == 0 and positives > 0),
         "ci95_mean_improvement": [ci_lo, ci_hi],
         "p_sign_one_sided": p_sign,
         "p_perm_one_sided": p_perm_one,

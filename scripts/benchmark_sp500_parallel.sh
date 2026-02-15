@@ -204,7 +204,7 @@ while IFS= read -r run_dir; do
     target="$merged_dir/${name}_$stamp"
   fi
   ln -s "$run_dir" "$target"
-done < <(find "$abs_outdir" -type d -path '*/pipeline_runs_cs/run_*' | sort)
+done < <(find "$abs_outdir" -type d -name 'run_*' -path '*/pipeline_runs_cs/run_*' | sort)
 
 run_count=$(find "$merged_dir" -mindepth 1 -maxdepth 1 -type l | wc -l | tr -d ' ')
 echo "[parallel-bench] merged run roots: $merged_dir (runs=$run_count)"

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Tuple, Dict, Set, Any  # Added Set
 from dataclasses import dataclass
 import textwrap  # For printing HoF
 import logging
+import copy as _copy
 from . import data
 
 if TYPE_CHECKING:
@@ -37,9 +38,11 @@ _hof_raw_pred_matrix: List[
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 # Monotonic counter used to invalidate cross-generation eval caches when HOF state changes.
 _hof_state_version: int = 0
-# Retention mix for capped HOF: keep most slots by fitness and reserve a few
-# slots for high Sharpe-proxy candidates to reduce long-run forgetting.
-_HOF_FITNESS_KEEP_FRAC: float = 0.80
+# Retention mix for capped HOF: keep most slots by fitness, reserve a few
+# for high Sharpe-proxy anchors, and preserve a small low-correlation slice.
+_HOF_FITNESS_KEEP_FRAC: float = 0.70
+_HOF_SHARPE_KEEP_FRAC: float = 0.20
+_HOF_DIVERSITY_KEEP_FRAC: float = 0.10
 
 
 def _bump_hof_state_version() -> None:
@@ -55,8 +58,24 @@ def _metric_or_neg_inf(value: Any) -> float:
     return v if np.isfinite(v) else float("-inf")
 
 
+def _metric_or_pos_inf(value: Any) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        return float("inf")
+    return v if np.isfinite(v) else float("inf")
+
+
+def _snapshot_program(program: "AlphaProgram") -> "AlphaProgram":
+    """Freeze a program snapshot for HOF storage."""
+    try:
+        return program.copy()
+    except Exception:
+        return _copy.deepcopy(program)
+
+
 def _trim_hof_entries(entries: List[HOFEntry], max_size: int) -> List[HOFEntry]:
-    """Trim HOF entries with mixed retention (fitness + Sharpe anchors).
+    """Trim HOF entries with mixed retention (fitness + Sharpe + diversity).
 
     This is budget-invariant: the same retention strategy is used regardless of
     how many generations are run.
@@ -83,19 +102,31 @@ def _trim_hof_entries(entries: List[HOFEntry], max_size: int) -> List[HOFEntry]:
         reverse=True,
     )
 
-    sharpe_vals = [
-        _metric_or_neg_inf(getattr(e.metrics, "sharpe_proxy", float("-inf")))
-        for e in entries
-    ]
+    sharpe_vals = [_metric_or_neg_inf(getattr(e.metrics, "sharpe_proxy", float("-inf"))) for e in entries]
     finite_sharpes = [s for s in sharpe_vals if np.isfinite(s) and s > float("-inf")]
     sharpe_has_signal = (
         len(finite_sharpes) >= 2 and (max(finite_sharpes) - min(finite_sharpes)) > 1e-6
     )
-    if not sharpe_has_signal:
-        return by_fitness[:max_size]
+    corr_vals = [
+        _metric_or_pos_inf(getattr(e.metrics, "correlation_penalty", float("inf")))
+        for e in entries
+    ]
+    finite_corr = [c for c in corr_vals if np.isfinite(c) and c < float("inf")]
+    corr_has_signal = len(finite_corr) >= 2 and (max(finite_corr) - min(finite_corr)) > 1e-9
 
-    fitness_slots = int(round(max_size * _HOF_FITNESS_KEEP_FRAC))
-    fitness_slots = max(1, min(max_size - 1, fitness_slots))
+    fitness_slots = max(1, int(round(max_size * _HOF_FITNESS_KEEP_FRAC)))
+    sharpe_slots = int(round(max_size * _HOF_SHARPE_KEEP_FRAC)) if sharpe_has_signal else 0
+    diversity_slots = int(round(max_size * _HOF_DIVERSITY_KEEP_FRAC)) if corr_has_signal else 0
+    while fitness_slots + sharpe_slots + diversity_slots > max_size:
+        if sharpe_slots >= diversity_slots and sharpe_slots > 0:
+            sharpe_slots -= 1
+        elif diversity_slots > 0:
+            diversity_slots -= 1
+        else:
+            break
+    if fitness_slots + sharpe_slots + diversity_slots < max_size:
+        fitness_slots += max_size - (fitness_slots + sharpe_slots + diversity_slots)
+
     selected: List[HOFEntry] = []
     seen: Set[str] = set()
     for e in by_fitness:
@@ -103,25 +134,47 @@ def _trim_hof_entries(entries: List[HOFEntry], max_size: int) -> List[HOFEntry]:
             continue
         selected.append(e)
         seen.add(e.fingerprint)
-        if len(selected) >= fitness_slots:
+        if len(selected) >= min(max_size, fitness_slots):
             break
 
-    by_sharpe = sorted(
-        entries,
-        key=lambda x: (
-            _metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
-            _metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
-            _metric_or_neg_inf(getattr(x.metrics, "mean_ic", float("-inf"))),
-        ),
-        reverse=True,
-    )
-    for e in by_sharpe:
-        if e.fingerprint in seen:
-            continue
-        selected.append(e)
-        seen.add(e.fingerprint)
-        if len(selected) >= max_size:
-            break
+    if sharpe_slots > 0:
+        by_sharpe = sorted(
+            entries,
+            key=lambda x: (
+                _metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
+                _metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
+                _metric_or_neg_inf(getattr(x.metrics, "mean_ic", float("-inf"))),
+            ),
+            reverse=True,
+        )
+        target = min(max_size, len(selected) + sharpe_slots)
+        for e in by_sharpe:
+            if e.fingerprint in seen:
+                continue
+            selected.append(e)
+            seen.add(e.fingerprint)
+            if len(selected) >= target:
+                break
+
+    if diversity_slots > 0:
+        by_diversity = sorted(
+            entries,
+            key=lambda x: (
+                _metric_or_pos_inf(
+                    getattr(x.metrics, "correlation_penalty", float("inf"))
+                ),
+                -_metric_or_neg_inf(getattr(x.metrics, "fitness", float("-inf"))),
+                -_metric_or_neg_inf(getattr(x.metrics, "sharpe_proxy", float("-inf"))),
+            ),
+        )
+        target = min(max_size, len(selected) + diversity_slots)
+        for e in by_diversity:
+            if e.fingerprint in seen:
+                continue
+            selected.append(e)
+            seen.add(e.fingerprint)
+            if len(selected) >= target:
+                break
 
     if len(selected) < max_size:
         for e in by_fitness:
@@ -583,16 +636,20 @@ def add_program_to_hof(
             and metrics.fitness > _hof_programs_data[existing_idx].metrics.fitness
         ):
             _hof_programs_data[existing_idx] = HOFEntry(
-                fp, metrics, program, generation
+                fp, metrics, _snapshot_program(program), generation
             )
             inserted = True
             state_changed = True
         elif existing_idx == -1:
-            _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
+            _hof_programs_data.append(
+                HOFEntry(fp, metrics, _snapshot_program(program), generation)
+            )
             inserted = True
             state_changed = True
     else:
-        _hof_programs_data.append(HOFEntry(fp, metrics, program, generation))
+        _hof_programs_data.append(
+            HOFEntry(fp, metrics, _snapshot_program(program), generation)
+        )
         inserted = True
         state_changed = True
     if inserted:

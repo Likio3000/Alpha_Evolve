@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import logging
 import sys
 import time
 from dataclasses import asdict
@@ -28,6 +29,7 @@ for path in (SRC, ROOT):
         sys.path.insert(0, str(path))
 
 from alpha_evolve.cli.pipeline import PipelineOptions, run_pipeline_programmatic
+from alpha_evolve.backtesting import engine as bt_engine
 from alpha_evolve.config import BacktestConfig, EvolutionConfig
 from alpha_evolve.config.layering import (
     _flatten_sectioned_config,
@@ -50,6 +52,21 @@ def _parse_seeds(spec: str) -> list[int]:
     if "," in s:
         return [int(x.strip()) for x in s.split(",") if x.strip()]
     return [int(s)]
+
+
+def _parse_int_list(spec: str | None) -> list[int]:
+    if spec is None:
+        return []
+    s = str(spec).strip()
+    if not s:
+        return []
+    out: list[int] = []
+    for token in s.split(","):
+        tok = token.strip()
+        if not tok:
+            continue
+        out.append(int(tok))
+    return out
 
 
 def _load_configs(path: Path) -> tuple[EvolutionConfig, BacktestConfig]:
@@ -180,6 +197,207 @@ def _collect_run_summary(run_dir: Path, *, threshold_sharpe: float) -> dict[str,
     }
 
 
+def _collect_backtest_dir_summary(bt_dir: Path) -> dict[str, Any]:
+    """Collect summary metrics from a backtest output directory."""
+    best_sharpe = None
+    best_alpha = None
+    raw_top_members: list[str] = []
+    summary_csv = None
+    for cand in bt_dir.glob("backtest_summary_top*.csv"):
+        summary_csv = cand
+        break
+    if summary_csv and summary_csv.exists():
+        try:
+            df = pd.read_csv(summary_csv)
+            df = df.sort_values("Sharpe", ascending=False)
+            if len(df) > 0 and "Sharpe" in df.columns:
+                best_sharpe = float(df.iloc[0]["Sharpe"])
+                best_alpha = str(df.iloc[0].get("AlphaID", ""))
+            raw_top_members = [
+                str(x) for x in df.head(min(5, int(len(df)))).get("AlphaID", []).tolist() if x
+            ]
+        except Exception:
+            pass
+
+    ens_members: list[str] = []
+    ens_path = bt_dir / "ensemble_selection.json"
+    if ens_path.exists():
+        try:
+            ens_members = list((json.loads(ens_path.read_text(encoding="utf-8"))).get("members") or [])
+        except Exception:
+            ens_members = []
+
+    corr_df: pd.DataFrame | None = None
+    corr_path = bt_dir / "return_corr_matrix.csv"
+    if corr_path.exists():
+        try:
+            corr_df = pd.read_csv(corr_path, index_col=0)
+        except Exception:
+            corr_df = None
+
+    corr_stats_ens = _pairwise_corr_stats(corr_df, ens_members) if corr_df is not None else None
+    corr_stats_raw = _pairwise_corr_stats(corr_df, raw_top_members) if corr_df is not None else None
+
+    ens_port_sharpe = None
+    ens_csv = bt_dir / "backtest_summary_ensemble.csv"
+    if ens_csv.exists():
+        try:
+            df = pd.read_csv(ens_csv)
+            if len(df) > 0 and "Sharpe" in df.columns:
+                ens_port_sharpe = float(df.iloc[0]["Sharpe"])
+        except Exception:
+            ens_port_sharpe = None
+
+    return {
+        "best_backtest_sharpe": best_sharpe,
+        "best_alpha": best_alpha,
+        "ensemble_members": ens_members,
+        "ensemble_portfolio_sharpe": ens_port_sharpe,
+        "raw_top_members": raw_top_members,
+        "corr_selected": corr_stats_ens,
+        "corr_raw_topk": corr_stats_raw,
+    }
+
+
+def _run_checkpoint_backtests(
+    run_dir: Path,
+    *,
+    base_bt: BacktestConfig,
+    checkpoint_gens: Sequence[int],
+    debug_prints: bool,
+    logger: logging.Logger,
+) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    ckpt_root = run_dir / "checkpoints"
+    if not ckpt_root.exists():
+        return out
+
+    for g in sorted({int(x) for x in checkpoint_gens if int(x) > 0}):
+        pkl_path = ckpt_root / f"hof_gen_{g:03d}.pkl"
+        if not pkl_path.exists():
+            continue
+        bt_cfg = copy.deepcopy(base_bt)
+        bt_outdir = run_dir / "checkpoint_backtests" / f"gen_{g:03d}"
+        bt_outdir.mkdir(parents=True, exist_ok=True)
+        try:
+            bt_engine.run(
+                bt_cfg,
+                outdir=bt_outdir,
+                programs_pickle=pkl_path,
+                debug_prints=debug_prints,
+                annualization_factor_override=None,
+                logger=logger,
+            )
+        except Exception:
+            continue
+        rec = {"generation": int(g), "programs_pickle": str(pkl_path), "bt_outdir": str(bt_outdir)}
+        rec.update(_collect_backtest_dir_summary(bt_outdir))
+        out[int(g)] = rec
+    return out
+
+
+def _bootstrap_mean_ci(
+    values: np.ndarray,
+    *,
+    alpha: float = 0.05,
+    n_boot: int = 20000,
+    seed: int = 123,
+) -> tuple[float, float]:
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return float("nan"), float("nan")
+    if vals.size == 1:
+        v = float(vals[0])
+        return v, v
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, vals.size, size=(n_boot, vals.size))
+    means = np.mean(vals[idx], axis=1)
+    lo = float(np.quantile(means, alpha / 2.0))
+    hi = float(np.quantile(means, 1.0 - alpha / 2.0))
+    return lo, hi
+
+
+def _paired_sign_flip_pvalues(values: np.ndarray) -> tuple[float, float]:
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    n = int(vals.size)
+    if n == 0:
+        return 1.0, 1.0
+    obs = float(np.mean(vals))
+    if n <= 20:
+        all_means = []
+        total = 1 << n
+        for mask in range(total):
+            signs = np.ones(n, dtype=float)
+            for i in range(n):
+                if (mask >> i) & 1:
+                    signs[i] = -1.0
+            all_means.append(float(np.mean(vals * signs)))
+        arr = np.asarray(all_means, dtype=float)
+        p_one = float(np.mean(arr >= obs))
+        p_two = float(np.mean(np.abs(arr) >= abs(obs)))
+        return p_one, p_two
+    rng = np.random.default_rng(12345)
+    n_perm = 200000
+    signs = rng.choice(np.array([-1.0, 1.0], dtype=float), size=(n_perm, n))
+    means = np.mean(signs * vals[None, :], axis=1)
+    p_one = float(np.mean(means >= obs))
+    p_two = float(np.mean(np.abs(means) >= abs(obs)))
+    return p_one, p_two
+
+
+def _checkpoint_pairwise_report(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"schema_version": 1, "pairs": []}
+    df = pd.DataFrame(list(rows))
+    if df.empty:
+        return {"schema_version": 1, "pairs": []}
+    generations = sorted(int(x) for x in df["generation"].dropna().unique().tolist())
+    metrics: list[tuple[str, bool]] = [
+        ("best_backtest_sharpe", True),
+        ("ensemble_portfolio_sharpe", True),
+        ("selected_avg_abs_corr", False),
+    ]
+    pairs: list[dict[str, Any]] = []
+    for g0, g1 in zip(generations, generations[1:]):
+        pair_payload: dict[str, Any] = {"from_gen": int(g0), "to_gen": int(g1), "metrics": []}
+        left = df[df["generation"] == g0].set_index("seed")
+        right = df[df["generation"] == g1].set_index("seed")
+        common = sorted(set(left.index).intersection(set(right.index)))
+        for metric, higher_is_better in metrics:
+            deltas: list[float] = []
+            for s in common:
+                try:
+                    a = float(left.loc[s, metric])
+                    b = float(right.loc[s, metric])
+                except Exception:
+                    continue
+                if not np.isfinite(a) or not np.isfinite(b):
+                    continue
+                deltas.append((b - a) if higher_is_better else (a - b))
+            if not deltas:
+                continue
+            arr = np.asarray(deltas, dtype=float)
+            ci_lo, ci_hi = _bootstrap_mean_ci(arr, alpha=0.05, n_boot=20000, seed=123)
+            p_one, p_two = _paired_sign_flip_pvalues(arr)
+            pair_payload["metrics"].append(
+                {
+                    "metric": metric,
+                    "higher_is_better": bool(higher_is_better),
+                    "n": int(arr.size),
+                    "mean_improvement": float(np.mean(arr)),
+                    "median_improvement": float(np.median(arr)),
+                    "ci95_mean_improvement": [float(ci_lo), float(ci_hi)],
+                    "p_perm_one_sided": float(p_one),
+                    "p_perm_two_sided": float(p_two),
+                    "scientific_pass": bool(np.isfinite(ci_lo) and ci_lo > 0 and p_one <= 0.05),
+                }
+            )
+        pairs.append(pair_payload)
+    return {"schema_version": 1, "pairs": pairs}
+
+
 def _aggregate(values: list[float]) -> dict[str, Any]:
     xs = pd.Series([v for v in values if v is not None and pd.notna(v)], dtype="float64")
     if xs.empty:
@@ -240,11 +458,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--ensemble-size", type=int, default=None)
     p.add_argument("--ensemble-max-corr", type=float, default=None)
     p.add_argument("--ensemble-corr-lambda", type=float, default=None)
+    p.add_argument(
+        "--checkpoint-gens",
+        default=None,
+        help="Comma-separated generations to checkpoint and backtest from the same run trajectory (e.g. '45,60,90')",
+    )
     return p.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    logger = logging.getLogger("benchmark_sp500")
 
     config_path = Path(args.config) if args.config else (
         ROOT / ("configs/bench_sp500_small_quick.toml" if args.mode == "quick" else "configs/bench_sp500_full.toml")
@@ -253,6 +477,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(f"Config not found: {config_path}")
 
     base_evo, base_bt = _load_configs(config_path)
+    checkpoint_source = (
+        _parse_int_list(args.checkpoint_gens)
+        if args.checkpoint_gens is not None
+        else [int(x) for x in (getattr(base_evo, "checkpoint_gens", ()) or ())]
+    )
+    checkpoint_gens = sorted({int(x) for x in checkpoint_source if int(x) > 0})
+    if checkpoint_gens:
+        max_ckpt = max(checkpoint_gens)
+        if args.generations is not None and int(args.generations) < max_ckpt:
+            raise SystemExit(
+                f"--generations ({args.generations}) must be >= max checkpoint generation ({max_ckpt})"
+            )
+        base_evo.generations = max(int(base_evo.generations), int(max_ckpt))
+        base_evo.checkpoint_gens = tuple(checkpoint_gens)
 
     seeds = _parse_seeds(args.seeds) if args.seeds else ([0, 1] if args.mode == "quick" else [0, 1, 2, 3, 4])
     if not seeds:
@@ -282,10 +520,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     bench_dir.mkdir(parents=True, exist_ok=True)
     runs_root.mkdir(parents=True, exist_ok=True)
 
-    (bench_dir / "config.json").write_text(json.dumps({"path": str(config_path), "evolution": asdict(base_evo), "backtest": asdict(base_bt)}, indent=2))
+    (bench_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "path": str(config_path),
+                "evolution": asdict(base_evo),
+                "backtest": asdict(base_bt),
+                "checkpoint_gens": checkpoint_gens,
+            },
+            indent=2,
+        )
+    )
 
     records: list[dict[str, Any]] = []
     csv_rows: list[dict[str, Any]] = []
+    checkpoint_rows: list[dict[str, Any]] = []
     for seed in seeds:
         evo = copy.deepcopy(base_evo)
         bt = copy.deepcopy(base_bt)
@@ -309,6 +558,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             "elapsed_sec": float(elapsed),
         }
         record.update(_collect_run_summary(Path(run_dir), threshold_sharpe=float(args.threshold_sharpe)))
+        if checkpoint_gens:
+            ckpt_records = _run_checkpoint_backtests(
+                Path(run_dir),
+                base_bt=bt,
+                checkpoint_gens=checkpoint_gens,
+                debug_prints=bool(args.debug),
+                logger=logger,
+            )
+            record["checkpoint_results"] = ckpt_records
+            for g, ck in sorted(ckpt_records.items()):
+                row = {
+                    "seed": int(seed),
+                    "generation": int(g),
+                    "run_dir": str(run_dir),
+                    "best_alpha": ck.get("best_alpha"),
+                    "best_backtest_sharpe": ck.get("best_backtest_sharpe"),
+                    "ensemble_portfolio_sharpe": ck.get("ensemble_portfolio_sharpe"),
+                }
+                corr_sel = ck.get("corr_selected") or {}
+                corr_raw = ck.get("corr_raw_topk") or {}
+                row["ensemble_k"] = corr_sel.get("k")
+                row["selected_avg_abs_corr"] = corr_sel.get("avg_abs_corr")
+                row["selected_max_abs_corr"] = corr_sel.get("max_abs_corr")
+                row["raw_topk_k"] = corr_raw.get("k")
+                row["raw_topk_avg_abs_corr"] = corr_raw.get("avg_abs_corr")
+                row["raw_topk_max_abs_corr"] = corr_raw.get("max_abs_corr")
+                checkpoint_rows.append(row)
         records.append(record)
         csv_rows.append(_flatten_record_for_csv(record))
 
@@ -338,6 +614,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         "raw_topk_max_abs_corr": _aggregate(corr_raw_max),
     }
     (bench_dir / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if checkpoint_rows:
+        cp_df = pd.DataFrame(checkpoint_rows)
+        cp_df.to_csv(bench_dir / "checkpoint_runs.csv", index=False)
+        checkpoint_summary: dict[str, Any] = {}
+        for g in sorted(cp_df["generation"].dropna().unique().tolist()):
+            gdf = cp_df[cp_df["generation"] == g]
+            checkpoint_summary[f"gen_{int(g):03d}"] = {
+                "n": int(len(gdf)),
+                "best_backtest_sharpe": _aggregate(
+                    [float(v) for v in gdf["best_backtest_sharpe"].tolist() if pd.notna(v)]
+                ),
+                "ensemble_portfolio_sharpe": _aggregate(
+                    [float(v) for v in gdf["ensemble_portfolio_sharpe"].tolist() if pd.notna(v)]
+                ),
+                "selected_avg_abs_corr": _aggregate(
+                    [float(v) for v in gdf["selected_avg_abs_corr"].tolist() if pd.notna(v)]
+                ),
+            }
+        cp_report = {
+            "schema_version": 1,
+            "checkpoint_gens": checkpoint_gens,
+            "summary_by_generation": checkpoint_summary,
+            "pairwise_scientific": _checkpoint_pairwise_report(checkpoint_rows),
+        }
+        (bench_dir / "checkpoint_summary.json").write_text(
+            json.dumps(cp_report, indent=2),
+            encoding="utf-8",
+        )
     print(f"[benchmark] Wrote reports -> {bench_dir}")
     return 0
 

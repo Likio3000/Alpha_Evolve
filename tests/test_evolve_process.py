@@ -1,4 +1,5 @@
 import numpy as np
+import pickle
 
 from alpha_evolve.config import EvolutionConfig
 from alpha_evolve.programs import AlphaProgram, Op, FINAL_PREDICTION_VECTOR_NAME
@@ -118,4 +119,37 @@ def test_restart_preserves_hof_by_default(monkeypatch):
     evolve_alphas.evolve_with_context(cfg, ctx)
     hof = get_final_hof_programs()
     assert len(hof) >= 1
+    clear_hof()
+
+
+def test_evolution_writes_checkpoint_pickles(tmp_path, monkeypatch):
+    """Configured checkpoint generations should emit HOF pickles."""
+    cfg = EvolutionConfig(
+        data_dir="tests/data/good",
+        max_lookback_data_option="common_1200",
+        min_common_points=3,
+        generations=2,
+        pop_size=3,
+        workers=1,
+        quiet=True,
+        checkpoint_gens=(1, 2),
+        checkpoint_dir=str(tmp_path / "checkpoints"),
+    )
+    ctx = make_eval_context_from_dir(
+        data_dir=cfg.data_dir,
+        strategy=cfg.max_lookback_data_option,
+        min_common_points=cfg.min_common_points,
+        eval_lag=cfg.eval_lag,
+        dh_module=__import__("alpha_evolve.evolution.data", fromlist=["*"]),
+    )
+    monkeypatch.setattr(evolve_alphas, "_random_prog", lambda _: _fixed_program())
+    monkeypatch.setattr(evolve_alphas, "_mutate_prog", lambda p, _: p)
+
+    evolve_alphas.evolve_with_context(cfg, ctx)
+    for g in (1, 2):
+        p = tmp_path / "checkpoints" / f"hof_gen_{g:03d}.pkl"
+        assert p.exists()
+        with open(p, "rb") as fh:
+            payload = pickle.load(fh)
+        assert isinstance(payload, list)
     clear_hof()

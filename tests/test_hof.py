@@ -174,6 +174,38 @@ def test_hof_capacity_preserves_high_sharpe_anchor():
     hof.clear_hof()
 
 
+def test_hof_capacity_preserves_low_corr_anchor():
+    """When capped, keep at least one low-correlation anchor for ensemble diversity."""
+    hof.initialize_hof(
+        max_size=10, keep_dupes=False, corr_penalty_weight=0.25, corr_cutoff=1.1
+    )
+    rng = np.random.default_rng(123)
+    programs = [make_prog(f"dc{i}") for i in range(11)]
+    for i, prog in enumerate(programs[:10]):
+        fit = 1.0 - (0.08 * i)
+        sharpe = 0.10 + (0.01 * i)
+        preds = rng.normal(size=(5, 5))
+        hof.add_program_to_hof(
+            prog,
+            EvalResult(fit, 0.0, sharpe, 0.0, 0.50, preds, 0.0, 0.0, 0.0, None),
+            0,
+        )
+
+    # Very low-fitness but low-correlation candidate should survive as diversity anchor.
+    low_corr_prog = programs[10]
+    low_corr_preds = rng.normal(size=(5, 5))
+    hof.add_program_to_hof(
+        low_corr_prog,
+        EvalResult(0.01, 0.0, 0.01, 0.0, 0.00, low_corr_preds, 0.0, 0.0, 0.0, None),
+        0,
+    )
+
+    kept = {entry.fingerprint for entry in hof._hof_programs_data}
+    assert len(kept) == 10
+    assert low_corr_prog.fingerprint in kept
+    hof.clear_hof()
+
+
 def test_relaxed_fill_still_rejects_near_identical_predictions():
     """Even before min_fill, near-identical predictions should be rejected."""
     hof.initialize_hof(
@@ -198,4 +230,28 @@ def test_relaxed_fill_still_rejects_near_identical_predictions():
         0,
     )
     assert len(hof._hof_programs_data) == 1
+    hof.clear_hof()
+
+
+def test_hof_stores_program_snapshot_not_live_reference():
+    """Mutating the original program after insertion must not alter stored HOF program."""
+    hof.initialize_hof(
+        max_size=5,
+        keep_dupes=False,
+        corr_penalty_weight=0.25,
+        corr_cutoff=1.1,
+    )
+    prog = make_prog("snap_a")
+    preds = np.array([[1.0, 2.0], [3.0, 4.0]])
+    hof.add_program_to_hof(
+        prog,
+        EvalResult(0.9, 0.1, 0.1, 0.0, 0.0, preds, 0.0, 0.0, 0.0, None),
+        0,
+    )
+    stored_before = hof.get_final_hof_programs()[0][0].to_string()
+
+    # Mutate the source object in-place after it has been inserted into HOF.
+    prog.predict_ops[0] = Op(FINAL_PREDICTION_VECTOR_NAME, "sign", ("snap_b",))
+    stored_after = hof.get_final_hof_programs()[0][0].to_string()
+    assert stored_after == stored_before
     hof.clear_hof()

@@ -201,6 +201,10 @@ class EvolutionConfig(DataConfig):
         "mean"  # mean | median | trimmed_mean (applies when cv_k_folds>1)
     )
     cv_trim_frac: float = 0.1  # symmetric trim fraction for trimmed_mean
+    # Optional generation checkpoints: persist HOF program pickles at these
+    # 1-indexed generations so scaling can be evaluated from a single run.
+    checkpoint_gens: tuple[int, ...] = ()
+    checkpoint_dir: str | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

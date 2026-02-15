@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+import pickle
 import random
 import time
 import json as _json
@@ -7,6 +8,7 @@ from typing import Dict, List, Tuple, Set
 from multiprocessing import Pool, cpu_count
 import numpy as np
 import logging
+from pathlib import Path
 
 from alpha_evolve.programs import (
     AlphaProgram,
@@ -351,6 +353,43 @@ def evolve_with_context(
         except Exception:
             mf_ctx = None
     gen_eval_times_history: List[float] = []
+    checkpoint_gens: Set[int] = set()
+    for g in getattr(cfg, "checkpoint_gens", ()) or ():
+        try:
+            gi = int(g)
+        except Exception:
+            continue
+        if gi > 0:
+            checkpoint_gens.add(gi)
+    checkpoint_dir: Path | None = None
+    if checkpoint_gens:
+        raw_dir = getattr(cfg, "checkpoint_dir", None)
+        if raw_dir:
+            try:
+                checkpoint_dir = Path(str(raw_dir)).expanduser().resolve()
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                checkpoint_dir = None
+
+    def _current_output_programs() -> List[Tuple[AlphaProgram, float]]:
+        """Build output payload exactly like final return (HOF + optional QD elites)."""
+        out = get_final_hof_programs()
+        if _QD_ENABLED:
+            try:
+                seen = {
+                    getattr(prog, "fingerprint", idx)
+                    for idx, (prog, _) in enumerate(out)
+                    if hasattr(prog, "fingerprint")
+                }
+            except Exception:
+                seen = set()
+            for entry in qd_archive.get_elites():
+                fp = entry.fingerprint
+                if fp in seen:
+                    continue
+                out.append((entry.program, entry.metrics.mean_ic))
+                seen.add(fp)
+        return out
 
     try:
         prev_best_fit: float = float("-inf")
@@ -1225,6 +1264,24 @@ def evolve_with_context(
                         continue
 
             print_generation_summary(gen, pop, eval_results)
+            if checkpoint_dir is not None and (gen + 1) in checkpoint_gens:
+                try:
+                    checkpoint_payload = _current_output_programs()
+                    checkpoint_path = checkpoint_dir / f"hof_gen_{gen + 1:03d}.pkl"
+                    with open(checkpoint_path, "wb") as fh:
+                        pickle.dump(checkpoint_payload, fh)
+                    logger.info(
+                        "Gen %s | Saved checkpoint HOF -> %s (%d programs)",
+                        gen + 1,
+                        checkpoint_path,
+                        len(checkpoint_payload),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Gen %s | Failed to save checkpoint HOF snapshot",
+                        gen + 1,
+                        exc_info=True,
+                    )
 
             if not eval_results or eval_results[0][1].fitness <= -float("inf"):
                 clear_hof_on_restart = bool(
@@ -1653,23 +1710,7 @@ def evolve_with_context(
     except KeyboardInterrupt:
         logger.info("[Ctrl‑C] Evolution stopped early. Processing current HOF...")
 
-    final_top_programs_with_ic = get_final_hof_programs()
-    if _QD_ENABLED:
-        try:
-            seen = {
-                getattr(prog, "fingerprint", idx)
-                for idx, (prog, _) in enumerate(final_top_programs_with_ic)
-                if hasattr(prog, "fingerprint")
-            }
-        except Exception:
-            seen = set()
-        for entry in qd_archive.get_elites():
-            fp = entry.fingerprint
-            if fp in seen:
-                continue
-            final_top_programs_with_ic.append((entry.program, entry.metrics.mean_ic))
-            seen.add(fp)
-    return final_top_programs_with_ic
+    return _current_output_programs()
 
 
 def evolve(cfg: EvoConfig) -> List[Tuple[AlphaProgram, float]]:
