@@ -150,7 +150,12 @@ class EvolutionConfig(DataConfig):
     default_op_weight: float = 1.0
 
     # ramp scheduling for annealed penalties (corr, ic_std, turnover, sharpe_proxy)
+    # ramp_mode:
+    # - "fractional": ramp over ramp_fraction * generations (legacy behavior)
+    # - "fixed": ramp over ramp_fixed_gens regardless of total generations
+    ramp_mode: str = "fractional"
     ramp_fraction: float = 1.0 / 3.0  # portion of total gens to reach full weight
+    ramp_fixed_gens: int = 5  # used when ramp_mode == "fixed"
     ramp_min_gens: int = 5  # minimum generations to ramp over
     # Adaptive mutation/fresh-rate patience. Keep this fixed across compute
     # budgets so early-generation behavior is invariant when comparing runs.
@@ -171,6 +176,18 @@ class EvolutionConfig(DataConfig):
     novelty_struct_w: float = 0.0
     # Behavioral novelty: boost by prediction distance vs HOF (0.0 disables)
     novelty_pred_dist_w: float = 0.0
+    # Plateau response (compute-invariant): increase novelty pressure when no
+    # fitness improvement is observed. Values are multiplicative add-ons at
+    # full stagnation_factor=1.0 and do not depend on total generation count.
+    plateau_novelty_boost: float = 0.0
+    # Optional correlation-pressure boost on plateau (applied to ramped corr_w).
+    plateau_corr_boost: float = 0.0
+    # Additive boost to fresh_rate at full stagnation_factor=1.0.
+    plateau_fresh_add_max: float = 0.0
+    # Optional periodic reseed injection when plateau persists.
+    plateau_reseed_frac: float = 0.0
+    plateau_reseed_trigger_gens: int = 0
+    plateau_reseed_cooldown_gens: int = 5
     # optional: phased selection – use pure IC for the first N generations
     ic_phase_gens: int = 0
     # Rank-based tournament weighting temperature (softmax beta)

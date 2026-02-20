@@ -116,6 +116,8 @@ class PipelineOptions:
     dry_run: bool = False
     output_dir: str | None = None
     persist_hof_per_gen: bool = True
+    generate_diagnostics_plots: bool = True
+    generate_backtest_plots: bool = True
     disable_align_cache: bool = False
     align_cache_dir: str | None = None
 
@@ -209,6 +211,18 @@ def parse_args(argv: Sequence[str] | None = None) -> tuple[EvolutionConfig, Back
     p.add_argument("--persist-hof-per-gen", dest="persist_hof_per_gen", action="store_true", default=True,
                    help="Persist per-generation HOF snapshots under run_dir/meta")
     p.add_argument("--no-persist-hof-per-gen", dest="persist_hof_per_gen", action="store_false")
+    p.add_argument(
+        "--diagnostics-plots",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable diagnostic plots generated from diagnostics.json.",
+    )
+    p.add_argument(
+        "--backtest-plots",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable per-alpha backtest timeseries PNG plots.",
+    )
 
     p.add_argument("--config", default=None,
                    help="Optional TOML/YAML config file (file < env < CLI)")
@@ -278,6 +292,8 @@ def options_from_namespace(ns: argparse.Namespace) -> PipelineOptions:
         dry_run=getattr(ns, "dry_run", False),
         output_dir=getattr(ns, "output_dir", None),
         persist_hof_per_gen=getattr(ns, "persist_hof_per_gen", True),
+        generate_diagnostics_plots=getattr(ns, "diagnostics_plots", True),
+        generate_backtest_plots=getattr(ns, "backtest_plots", True),
         disable_align_cache=getattr(ns, "disable_align_cache", False),
         align_cache_dir=getattr(ns, "align_cache_dir", None),
     )
@@ -723,14 +739,17 @@ def run_pipeline_programmatic(
     except Exception:
         pass
 
-    try:
-        import scripts.diagnostics_plot as diag_plot
+    if opts.generate_diagnostics_plots:
+        try:
+            import scripts.diagnostics_plot as diag_plot
 
-        diag_plot.generate_plots(run_dir)
-    except SystemExit:
-        pass
-    except Exception as e:
-        logger.info("Plotting skipped: %s", e)
+            diag_plot.generate_plots(run_dir)
+        except SystemExit:
+            pass
+        except Exception as e:
+            logger.info("Plotting skipped: %s", e)
+    else:
+        logger.info("Diagnostics plots disabled by options.")
 
     logger.info("\n— Back-testing …")
     try:
@@ -752,18 +771,21 @@ def run_pipeline_programmatic(
     except Exception:
         logger.info("Failed to write SUMMARY.json; continuing.")
 
-    try:
-        from scripts.backtest_diagnostics_plot import plot_alpha_timeseries
+    if opts.generate_backtest_plots:
+        try:
+            from scripts.backtest_diagnostics_plot import plot_alpha_timeseries
 
-        bt_dir = run_dir / "backtest_portfolio_csvs"
-        csvs = sorted(bt_dir.glob("alpha_*_timeseries.csv"))
-        for c in csvs:
-            out_png = plot_alpha_timeseries(c)
-            logger.info("Saved plot → %s", out_png)
-    except SystemExit:
-        pass
-    except Exception as e:
-        logger.info("Backtest plots skipped: %s", e)
+            bt_dir = run_dir / "backtest_portfolio_csvs"
+            csvs = sorted(bt_dir.glob("alpha_*_timeseries.csv"))
+            for c in csvs:
+                out_png = plot_alpha_timeseries(c)
+                logger.info("Saved plot → %s", out_png)
+        except SystemExit:
+            pass
+        except Exception as e:
+            logger.info("Backtest plots skipped: %s", e)
+    else:
+        logger.info("Backtest plots disabled by options.")
 
     if opts.run_baselines:
         _train_baselines(bt_cfg, run_dir, retrain=opts.retrain_baselines)

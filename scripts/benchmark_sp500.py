@@ -449,6 +449,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--outdir", default="artifacts/benchmarks", help="Directory to write benchmark reports")
     p.add_argument("--log-level", default="INFO")
     p.add_argument("--debug", action="store_true")
+    p.add_argument(
+        "--skip-plots",
+        action="store_true",
+        help="Disable diagnostics/backtest plotting to speed up benchmark throughput",
+    )
 
     # Optional overrides (kept small; prefer config files for most tuning)
     p.add_argument("--generations", type=int, default=None)
@@ -559,6 +564,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             debug_prints=bool(args.debug),
             log_level=str(args.log_level),
             output_dir=str(runs_root),
+            generate_diagnostics_plots=not bool(args.skip_plots),
+            generate_backtest_plots=not bool(args.skip_plots),
         )
         t0 = time.perf_counter()
         run_dir = run_pipeline_programmatic(evo, bt, opts)

@@ -215,6 +215,29 @@ def _resolve_eval_horizons(cfg: EvoConfig) -> tuple[int, ...]:
     return tuple(sorted(horizons))
 
 
+def _resolve_ramp_gens(cfg: EvoConfig) -> int:
+    """Resolve annealing ramp length from config.
+
+    `fractional` keeps the legacy behavior tied to total generation budget.
+    `fixed` keeps ramping compute-budget invariant across different run lengths.
+    """
+    mode = str(getattr(cfg, "ramp_mode", "fractional") or "fractional").lower()
+    ramp_min = max(1, int(getattr(cfg, "ramp_min_gens", 5) or 5))
+    if mode == "fixed":
+        fixed = max(1, int(getattr(cfg, "ramp_fixed_gens", ramp_min) or ramp_min))
+        return max(ramp_min, fixed)
+    try:
+        ramp_gens_cfg = int(
+            max(
+                1,
+                round(cfg.generations * float(getattr(cfg, "ramp_fraction", 1.0 / 3.0))),
+            )
+        )
+    except Exception:
+        ramp_gens_cfg = cfg.generations // 3 if cfg.generations > 0 else ramp_min
+    return max(ramp_min, ramp_gens_cfg)
+
+
 def _initialize_qd_archive(cfg: EvoConfig) -> None:
     global _QD_ENABLED
     enabled = bool(getattr(cfg, "qd_archive_enabled", False))
@@ -396,26 +419,29 @@ def evolve_with_context(
         no_improve_gens: int = 0
         prev_q25: float | None = None
         q25_deteriorate_streak: int = 0
+        last_plateau_reseed_gen: int = -10_000
+        ramp_gens = _resolve_ramp_gens(cfg)
         for gen in range(cfg.generations):
-            # Anneal correlation penalty and optional eval weights to encourage exploration early
-            # Ramp linearly over a configurable portion of the run
-            try:
-                ramp_gens_cfg = int(
-                    max(
-                        1,
-                        round(
-                            cfg.generations
-                            * float(getattr(cfg, "ramp_fraction", 1.0 / 3.0))
-                        ),
-                    )
-                )
-            except Exception:
-                ramp_gens_cfg = cfg.generations // 3 if cfg.generations > 0 else 5
-            ramp_gens = max(getattr(cfg, "ramp_min_gens", 5), ramp_gens_cfg)
+            # Ramp linearly over a resolved schedule (fractional or fixed).
             ramp = min(1.0, (gen + 1) / ramp_gens)
+            # Plateau factor is compute-budget invariant: it only depends on
+            # improvement stagnation and patience, not on cfg.generations.
+            patience = max(1, int(getattr(cfg, "stagnation_patience", 5) or 5))
+            stagnation_factor_eval = min(1.0, no_improve_gens / patience)
+            novelty_weight_mult = 1.0 + max(
+                0.0,
+                float(getattr(cfg, "plateau_novelty_boost", 0.0)),
+            ) * stagnation_factor_eval
+            corr_weight_eff = float(cfg.corr_penalty_w) * float(ramp)
+            corr_weight_eff *= (
+                1.0
+                + max(0.0, float(getattr(cfg, "plateau_corr_boost", 0.0)))
+                * stagnation_factor_eval
+            )
             try:
                 hof_module.set_correlation_penalty(
-                    weight=cfg.corr_penalty_w * ramp, cutoff=cfg.corr_cutoff
+                    weight=corr_weight_eff,
+                    cutoff=cfg.corr_cutoff,
                 )
             except Exception:
                 pass
@@ -648,7 +674,9 @@ def evolve_with_context(
                     base_score = float(res.fitness)
 
                 # Optional novelty boost: reward low correlation w.r.t. HOF
-                nb_w = float(getattr(cfg, "novelty_boost_w", 0.0))
+                nb_w = float(getattr(cfg, "novelty_boost_w", 0.0)) * float(
+                    novelty_weight_mult
+                )
                 if nb_w > 0.0:
                     try:
                         proc = getattr(res, "processed_predictions", None)
@@ -662,7 +690,9 @@ def evolve_with_context(
                     except Exception:
                         pass
                 # Optional structural novelty boost: reward opcode diversity vs HOF
-                ns_w = float(getattr(cfg, "novelty_struct_w", 0.0))
+                ns_w = float(getattr(cfg, "novelty_struct_w", 0.0)) * float(
+                    novelty_weight_mult
+                )
                 if ns_w > 0.0:
                     try:
                         if pop_idx is None or pop_idx < 0 or pop_idx >= len(pop):
@@ -695,7 +725,9 @@ def evolve_with_context(
                     except Exception:
                         pass
                 # Optional behavioral novelty boost: reward prediction-distance vs HOF
-                nd_w = float(getattr(cfg, "novelty_pred_dist_w", 0.0))
+                nd_w = float(getattr(cfg, "novelty_pred_dist_w", 0.0)) * float(
+                    novelty_weight_mult
+                )
                 if nd_w > 0.0:
                     try:
                         proc = getattr(res, "processed_predictions", None)
@@ -1123,10 +1155,14 @@ def evolve_with_context(
                             for name in feature_counts
                         },
                         ramp={
-                            "corr_w": float(cfg.corr_penalty_w * ramp),
+                            "corr_w": float(corr_weight_eff),
                             "ic_std_w": float(cfg.ic_std_penalty_w * ramp),
                             "turnover_w": float(cfg.turnover_penalty_w * ramp),
                             "sharpe_w": float(cfg.sharpe_proxy_w * ramp),
+                        },
+                        adaptive={
+                            "stagnation_factor": float(stagnation_factor_eval),
+                            "novelty_weight_mult": float(novelty_weight_mult),
                         },
                         gen_eval_seconds=float(gen_eval_time),
                     )
@@ -1563,6 +1599,13 @@ def evolve_with_context(
                 fresh_rate_eff = min(
                     1.0, fresh_rate_eff + 0.05 * q25_deteriorate_streak
                 )
+            plateau_fresh_add = max(
+                0.0, float(getattr(cfg, "plateau_fresh_add_max", 0.0))
+            )
+            if plateau_fresh_add > 0.0:
+                fresh_rate_eff = min(
+                    1.0, fresh_rate_eff + plateau_fresh_add * stagnation_factor
+                )
 
             # Anneal crossover upwards to recombine mature building blocks
             p_cross_eff = max(0.0, min(1.0, cfg.p_cross + 0.5 * ramp))
@@ -1612,6 +1655,34 @@ def evolve_with_context(
                 and eval_results[0][1].fitness > -float("inf")
             ):
                 new_pop.append(pop[eval_results[0][0]].copy())
+
+            plateau_reseed_frac = max(
+                0.0, float(getattr(cfg, "plateau_reseed_frac", 0.0))
+            )
+            plateau_reseed_trigger = max(
+                0, int(getattr(cfg, "plateau_reseed_trigger_gens", 0) or 0)
+            )
+            plateau_reseed_cooldown = max(
+                1, int(getattr(cfg, "plateau_reseed_cooldown_gens", 5) or 5)
+            )
+            if (
+                plateau_reseed_frac > 0.0
+                and plateau_reseed_trigger > 0
+                and no_improve_gens >= plateau_reseed_trigger
+                and (gen - last_plateau_reseed_gen) >= plateau_reseed_cooldown
+            ):
+                inject_n = max(1, int(round(cfg.pop_size * plateau_reseed_frac)))
+                inject_n = min(inject_n, cfg.pop_size - len(new_pop))
+                if inject_n > 0:
+                    for _ in range(inject_n):
+                        new_pop.append(_random_prog(cfg))
+                    last_plateau_reseed_gen = gen
+                    logger.info(
+                        "Gen %s | Plateau reseed injected %s fresh programs (no_improve=%s)",
+                        gen + 1,
+                        inject_n,
+                        no_improve_gens,
+                    )
 
             while len(new_pop) < cfg.pop_size:
                 if _RNG.random() < fresh_rate_eff:

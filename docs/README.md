@@ -9,6 +9,7 @@
 - **Reference**
   - `docs/reference/pipeline-configuration.md`
   - `docs/reference/run-artifacts.md`
+  - `docs/reference/research-paper-addendum-2026-02-15.md`
 - **How-Tos**
   - `docs/howtos/testing.md`
 - **Roadmaps**

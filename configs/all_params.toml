@@ -88,13 +88,22 @@ qd_archive_enabled = false
 qd_max_entries = 256
 
 # Ramping / selection strategy
+ramp_mode = "fractional"                 # fractional | fixed
 ramp_fraction = 0.3333333333              # fraction of generations to ramp
+ramp_fixed_gens = 5                       # used when ramp_mode=fixed
 ramp_min_gens = 5
 selection_metric = "psr"                  # ramped | fixed | ic | lcb | psr | sharpe | auto | phased
 selection_lcb_z = 1.645                   # one-sided z-score for selection_metric=lcb
 novelty_boost_w = 0.0
 novelty_struct_w = 0.0
 novelty_pred_dist_w = 0.0
+# Plateau-triggered exploration (compute-invariant; disabled by default)
+plateau_novelty_boost = 0.0
+plateau_corr_boost = 0.0
+plateau_fresh_add_max = 0.0
+plateau_reseed_frac = 0.0
+plateau_reseed_trigger_gens = 0
+plateau_reseed_cooldown_gens = 5
 ic_phase_gens = 0
 
 # Rank-based tournament weighting temperature (softmax beta schedule)
