@@ -108,7 +108,7 @@ def _collect_backtest_dir_summary(bt_dir: Path) -> dict[str, Any]:
     best_alpha = None
     raw_top_members: list[str] = []
     summary_csv = None
-    for cand in bt_dir.glob("backtest_summary_top*.csv"):
+    for cand in sorted(bt_dir.glob("backtest_summary_top*.csv")):
         summary_csv = cand
         break
     if summary_csv and summary_csv.exists():
@@ -214,6 +214,21 @@ def _paired_sign_flip_pvalues(values: np.ndarray) -> tuple[float, float]:
     return p_one, p_two
 
 
+def _holm_bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
+    n = len(p_values)
+    if n == 0:
+        return []
+    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda t: t[1])
+    adjusted = [1.0] * n
+    running_max = 0.0
+    for rank, (orig_idx, p) in enumerate(indexed, start=1):
+        factor = n - rank + 1
+        padj = min(1.0, max(0.0, p) * factor)
+        running_max = max(running_max, padj)
+        adjusted[orig_idx] = running_max
+    return adjusted
+
+
 def _checkpoint_pairwise_report(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {"schema_version": 1, "pairs": []}
@@ -269,9 +284,24 @@ def _checkpoint_pairwise_report(rows: Sequence[dict[str, Any]]) -> dict[str, Any
                     "scientific_pass_non_decrease": bool(neg == 0 and pos > 0),
                     "p_perm_one_sided": float(p_one),
                     "p_perm_two_sided": float(p_two),
-                    "scientific_pass": bool(np.isfinite(ci_lo) and ci_lo > 0 and p_one <= 0.05),
+                    "scientific_pass": bool(
+                        np.isfinite(ci_lo) and ci_lo > 0 and p_one <= 0.05
+                    ),
                 }
             )
+        if pair_payload["metrics"]:
+            adj = _holm_bonferroni_adjust(
+                [float(m.get("p_perm_one_sided", 1.0)) for m in pair_payload["metrics"]]
+            )
+            for m, p_adj in zip(pair_payload["metrics"], adj):
+                ci = m.get("ci95_mean_improvement") or [float("nan"), float("nan")]
+                ci_lo = float(ci[0]) if isinstance(ci, list) and ci else float("nan")
+                raw_pass = bool(m.get("scientific_pass", False))
+                m["scientific_pass_unadjusted"] = raw_pass
+                m["p_perm_one_sided_holm"] = float(p_adj)
+                m["scientific_pass"] = bool(
+                    np.isfinite(ci_lo) and ci_lo > 0 and float(p_adj) <= 0.05
+                )
         pairs.append(pair_payload)
     return {"schema_version": 1, "pairs": pairs}
 

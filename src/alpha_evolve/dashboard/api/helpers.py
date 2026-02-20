@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+from dataclasses import fields as dc_fields
 import re
 import json
 import time
@@ -10,6 +11,7 @@ from queue import Empty
 import asyncio
 import mimetypes
 from concurrent.futures import ThreadPoolExecutor
+from alpha_evolve.config.model import EvolutionConfig, BacktestConfig
 
 from django.http import HttpResponse, StreamingHttpResponse
 
@@ -91,6 +93,29 @@ _DATASET_ALIASES: Dict[str, str] = {
     "sp500subset": "sp500_small",
 }
 
+_CLI_KEY_ALIASES: Dict[str, str] = {
+    # Backward-compatible alias from legacy dashboard payloads.
+    "bt_top": "top_to_backtest",
+}
+
+
+def _collect_negatable_bool_flags() -> set[str]:
+    names: set[str] = set()
+    for dc in (EvolutionConfig, BacktestConfig):
+        try:
+            defaults = dc()
+        except Exception:
+            continue
+        for f in dc_fields(dc):
+            if f.type is bool and getattr(defaults, f.name, False) is True:
+                names.add(f.name)
+    # Pipeline-only bools with explicit --no-* support.
+    names.update({"persist_hof_per_gen", "diagnostics_plots", "backtest_plots"})
+    return names
+
+
+_NEGATABLE_BOOL_FLAGS: set[str] = _collect_negatable_bool_flags()
+
 
 def resolve_dataset_preset(name: str) -> Optional[Path]:
     key = name.strip().lower()
@@ -122,6 +147,18 @@ def build_pipeline_args(
     (e.g., programmatic consumption).
     """
     gens = int(payload.get("generations", 5))
+    raw_overrides = payload.get("overrides") or {}
+    overrides: Dict[str, Any] = {}
+    if isinstance(raw_overrides, dict):
+        for k, v in raw_overrides.items():
+            key = _CLI_KEY_ALIASES.get(str(k), str(k))
+            overrides[key] = v
+    try:
+        if "generations" in overrides:
+            gens = int(overrides.pop("generations"))
+    except Exception:
+        pass
+
     args: list[str] = []
     if include_runner:
         args.extend(["uv", "run", "python", "-m", "alpha_evolve.cli.pipeline"])
@@ -136,13 +173,6 @@ def build_pipeline_args(
         args += ["--config", str(cfg_path)]
     if payload.get("data_dir"):
         args += ["--data_dir", str(payload["data_dir"])]
-    raw_overrides = payload.get("overrides") or {}
-    overrides = dict(raw_overrides)
-    try:
-        if "generations" in overrides:
-            gens = int(overrides.pop("generations"))
-    except Exception:
-        pass
     overrides.pop("sector_mapping", None)
     reserved = {
         "generations",
@@ -156,8 +186,9 @@ def build_pipeline_args(
     for k, v in payload.items():
         if k in reserved:
             continue
+        key = _CLI_KEY_ALIASES.get(str(k), str(k))
         if isinstance(v, (str, int, float, bool)):
-            overrides[k] = v
+            overrides[key] = v
     for k, v in overrides.items():
         if not isinstance(v, (str, int, float, bool)):
             continue
@@ -165,6 +196,8 @@ def build_pipeline_args(
         if isinstance(v, bool):
             if v:
                 args.append(flag)
+            elif k in _NEGATABLE_BOOL_FLAGS:
+                args.append(f"--no-{k}")
         else:
             args += [flag, str(v)]
     return args

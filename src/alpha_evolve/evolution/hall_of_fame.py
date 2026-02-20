@@ -1,6 +1,6 @@
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, List, Tuple, Dict, Set, Any  # Added Set
+from typing import TYPE_CHECKING, List, Tuple, Dict, Set, Any, Mapping  # Added Set
 from dataclasses import dataclass
 import textwrap  # For printing HoF
 import logging
@@ -264,6 +264,59 @@ def set_correlation_penalty(
 def get_hof_state_version() -> int:
     """Return a monotonic version for HOF/correlation state changes."""
     return int(_hof_state_version)
+
+
+def export_correlation_state(*, include_raw: bool = True) -> dict[str, Any]:
+    """Return correlation-penalty state snapshot for worker synchronization."""
+    payload: dict[str, Any] = {
+        "corr_penalty_config": dict(_corr_penalty_config),
+        "hof_state_version": int(_hof_state_version),
+        "corr_fingerprints": list(_hof_corr_fingerprints),
+        "rank_pred_matrix": [
+            np.array(x, dtype=float, copy=True) for x in _hof_rank_pred_matrix
+        ],
+    }
+    if include_raw:
+        payload["raw_pred_matrix"] = [
+            np.array(x, dtype=float, copy=True) for x in _hof_raw_pred_matrix
+        ]
+    return payload
+
+
+def import_correlation_state(state: Mapping[str, Any] | None) -> None:
+    """Restore correlation-penalty state snapshot (used by multiprocessing workers)."""
+    global _corr_penalty_config, _hof_state_version
+    global _hof_corr_fingerprints, _hof_rank_pred_matrix, _hof_raw_pred_matrix
+    if state is None:
+        return
+
+    cfg = state.get("corr_penalty_config")
+    if isinstance(cfg, dict):
+        _corr_penalty_config = {
+            "weight": float(cfg.get("weight", _corr_penalty_config.get("weight", 0.35))),
+            "cutoff": float(cfg.get("cutoff", _corr_penalty_config.get("cutoff", 0.15))),
+        }
+    try:
+        _hof_state_version = int(state.get("hof_state_version", _hof_state_version))
+    except Exception:
+        pass
+
+    fps = state.get("corr_fingerprints")
+    if isinstance(fps, list):
+        _hof_corr_fingerprints = [str(x) for x in fps]
+
+    rank_mat = state.get("rank_pred_matrix")
+    if isinstance(rank_mat, list):
+        _hof_rank_pred_matrix = [np.asarray(x, dtype=float) for x in rank_mat]
+    elif "rank_pred_matrix" in state:
+        _hof_rank_pred_matrix = []
+
+    raw_mat = state.get("raw_pred_matrix")
+    if isinstance(raw_mat, list):
+        _hof_raw_pred_matrix = [np.asarray(x, dtype=float) for x in raw_mat]
+    else:
+        # Compact worker snapshots may omit raw vectors to keep payload small.
+        _hof_raw_pred_matrix = []
 
 
 def _safe_corr(

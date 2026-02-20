@@ -201,6 +201,21 @@ def _paired_sign_flip_pvalues(values: np.ndarray) -> tuple[float, float]:
     return p_one, p_two
 
 
+def _holm_bonferroni_adjust(p_values: list[float]) -> list[float]:
+    n = len(p_values)
+    if n == 0:
+        return []
+    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda t: t[1])
+    adjusted = [1.0] * n
+    running_max = 0.0
+    for rank, (orig_idx, p) in enumerate(indexed, start=1):
+        factor = n - rank + 1
+        padj = min(1.0, max(0.0, p) * factor)
+        running_max = max(running_max, padj)
+        adjusted[orig_idx] = running_max
+    return adjusted
+
+
 def _evaluate_metric(
     metric: MetricSpec,
     control_vals: np.ndarray,
@@ -254,7 +269,9 @@ def _evaluate_metric(
         "p_sign_one_sided": p_sign,
         "p_perm_one_sided": p_perm_one,
         "p_perm_two_sided": p_perm_two,
-        "scientific_pass": bool(np.isfinite(ci_lo) and ci_lo > 0 and p_perm_one <= alpha),
+        "scientific_pass": bool(
+            np.isfinite(ci_lo) and ci_lo > 0 and p_perm_one <= alpha
+        ),
     }
 
 
@@ -300,6 +317,21 @@ def main() -> int:
             seed=int(args.seed),
         )
         results.append(res)
+
+    # Control family-wise error across the reported metric family.
+    if results:
+        holm = _holm_bonferroni_adjust(
+            [float(r.get("p_perm_one_sided", 1.0)) for r in results]
+        )
+        for r, p_adj in zip(results, holm):
+            ci = r.get("ci95_mean_improvement") or [float("nan"), float("nan")]
+            ci_lo = float(ci[0]) if isinstance(ci, list) and ci else float("nan")
+            raw_pass = bool(r.get("scientific_pass", False))
+            r["scientific_pass_unadjusted"] = raw_pass
+            r["p_perm_one_sided_holm"] = float(p_adj)
+            r["scientific_pass"] = bool(
+                np.isfinite(ci_lo) and ci_lo > 0 and float(p_adj) <= float(args.alpha)
+            )
 
     payload = {
         "schema_version": 1,

@@ -64,9 +64,15 @@ def _pool_init(
     min_common_points: int,
     eval_lag: int,
     sector_mapping: dict,
+    eval_state: dict | None = None,
+    hof_corr_state: dict | None = None,
+    eval_fraction: float | None = None,
 ):
     """Initializer for worker processes to build an EvalContext once per worker."""
-    from alpha_evolve.utils.context import make_eval_context_from_dir as _mk
+    from alpha_evolve.utils.context import (
+        make_eval_context_from_dir as _mk,
+        slice_eval_context as _slice,
+    )
     from alpha_evolve.evolution import data as _dh
 
     global _WORKER_CTX
@@ -90,6 +96,20 @@ def _pool_init(
             sector_mapping=sector_mapping,
             precompute_columns=cols,
         )
+        if _WORKER_CTX is not None and eval_fraction is not None:
+            try:
+                _WORKER_CTX = _slice(_WORKER_CTX, eval_fraction=float(eval_fraction))
+            except Exception:
+                pass
+        # Keep worker-side scoring state in sync under spawn multiprocessing.
+        try:
+            el_module.import_evaluation_state(eval_state)
+        except Exception:
+            pass
+        try:
+            hof_module.import_correlation_state(hof_corr_state)
+        except Exception:
+            pass
     except Exception:
         _WORKER_CTX = None
 
@@ -742,21 +762,9 @@ def evolve_with_context(
                         pass
                 return base_score
 
-            # Multiprocessing can fail in restricted environments; fall back to sequential when workers == 1.
-            # If multi-fidelity is enabled and we're not using a pool, perform a cheap pass then promote top-K for full eval.
-            if mf_ctx is not None and (cfg.workers or 0) <= 1:
-                # Sequential multi-fidelity evaluation
-                iterator = pbar(
-                    range(len(pop)),
-                    desc=f"Gen {gen + 1}/{cfg.generations} [mf-cheap]",
-                    disable=cfg.quiet,
-                    total=cfg.pop_size,
-                )
-                _CTX = mf_ctx  # type: ignore
-                tmp_results: List[Tuple[int, el_module.EvalResult]] = []
-                for i in iterator:
-                    _, result = _eval_worker((i, pop[i]))
-                    tmp_results.append((i, result))
+            # Multi-fidelity uses the same two-pass logic in sequential and
+            # parallel modes, while still honoring configured worker count.
+            if mf_ctx is not None:
                 try:
                     promote_frac = float(getattr(cfg, "mf_promote_fraction", 0.3))
                     promote_n = max(
@@ -765,109 +773,118 @@ def evolve_with_context(
                     )
                 except Exception:
                     promote_n = max(8, cfg.pop_size // 3)
+                promote_n = min(max(1, promote_n), len(pop))
 
-                def _sel_score_local(res: el_module.EvalResult) -> float:
-                    sel = getattr(cfg, "selection_metric", "ramped")
-                    try:
-                        if not np.isfinite(res.fitness):
-                            return float(res.fitness)
-                    except Exception:
-                        return float("-inf")
-                    if sel == "auto":
-                        use_fixed = ramp >= 0.999
-                        if use_fixed:
-                            fs = getattr(res, "fitness_static", None)
-                            return (
-                                float(fs)
-                                if fs is not None and np.isfinite(fs)
-                                else float(res.fitness)
-                            )
-                        return float(res.fitness)
-                    if sel == "ic":
-                        return float(res.mean_ic)
-                    if sel == "fixed":
-                        fs = getattr(res, "fitness_static", None)
-                        return (
-                            float(fs)
-                            if fs is not None and np.isfinite(fs)
-                            else float(res.fitness)
+                cheap_results: List[Tuple[int, el_module.EvalResult]] = []
+                if (cfg.workers or 0) > 1:
+                    eval_state = (
+                        el_module.export_evaluation_state()
+                        if hasattr(el_module, "export_evaluation_state")
+                        else None
+                    )
+                    hof_corr_state = (
+                        hof_module.export_correlation_state(include_raw=False)
+                        if hasattr(hof_module, "export_correlation_state")
+                        else None
+                    )
+                    with Pool(
+                        processes=cfg.workers or cpu_count(),
+                        initializer=_pool_init,
+                        initargs=(
+                            cfg.data_dir,
+                            cfg.max_lookback_data_option,
+                            cfg.min_common_points,
+                            cfg.eval_lag,
+                            cfg.sector_mapping,
+                            eval_state,
+                            hof_corr_state,
+                            float(getattr(cfg, "mf_initial_fraction", 0.4)),
+                        ),
+                    ) as pool:
+                        results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
+                        bar = pbar(
+                            results_iter,
+                            desc=f"Gen {gen + 1}/{cfg.generations} [mf-cheap]",
+                            disable=cfg.quiet,
+                            total=len(pop),
                         )
-                    if sel == "lcb":
-                        z = float(getattr(cfg, "selection_lcb_z", 1.645))
-                        sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
-                        n = int(getattr(res, "sharpe_n", 0) or 0)
-                        skew = float(getattr(res, "pnl_skew", 0.0))
-                        kurt = float(getattr(res, "pnl_kurt", 3.0))
-                        if np.isfinite(sharpe) and n > 1:
-                            se = ae_stats.sharpe_std_error(
-                                sharpe, n, skew=skew, kurt=kurt
-                            )
-                            return (
-                                float(sharpe - z * se)
-                                if np.isfinite(se) and se > 0.0
-                                else float(sharpe)
-                            )
-                        ic_n = int(getattr(res, "ic_n", 0) or 0)
-                        return float(
-                            ae_stats.lcb_mean(
-                                float(res.mean_ic),
-                                float(getattr(res, "ic_std", 0.0)),
-                                ic_n,
-                                z=z,
-                            )
-                        )
-                    if sel == "psr":
-                        sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
-                        n = int(getattr(res, "sharpe_n", 0) or 0)
-                        skew = float(getattr(res, "pnl_skew", 0.0))
-                        kurt = float(getattr(res, "pnl_kurt", 3.0))
-                        if np.isfinite(sharpe) and n > 1:
-                            return float(
-                                ae_stats.probabilistic_sharpe_z(
-                                    sharpe, n, skew=skew, kurt=kurt, benchmark=0.0
-                                )
-                            )
-                        ic_n = int(getattr(res, "ic_n", 0) or 0)
-                        ic_std = float(getattr(res, "ic_std", 0.0))
-                        if ic_n > 1 and np.isfinite(ic_std) and ic_std > 1e-12:
-                            return float(res.mean_ic) * float(math.sqrt(ic_n)) / ic_std
-                        return float(res.mean_ic)
-                    if sel == "sharpe":
-                        sharpe = float(getattr(res, "sharpe_proxy", float("nan")))
-                        if np.isfinite(sharpe):
-                            return sharpe
-                        return float(res.mean_ic)
-                    if sel == "phased" and (
-                        gen < int(getattr(cfg, "ic_phase_gens", 0))
-                    ):
-                        return float(res.mean_ic)
-                    if sel == "phased":
-                        if ramp < 0.999:
-                            return float(res.fitness)
-                        fs = getattr(res, "fitness_static", None)
-                        return (
-                            float(fs)
-                            if fs is not None and np.isfinite(fs)
-                            else float(res.fitness)
-                        )
-                    return float(res.fitness)
-
-                tmp_results.sort(key=lambda t: _sel_score_local(t[1]), reverse=True)
-                promote_idx = {i for (i, _) in tmp_results[:promote_n]}
-                _CTX = ctx  # type: ignore
-                iterator2 = pbar(
-                    range(len(pop)),
-                    desc=f"Gen {gen + 1}/{cfg.generations} [mf-full]",
-                    disable=cfg.quiet,
-                    total=cfg.pop_size,
-                )
-                for i in iterator2:
-                    if i in promote_idx:
+                        for i, result in bar:
+                            cheap_results.append((i, result))
+                else:
+                    _CTX = mf_ctx  # type: ignore[assignment]
+                    iterator = pbar(
+                        range(len(pop)),
+                        desc=f"Gen {gen + 1}/{cfg.generations} [mf-cheap]",
+                        disable=cfg.quiet,
+                        total=cfg.pop_size,
+                    )
+                    for i in iterator:
                         _, result = _eval_worker((i, pop[i]))
+                        cheap_results.append((i, result))
+                    _CTX = ctx  # type: ignore[assignment]
+
+                cheap_results.sort(
+                    key=lambda t: (_sel_score(t[1], t[0]), -t[0]), reverse=True
+                )
+                promote_idx = {i for (i, _) in cheap_results[:promote_n]}
+                cheap_by_idx = {i: r for i, r in cheap_results}
+
+                full_by_idx: dict[int, el_module.EvalResult] = {}
+                if promote_idx:
+                    if (cfg.workers or 0) > 1:
+                        eval_state = (
+                            el_module.export_evaluation_state()
+                            if hasattr(el_module, "export_evaluation_state")
+                            else None
+                        )
+                        hof_corr_state = (
+                            hof_module.export_correlation_state(include_raw=False)
+                            if hasattr(hof_module, "export_correlation_state")
+                            else None
+                        )
+                        promote_payload = [(i, pop[i]) for i in sorted(promote_idx)]
+                        with Pool(
+                            processes=cfg.workers or cpu_count(),
+                            initializer=_pool_init,
+                            initargs=(
+                                cfg.data_dir,
+                                cfg.max_lookback_data_option,
+                                cfg.min_common_points,
+                                cfg.eval_lag,
+                                cfg.sector_mapping,
+                                eval_state,
+                                hof_corr_state,
+                                None,
+                            ),
+                        ) as pool:
+                            results_iter = pool.imap_unordered(
+                                _eval_worker, promote_payload
+                            )
+                            bar = pbar(
+                                results_iter,
+                                desc=f"Gen {gen + 1}/{cfg.generations} [mf-full]",
+                                disable=cfg.quiet,
+                                total=len(promote_payload),
+                            )
+                            for i, result in bar:
+                                full_by_idx[i] = result
                     else:
-                        result = next((r for (j, r) in tmp_results if j == i), None)
-                        if result is None:
+                        _CTX = ctx  # type: ignore[assignment]
+                        iterator2 = pbar(
+                            sorted(promote_idx),
+                            desc=f"Gen {gen + 1}/{cfg.generations} [mf-full]",
+                            disable=cfg.quiet,
+                            total=len(promote_idx),
+                        )
+                        for i in iterator2:
                             _, result = _eval_worker((i, pop[i]))
+                            full_by_idx[i] = result
+
+                for i in range(len(pop)):
+                    result = full_by_idx.get(i, cheap_by_idx.get(i))
+                    if result is None:
+                        _CTX = ctx  # type: ignore[assignment]
+                        _, result = _eval_worker((i, pop[i]))
                     eval_results.append((i, result))
                     if _QD_ENABLED and np.isfinite(result.fitness):
                         try:
@@ -881,6 +898,16 @@ def evolve_with_context(
                             pass
                     pop_fitness_scores[i] = _sel_score(result, i)
             elif (cfg.workers or 0) > 1:
+                eval_state = (
+                    el_module.export_evaluation_state()
+                    if hasattr(el_module, "export_evaluation_state")
+                    else None
+                )
+                hof_corr_state = (
+                    hof_module.export_correlation_state(include_raw=False)
+                    if hasattr(hof_module, "export_correlation_state")
+                    else None
+                )
                 with Pool(
                     processes=cfg.workers or cpu_count(),
                     initializer=_pool_init,
@@ -890,6 +917,9 @@ def evolve_with_context(
                         cfg.min_common_points,
                         cfg.eval_lag,
                         cfg.sector_mapping,
+                        eval_state,
+                        hof_corr_state,
+                        None,
                     ),
                 ) as pool:
                     results_iter = pool.imap_unordered(_eval_worker, enumerate(pop))
@@ -1069,7 +1099,9 @@ def evolve_with_context(
                     )
                     # Sort a copy for diagnostics to reflect current selection metric
                     tmp_sorted = sorted(
-                        eval_results, key=lambda x: _sel_score(x[1], x[0]), reverse=True
+                        eval_results,
+                        key=lambda x: (_sel_score(x[1], x[0]), -x[0]),
+                        reverse=True,
                     )
                     valid_scores = [
                         r[1].fitness for r in tmp_sorted if np.isfinite(r[1].fitness)
@@ -1269,7 +1301,9 @@ def evolve_with_context(
                     pass
 
             # Sort by the configured selection score but keep EvalResult intact for logging
-            eval_results.sort(key=lambda x: _sel_score(x[1], x[0]), reverse=True)
+            eval_results.sort(
+                key=lambda x: (_sel_score(x[1], x[0]), -x[0]), reverse=True
+            )
 
             # Add top-K from this generation into the HOF to increase saved diversity.
             if eval_results and eval_results[0][1].fitness > -np.inf:

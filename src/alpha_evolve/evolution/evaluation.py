@@ -1,6 +1,7 @@
 from __future__ import annotations
+import copy
 import numpy as np
-from typing import TYPE_CHECKING, Dict, List, Optional, Any, Set, Iterable
+from typing import TYPE_CHECKING, Dict, List, Optional, Any, Set, Iterable, Mapping
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import logging
@@ -65,6 +66,38 @@ _EVAL_CACHE_MAX_SIZE = 128
 _EVAL_CONFIG_VERSION = 0
 # Active token used by _cache_set during one evaluate_program call.
 _ACTIVE_CACHE_TOKEN: tuple[int, int] = (0, 0)
+
+
+def export_evaluation_state() -> dict[str, Any]:
+    """Return a serializable snapshot of evaluation state for worker sync."""
+    return {
+        "config": copy.deepcopy(_EVAL_CONFIG),
+        "config_version": int(_EVAL_CONFIG_VERSION),
+        "cache_max_size": int(_EVAL_CACHE_MAX_SIZE),
+    }
+
+
+def import_evaluation_state(state: Mapping[str, Any] | None) -> None:
+    """Restore evaluation state snapshot (used by multiprocessing workers)."""
+    global _EVAL_CONFIG, _EVAL_CONFIG_VERSION, _EVAL_CACHE_MAX_SIZE, _ACTIVE_CACHE_TOKEN
+    if state is None:
+        return
+    cfg = state.get("config")
+    if isinstance(cfg, dict):
+        _EVAL_CONFIG = copy.deepcopy(cfg)
+    try:
+        _EVAL_CONFIG_VERSION = int(state.get("config_version", _EVAL_CONFIG_VERSION))
+    except Exception:
+        pass
+    try:
+        _EVAL_CACHE_MAX_SIZE = max(
+            1, int(state.get("cache_max_size", _EVAL_CACHE_MAX_SIZE))
+        )
+    except Exception:
+        pass
+    _eval_cache.clear()
+    _eval_cache_tokens.clear()
+    _ACTIVE_CACHE_TOKEN = (0, 0)
 
 def _cache_set(fp: str, value: EvalResult, cache_token: tuple[int, int] | None = None) -> None:
     token = cache_token if cache_token is not None else _ACTIVE_CACHE_TOKEN
@@ -281,6 +314,7 @@ def configure_evaluation(
     regime_diagnostic_factors: Iterable[str] | None = None,
 ):
     global _EVAL_CONFIG, _EVAL_CONFIG_VERSION
+    prev_config = dict(_EVAL_CONFIG)
     _EVAL_CONFIG["parsimony_penalty_factor"] = parsimony_penalty
     _EVAL_CONFIG["max_ops_for_parsimony"] = max_ops
     _EVAL_CONFIG["xs_flatness_guard_threshold"] = xs_flatness_guard
@@ -405,7 +439,8 @@ def configure_evaluation(
             names = tuple()
         if names:
             _EVAL_CONFIG["regime_diagnostic_factors"] = names
-    _EVAL_CONFIG_VERSION += 1
+    if _EVAL_CONFIG != prev_config:
+        _EVAL_CONFIG_VERSION += 1
     logging.getLogger(__name__).debug(
         "Evaluation configured: scale=%s parsimony=%s sharpe_w=%s ic_std_w=%s turnover_w=%s factor_w=%s factors=%s horizons=%s splits=%s train=%s val=%s sector_neutralize=%s winsor_p=%.3f jitter=%.3f",
         scale_method,

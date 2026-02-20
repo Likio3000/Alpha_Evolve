@@ -915,7 +915,7 @@ def get_pipeline_params_ui_meta(request) -> JsonResponse:
                             "help": "Path to directory containing input CSV files.",
                         },
                         {
-                            "key": "bt_top",
+                            "key": "top_to_backtest",
                             "label": "Backtest Top‑N",
                             "type": "int",
                             "default": 10,
