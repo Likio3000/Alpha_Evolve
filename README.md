@@ -9,12 +9,21 @@ Alpha Evolve is a research project for evolving cross-sectional trading alphas, 
 - An evolutionary search engine for alpha programs (`src/alpha_evolve/evolution`).
 - A cross-sectional backtester with risk controls and optional ensemble evaluation (`src/alpha_evolve/backtesting`).
 - A dashboard API + bundled UI for launching runs and monitoring results (`scripts/run_dashboard.py`, `src/alpha_evolve/dashboard`).
-- Reproducibility and analysis tooling for benchmark/scientific runs (`scripts/`, `artifacts/`, `docs/reference/research-paper-addendum-2026-02-15.md`).
+- Reproducibility and analysis tooling for benchmark/scientific runs (`scripts/`, `artifacts/`, `docs/reference/research-paper-addendum-2026-02-15.md`, `docs/reference/compute-scaling-goal-checklist.md`).
 
 ## Current Research Status (Documented in Repo)
 
-- Latest documented research update: `docs/reference/research-paper-addendum-2026-02-15.md`.
-- That addendum reports matched-seed evidence that `g200` outperformed `g60` on ensemble-level quality metrics in that tranche.
+- Latest documented research updates:
+  - `docs/reference/research-paper-addendum-2026-02-15.md`
+  - `docs/reference/research-paper-addendum-2026-02-20.md`
+- Formal end-goal acceptance gates: `docs/reference/compute-scaling-goal-checklist.md`.
+- Latest large-sample tranche (completed February 21, 2026):
+  - campaign root: `artifacts/scaling_campaign_g200_s0_30_run2`
+  - matched `g200 vs g60` scientific compare (30 seeds):
+    `artifacts/scaling_campaign_g200_s0_30_run2/analysis_g200_vs_g60/scientific_g200_vs_g60.json`
+  - full goal check (diminishing-returns-aware defaults): pass
+    `artifacts/scaling_campaign_g200_s0_30_run2/analysis_g200_vs_g60/scaling_goal_check_full_relaxed_v2.json`
+- That tranche shows significant improvement on `ensemble_sharpe`, `ensemble_annret`, and `pair_mean_abs_corr`, with positive `best_sharpe` improvement as well.
 - The same addendum reports that plateau strategy `v4` did not beat `v3` in that fixed-sample A/B.
 - The main paper PDF (`Alpha_evolve_paper.pdf`) still needs a narrative update to incorporate newer addendum findings.
 
@@ -154,11 +163,42 @@ Useful scripts:
 
 - `scripts/benchmark_sp500.py`
 - `scripts/benchmark_sp500_parallel.sh`
+- `scripts/run_scaling_regime_campaign.sh`
 - `scripts/scientific_compare.py`
+- `scripts/check_scaling_goal.py`
 - `scripts/fit_scaling_laws.py`
 - `scripts/generate_scaling_report.py`
 
 See `artifacts/` for generated run bundles and analysis outputs.
+
+Typical long-run evidence flow:
+
+```bash
+# 1) Run campaign
+bash scripts/benchmark_sp500_parallel.sh \
+  --mode full \
+  --config configs/bench_sp500_scaling_monotonic_v4.toml \
+  --seeds 0:30 \
+  --jobs 6 \
+  --outdir artifacts/scaling_campaign_g200_s0_30 \
+  -- --generations 200 --checkpoint-gens 30,60,90,120,200 --skip-plots
+
+# 2) Aggregate
+uv run python scripts/aggregate_parallel_benchmarks.py \
+  --root artifacts/scaling_campaign_g200_s0_30
+
+# 3) Compare final compute levels (example g200 vs g60 roots)
+uv run python scripts/scientific_compare.py \
+  --control-root <g60_runs_root> \
+  --treatment-root <g200_runs_root> \
+  --out artifacts/reports/scientific_g200_vs_g60.json
+
+# 4) Evaluate goal gates
+uv run python scripts/check_scaling_goal.py \
+  --checkpoint-summary-json artifacts/scaling_campaign_g200_s0_30/aggregate/checkpoint_summary_combined.json \
+  --scientific-json artifacts/reports/scientific_g200_vs_g60.json \
+  --out artifacts/reports/scaling_goal_check.json
+```
 
 ## Repository Pointers
 
