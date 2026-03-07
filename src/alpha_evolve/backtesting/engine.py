@@ -28,6 +28,7 @@ from alpha_evolve.programs import (
 )
 from alpha_evolve.backtesting.data import load_and_align_data_for_backtest
 from alpha_evolve.backtesting.core import backtest_cross_sectional_alpha
+from alpha_evolve.backtesting.metrics import compute_annualized_return
 
 
 def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
@@ -862,12 +863,10 @@ def run(
                         sharpe = (mean_ret / (std_ret + 1e-9)) * (
                             _np.sqrt(ann) if ann and ann > 0 else 1.0
                         )
-                        total_return = eq[-1] - 1.0 if eq.size else 0.0
                         years = (port_ret.size / ann) if ann and ann > 0 else 1.0
-                        ann_ret = (
-                            ((1.0 + total_return) ** (1.0 / years) - 1.0)
-                            if years > 0
-                            else 0.0
+                        ann_ret = compute_annualized_return(
+                            float(eq[-1]) if eq.size else 1.0,
+                            years,
                         )
                         ann_vol = std_ret * (_np.sqrt(ann) if ann and ann > 0 else 1.0)
                         max_dd = float(-_np.min(dd)) if dd.size else 0.0

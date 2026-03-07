@@ -19,6 +19,13 @@ def test_scale_signal_rank():
     assert result.tolist() == pytest.approx([-1.0, 0.0, 1.0], abs=1e-8)
 
 
+def test_scale_signal_rank_averages_ties():
+    """Rank scaling should assign equal tied scores the same average rank."""
+    vec = np.array([1.0, 1.0, 2.0])
+    result = _scale_signal_cross_sectionally(vec, "rank")
+    assert result.tolist() == pytest.approx([-0.5, -0.5, 1.0], abs=1e-8)
+
+
 def test_scale_signal_sign():
     """Reduce signals to directional sign only, preserving zero for flat entries."""
     vec = np.array([-5.0, 0.0, 2.0])

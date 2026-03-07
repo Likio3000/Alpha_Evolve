@@ -13,6 +13,7 @@ def test_import_export_correlation_state_roundtrip() -> None:
             "hof_state_version": 123,
             "corr_fingerprints": ["fp_a"],
             "rank_pred_matrix": [np.array([0.0, 1.0], dtype=float)],
+            "bar_rank_matrices": [np.array([[0.0, 1.0]], dtype=float)],
             "raw_pred_matrix": [np.array([1.0, 2.0], dtype=float)],
         }
         hof.import_correlation_state(state)
@@ -22,6 +23,9 @@ def test_import_export_correlation_state_roundtrip() -> None:
         assert restored["hof_state_version"] == 123
         assert restored["corr_fingerprints"] == ["fp_a"]
         assert np.allclose(restored["rank_pred_matrix"][0], np.array([0.0, 1.0]))
+        assert np.allclose(
+            restored["bar_rank_matrices"][0], np.array([[0.0, 1.0]], dtype=float)
+        )
         assert np.allclose(restored["raw_pred_matrix"][0], np.array([1.0, 2.0]))
     finally:
         hof.import_correlation_state(snapshot)
@@ -35,6 +39,7 @@ def test_export_correlation_state_can_omit_raw_vectors() -> None:
             "hof_state_version": 10,
             "corr_fingerprints": ["fp_rawless"],
             "rank_pred_matrix": [np.array([0.0, 1.0, -1.0], dtype=float)],
+            "bar_rank_matrices": [np.array([[0.0, 1.0, -1.0]], dtype=float)],
             "raw_pred_matrix": [np.array([1.0, 2.0, 3.0], dtype=float)],
         }
         hof.import_correlation_state(state)
@@ -46,6 +51,7 @@ def test_export_correlation_state_can_omit_raw_vectors() -> None:
         restored = hof.export_correlation_state()
         assert restored["corr_fingerprints"] == ["fp_rawless"]
         assert len(restored["rank_pred_matrix"]) == 1
+        assert len(restored["bar_rank_matrices"]) == 1
         assert restored["raw_pred_matrix"] == []
     finally:
         hof.import_correlation_state(snapshot)

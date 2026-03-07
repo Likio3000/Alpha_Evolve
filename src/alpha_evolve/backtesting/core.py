@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd  # For DataFrame rolling in hold period
 
 from alpha_evolve.evolution.data import DERIVED_VECTOR_FEATURES, get_sector_groups
-from .metrics import compute_max_drawdown
+from .metrics import compute_annualized_return, compute_max_drawdown
 from alpha_evolve.utils.exposure import apply_net_exposure_target
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,45 @@ def _max_drawdown(equity_curve: np.ndarray) -> float:
     """Backward-compatible wrapper around the shared helper."""
 
     return compute_max_drawdown(equity_curve)
+
+
+def _build_long_short_basket(signal: np.ndarray, k: int) -> np.ndarray:
+    """Return an order-invariant top/bottom basket with fractional tie splits.
+
+    Ties at the inclusion boundary share the remaining slots proportionally, so
+    a fully tied cross-section nets to zero instead of trading arbitrary names.
+    """
+
+    n = int(signal.size)
+    out = np.zeros_like(signal, dtype=float)
+    slots = min(max(int(k), 0), n // 2)
+    if n == 0 or slots <= 0:
+        return out
+
+    order = np.argsort(signal, kind="mergesort")
+    xs = signal[order]
+    boundaries = np.empty(n + 1, dtype=bool)
+    boundaries[0] = True
+    if n > 1:
+        boundaries[1:-1] = xs[1:] != xs[:-1]
+    else:
+        boundaries[1:-1] = False
+    boundaries[-1] = True
+    idx = np.flatnonzero(boundaries)
+    groups = [order[idx[i] : idx[i + 1]] for i in range(len(idx) - 1)]
+
+    def _assign(groups_iter: list[np.ndarray], sign: float) -> None:
+        remaining = float(slots)
+        for group in groups_iter:
+            if remaining <= 1e-12:
+                break
+            take = min(1.0, remaining / float(len(group)))
+            out[group] += sign * take
+            remaining -= min(remaining, float(len(group)))
+
+    _assign(groups[::-1], +1.0)
+    _assign(groups, -1.0)
+    return out
 
 
 def _build_feature_bundle(
@@ -573,13 +612,7 @@ def backtest_cross_sectional_alpha(
         )
         if long_short_n > 0:
             k = min(long_short_n, n_stocks // 2)
-            order = np.argsort(scaled_signal_t)
-            long_idx = order[-k:]
-            short_idx = order[:k]
-            ls_vector = np.zeros_like(scaled_signal_t)
-            ls_vector[long_idx] = 1.0
-            ls_vector[short_idx] = -1.0
-            scaled_signal_t = ls_vector
+            scaled_signal_t = _build_long_short_basket(scaled_signal_t, k)
         # Center cross-section and optionally sector-neutralize
         centered_signal_t = scaled_signal_t - np.mean(scaled_signal_t)
         neutralized_signal_t = centered_signal_t
@@ -798,10 +831,10 @@ def backtest_cross_sectional_alpha(
     std_ret = np.std(daily_portfolio_returns_net, ddof=0)
 
     sharpe_ratio = (mean_ret / (std_ret + 1e-9)) * np.sqrt(annualization_factor)
-    total_return_val = equity_curve[-1] - 1.0
     num_years = len(daily_portfolio_returns_net) / annualization_factor
-    annualized_return = (
-        ((1.0 + total_return_val) ** (1.0 / num_years)) - 1.0 if num_years > 0 else 0.0
+    annualized_return = compute_annualized_return(
+        float(equity_curve[-1]) if equity_curve.size else 1.0,
+        num_years,
     )
     annualized_volatility = std_ret * np.sqrt(annualization_factor)
     max_dd = _max_drawdown(equity_curve)
@@ -896,12 +929,10 @@ def backtest_cross_sectional_alpha(
         stress_sharpe_local = (stress_mean_local / (stress_std_local + 1e-9)) * np.sqrt(
             annualization_factor
         )
-        if num_years > 0 and stress_equity_curve_local[-1] > 0:
-            stress_ann_return_local = (
-                stress_equity_curve_local[-1] ** (1.0 / num_years)
-            ) - 1.0
-        else:
-            stress_ann_return_local = 0.0
+        stress_ann_return_local = compute_annualized_return(
+            float(stress_equity_curve_local[-1]) if stress_equity_curve_local.size else 1.0,
+            num_years,
+        )
         return {
             "Sharpe": stress_sharpe_local,
             "AnnReturn": stress_ann_return_local,

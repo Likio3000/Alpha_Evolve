@@ -24,7 +24,7 @@ def _load_script_module(stem: str):
 def _checkpoint_payload(*, corr_improvements: list[float]) -> dict:
     return {
         "schema_version": 1,
-        "checkpoint_gens": [30, 60, 90],
+        "checkpoint_gens": [30, 60, 90, 120],
         "summary_by_generation": {
             "gen_030": {
                 "ensemble_portfolio_sharpe": {"mean": 1.0},
@@ -40,6 +40,11 @@ def _checkpoint_payload(*, corr_improvements: list[float]) -> dict:
                 "ensemble_portfolio_sharpe": {"mean": 1.3},
                 "best_backtest_sharpe": {"mean": 1.1},
                 "selected_avg_abs_corr": {"mean": 0.22},
+            },
+            "gen_120": {
+                "ensemble_portfolio_sharpe": {"mean": 1.35},
+                "best_backtest_sharpe": {"mean": 1.15},
+                "selected_avg_abs_corr": {"mean": 0.20},
             },
         },
         "pairwise_scientific": {
@@ -93,6 +98,30 @@ def _checkpoint_payload(*, corr_improvements: list[float]) -> dict:
                         },
                     ],
                 },
+                {
+                    "from_gen": 90,
+                    "to_gen": 120,
+                    "metrics": [
+                        {
+                            "metric": "ensemble_portfolio_sharpe",
+                            "mean_improvement": 0.05,
+                            "ci95_mean_improvement": [0.01, 0.10],
+                            "p_perm_one_sided_holm": 0.04,
+                        },
+                        {
+                            "metric": "best_backtest_sharpe",
+                            "mean_improvement": 0.05,
+                            "ci95_mean_improvement": [0.005, 0.09],
+                            "p_perm_one_sided_holm": 0.045,
+                        },
+                        {
+                            "metric": "selected_avg_abs_corr",
+                            "mean_improvement": corr_improvements[2],
+                            "ci95_mean_improvement": [0.002, 0.03],
+                            "p_perm_one_sided_holm": 0.045,
+                        },
+                    ],
+                },
             ],
         },
     }
@@ -130,7 +159,7 @@ def test_scaling_goal_checker_passes_for_clean_monotonic_case(tmp_path, monkeypa
     sci_path = tmp_path / "scientific.json"
     out_path = tmp_path / "goal_check.json"
     ckpt_path.write_text(
-        json.dumps(_checkpoint_payload(corr_improvements=[0.04, 0.04]), indent=2),
+        json.dumps(_checkpoint_payload(corr_improvements=[0.04, 0.04, 0.02]), indent=2),
         encoding="utf-8",
     )
     sci_path.write_text(json.dumps(_scientific_payload(), indent=2), encoding="utf-8")
@@ -162,7 +191,7 @@ def test_scaling_goal_checker_fails_when_corr_step_regresses(tmp_path, monkeypat
     out_path = tmp_path / "goal_check.json"
     # Second step has negative oriented improvement in correlation.
     ckpt_path.write_text(
-        json.dumps(_checkpoint_payload(corr_improvements=[0.04, -0.02]), indent=2),
+        json.dumps(_checkpoint_payload(corr_improvements=[0.04, -0.02, 0.02]), indent=2),
         encoding="utf-8",
     )
 
@@ -193,7 +222,7 @@ def test_scaling_goal_checker_relaxed_sig_fraction_for_corr(tmp_path, monkeypatc
     ckpt_path = tmp_path / "checkpoint_summary.json"
     out_path = tmp_path / "goal_check.json"
     # Direction is positive in both correlation steps, but significance is absent.
-    payload = _checkpoint_payload(corr_improvements=[0.02, 0.01])
+    payload = _checkpoint_payload(corr_improvements=[0.02, 0.01, 0.01])
     for pair in payload["pairwise_scientific"]["pairs"]:
         for m in pair["metrics"]:
             if m["metric"] == "selected_avg_abs_corr":
@@ -222,3 +251,34 @@ def test_scaling_goal_checker_relaxed_sig_fraction_for_corr(tmp_path, monkeypatc
     assert rc == 0
     out = json.loads(out_path.read_text(encoding="utf-8"))
     assert out["checkpoint_pass"] is True
+
+
+def test_scaling_goal_curve_block_rejects_three_point_direction_only_series() -> None:
+    mod = _load_script_module("check_scaling_goal")
+    payload = {
+        "gen_030": {"ensemble_portfolio_sharpe": {"mean": 1.0}},
+        "gen_060": {"ensemble_portfolio_sharpe": {"mean": 1.2}},
+        "gen_090": {"ensemble_portfolio_sharpe": {"mean": 1.3}},
+    }
+    result = mod._evaluate_curve_block(
+        payload,
+        metrics_higher_is_better={"ensemble_portfolio_sharpe": True},
+        alpha=0.05,
+        tolerance=0.0,
+    )
+    metric = result["metrics"][0]
+    assert metric["monotonic_pass"] is True
+    assert metric["trend_pass"] is False
+    assert metric["pass"] is False
+    assert result["pass"] is False
+
+
+def test_scaling_goal_slope_monte_carlo_pvalue_has_positive_floor() -> None:
+    mod = _load_script_module("check_scaling_goal")
+    x = json.loads(json.dumps(list(range(9))))
+    y = json.loads(json.dumps(list(range(9))))
+    p_val = mod._slope_perm_p_one_sided(
+        mod.np.asarray(x, dtype=float),
+        mod.np.asarray(y, dtype=float),
+    )
+    assert 0.0 < p_val < 1e-4

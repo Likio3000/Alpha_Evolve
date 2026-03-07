@@ -209,8 +209,10 @@ def _paired_sign_flip_pvalues(values: np.ndarray) -> tuple[float, float]:
     n_perm = 200000
     signs = rng.choice(np.array([-1.0, 1.0], dtype=float), size=(n_perm, n))
     means = np.mean(signs * vals[None, :], axis=1)
-    p_one = float(np.mean(means >= obs))
-    p_two = float(np.mean(np.abs(means) >= abs(obs)))
+    ge_one = int(np.sum(means >= obs))
+    ge_two = int(np.sum(np.abs(means) >= abs(obs)))
+    p_one = float((ge_one + 1) / (n_perm + 1))
+    p_two = float((ge_two + 1) / (n_perm + 1))
     return p_one, p_two
 
 
@@ -242,6 +244,7 @@ def _checkpoint_pairwise_report(rows: Sequence[dict[str, Any]]) -> dict[str, Any
         ("selected_avg_abs_corr", False),
     ]
     pairs: list[dict[str, Any]] = []
+    pending_adjustment: list[dict[str, Any]] = []
     for g0, g1 in zip(generations, generations[1:]):
         pair_payload: dict[str, Any] = {"from_gen": int(g0), "to_gen": int(g1), "metrics": []}
         left = df[df["generation"] == g0].set_index("seed")
@@ -289,20 +292,21 @@ def _checkpoint_pairwise_report(rows: Sequence[dict[str, Any]]) -> dict[str, Any
                     ),
                 }
             )
-        if pair_payload["metrics"]:
-            adj = _holm_bonferroni_adjust(
-                [float(m.get("p_perm_one_sided", 1.0)) for m in pair_payload["metrics"]]
-            )
-            for m, p_adj in zip(pair_payload["metrics"], adj):
-                ci = m.get("ci95_mean_improvement") or [float("nan"), float("nan")]
-                ci_lo = float(ci[0]) if isinstance(ci, list) and ci else float("nan")
-                raw_pass = bool(m.get("scientific_pass", False))
-                m["scientific_pass_unadjusted"] = raw_pass
-                m["p_perm_one_sided_holm"] = float(p_adj)
-                m["scientific_pass"] = bool(
-                    np.isfinite(ci_lo) and ci_lo > 0 and float(p_adj) <= 0.05
-                )
+            pending_adjustment.append(pair_payload["metrics"][-1])
         pairs.append(pair_payload)
+    if pending_adjustment:
+        adj = _holm_bonferroni_adjust(
+            [float(m.get("p_perm_one_sided", 1.0)) for m in pending_adjustment]
+        )
+        for m, p_adj in zip(pending_adjustment, adj):
+            ci = m.get("ci95_mean_improvement") or [float("nan"), float("nan")]
+            ci_lo = float(ci[0]) if isinstance(ci, list) and ci else float("nan")
+            raw_pass = bool(m.get("scientific_pass", False))
+            m["scientific_pass_unadjusted"] = raw_pass
+            m["p_perm_one_sided_holm"] = float(p_adj)
+            m["scientific_pass"] = bool(
+                np.isfinite(ci_lo) and ci_lo > 0 and float(p_adj) <= 0.05
+            )
     return {"schema_version": 1, "pairs": pairs}
 
 

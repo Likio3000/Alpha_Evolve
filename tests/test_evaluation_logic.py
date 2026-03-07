@@ -7,6 +7,7 @@ from alpha_evolve.evolution import data as data_handling
 from alpha_evolve.utils.features import compute_basic_features
 
 from alpha_evolve.evolution.evaluation import (
+    _compute_cv_fold_slices,
     _safe_corr_eval,
     evaluate_program,
     initialize_evaluation_cache,
@@ -34,7 +35,12 @@ def build_zero_program() -> AlphaProgram:
     return AlphaProgram(predict_ops=ops)
 
 
-def build_ctx_from_returns(ret1d_matrix: np.ndarray, ret_fwd_matrix: np.ndarray) -> SimpleNamespace:
+def build_ctx_from_returns(
+    ret1d_matrix: np.ndarray,
+    ret_fwd_matrix: np.ndarray,
+    *,
+    include_close: bool = True,
+) -> SimpleNamespace:
     times = pd.RangeIndex(ret1d_matrix.shape[0])
     symbols = [f"S{i}" for i in range(ret1d_matrix.shape[1])]
     aligned = OrderedDict()
@@ -57,9 +63,10 @@ def build_ctx_from_returns(ret1d_matrix: np.ndarray, ret_fwd_matrix: np.ndarray)
     col_matrix_map = {
         "ret1d": ret1d_matrix,
         "ret_fwd": ret_fwd_matrix,
-        "close": close_matrix,
-        "closes": close_matrix,
     }
+    if include_close:
+        col_matrix_map["close"] = close_matrix
+        col_matrix_map["closes"] = close_matrix
     return SimpleNamespace(
         bundle=bundle,
         eval_lag=1,
@@ -89,6 +96,13 @@ def test_safe_corr_eval_constant():
     a = np.array([1.0, 1.0, 1.0])
     b = np.array([2.0, 2.0, 2.0])
     assert _safe_corr_eval(a, b) == 0.0
+
+
+def test_scale_signal_for_ic_rank_averages_ties():
+    """IC rank scaling should be tie-aware so identical scores stay identical."""
+    vec = np.array([1.0, 1.0, 2.0])
+    result = _scale_signal_for_ic(vec, "rank")
+    assert result.tolist() == pytest.approx([-0.5, -0.5, 1.0], abs=1e-8)
 
 
 def test_evaluate_program_basic(monkeypatch):
@@ -744,6 +758,100 @@ def test_risk_metric_weights_adjust_fitness():
     assert res_weighted.sortino_ratio == pytest.approx(res_base.sortino_ratio)
     assert res_weighted.downside_deviation == pytest.approx(res_base.downside_deviation)
     assert res_weighted.cvar == pytest.approx(res_base.cvar)
+
+
+def test_train_val_split_uses_validation_only_risk_sample():
+    """Train/validation scoring should compute risk terms from validation bars only."""
+    ret1d = np.array([
+        [0.0, 1.0],
+        [1.0, 0.0],
+        [0.0, 2.0],
+        [2.0, 0.0],
+        [0.0, 3.0],
+        [3.0, 0.0],
+    ])
+    ret_fwd = ret1d.copy()
+    ctx = build_ctx_from_returns(ret1d, ret_fwd, include_close=False)
+    prog = AlphaProgram(
+        predict_ops=[Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("ret1d_t",))]
+    )
+
+    hof.clear_hof()
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.0, corr_cutoff=0.0)
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=8,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        use_train_val_splits=True,
+        train_points=2,
+        val_points=3,
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    initialize_evaluation_cache(max_size=4)
+    res = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+
+    assert res.processed_predictions.shape[0] == 3
+    assert res.sharpe_n == 3
+
+
+def test_cv_risk_sample_respects_purged_validation_mask():
+    """Purged CV should only count validation bars that survive the fold slicing."""
+    ret1d = np.array([
+        [0.0, 1.0],
+        [1.0, 0.0],
+        [0.0, 2.0],
+        [2.0, 0.0],
+        [0.0, 3.0],
+        [3.0, 0.0],
+        [0.0, 4.0],
+        [4.0, 0.0],
+        [0.0, 5.0],
+    ])
+    ret_fwd = ret1d.copy()
+    ctx = build_ctx_from_returns(ret1d, ret_fwd, include_close=False)
+    prog = AlphaProgram(
+        predict_ops=[Op(FINAL_PREDICTION_VECTOR_NAME, "assign_vector", ("ret1d_t",))]
+    )
+
+    hof.clear_hof()
+    hof.initialize_hof(max_size=5, keep_dupes=False, corr_penalty_weight=0.0, corr_cutoff=0.0)
+    configure_evaluation(
+        parsimony_penalty=0.0,
+        max_ops=8,
+        xs_flatness_guard=0.0,
+        temporal_flatness_guard=0.0,
+        early_abort_bars=20,
+        early_abort_xs=0.0,
+        early_abort_t=0.0,
+        flat_bar_threshold=1.0,
+        scale_method="zscore",
+        evaluation_horizons=(1,),
+        cv_k_folds=4,
+        cv_embargo=0,
+        factor_penalty_weight=0.0,
+        sector_neutralize=False,
+        winsor_p=0.0,
+        parsimony_jitter_pct=0.0,
+        hof_corr_mode="flat",
+    )
+    initialize_evaluation_cache(max_size=4)
+    res = evaluate_program(prog, data_handling, hof, {}, ctx=ctx)
+
+    expected_slices = _compute_cv_fold_slices(8, 4, embargo=0, label_horizon=1)
+    expected_points = sum(max(0, sl.stop - sl.start) for sl in expected_slices)
+    assert res.processed_predictions.shape[0] == expected_points
+    assert res.sharpe_n == expected_points
 
 
 def test_sector_vector_available():

@@ -28,5 +28,27 @@ def compute_max_drawdown(equity_curve: np.ndarray) -> float:
     return float(-np.min(drawdown))
 
 
-__all__ = ["compute_max_drawdown"]
+def compute_annualized_return(final_equity: float, num_years: float) -> float:
+    """Return CAGR-like annualized return with a clear bankruptcy floor.
 
+    When terminal equity is non-positive, the CAGR expression is undefined.
+    The backtesting stack treats that as a full loss and returns ``-1.0`` so
+    downstream summaries remain finite and comparable.
+    """
+
+    try:
+        equity = float(final_equity)
+        years = float(num_years)
+    except Exception:
+        return float("nan")
+
+    if not np.isfinite(years) or years <= 0.0:
+        return 0.0
+    if not np.isfinite(equity):
+        return float("nan")
+    if equity <= 0.0:
+        return -1.0
+    return float((equity ** (1.0 / years)) - 1.0)
+
+
+__all__ = ["compute_annualized_return", "compute_max_drawdown"]

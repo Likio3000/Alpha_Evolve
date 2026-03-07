@@ -54,6 +54,18 @@ def test_rank_matrix_updates_and_penalty():
     hof.clear_hof()
 
 
+def test_per_bar_penalty_returns_full_weight_for_identical_matrix():
+    """Per-bar correlation should treat an identical prediction matrix as a full duplicate."""
+    hof.initialize_hof(
+        max_size=5, keep_dupes=False, corr_penalty_weight=0.35, corr_cutoff=0.15
+    )
+    preds = np.array([[0.0, 1.0, 100.0], [2.0, 3.0, 4.0]])
+    hof.update_correlation_hof("fp_per_bar", preds)
+    penalty = hof.get_correlation_penalty_per_bar(preds.copy())
+    assert penalty == pytest.approx(0.35)
+    hof.clear_hof()
+
+
 def test_prediction_distance_novelty_is_finite_and_zero_for_identical():
     hof.initialize_hof(
         max_size=5, keep_dupes=False, corr_penalty_weight=0.5, corr_cutoff=0.0

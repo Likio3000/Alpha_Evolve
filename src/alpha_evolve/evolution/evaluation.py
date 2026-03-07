@@ -600,9 +600,7 @@ def _scale_signal_for_ic(raw_signal_vector: np.ndarray, method: str) -> np.ndarr
         if clean_signal_vector.size <= 1:
             scaled = np.zeros_like(clean_signal_vector)
         else:
-            temp = clean_signal_vector.argsort()
-            ranks = np.empty_like(temp, dtype=float)
-            ranks[temp] = np.arange(len(clean_signal_vector))
+            ranks = _average_rank_ties(clean_signal_vector)
             scaled = (ranks / (len(clean_signal_vector) - 1 + 1e-9)) * 2.0 - 1.0
     elif method == "madz" or method == "mad":
         med = np.nanmedian(clean_signal_vector)
@@ -687,6 +685,69 @@ def _average_rank_ties(x: np.ndarray) -> np.ndarray:
         avg = (start + end - 1) / 2.0
         ranks[order[start:end]] = avg
     return ranks
+
+
+def _compute_pnl_summary(
+    values: np.ndarray,
+    *,
+    cvar_alpha: float,
+) -> dict[str, float]:
+    """Return finite-safe summary stats for a 1-D PnL sample."""
+
+    pnl = np.asarray(values, dtype=float).ravel()
+    pnl = pnl[np.isfinite(pnl)]
+    skew, kurt = ae_stats.safe_skew_kurtosis(pnl)
+    if pnl.size == 0:
+        return {
+            "mean_pnl": 0.0,
+            "std_pnl": 0.0,
+            "sharpe": 0.0,
+            "sortino": 0.0,
+            "downside_deviation": 0.0,
+            "cvar": 0.0,
+            "drawdown": 0.0,
+            "skew": float(skew),
+            "kurt": float(kurt),
+            "n": 0.0,
+        }
+
+    mean_pnl = float(np.mean(pnl))
+    std_pnl = float(np.std(pnl, ddof=0))
+    sharpe = float(mean_pnl / std_pnl) if std_pnl > 1e-9 else 0.0
+    downside_losses = pnl[pnl < 0.0]
+    downside_deviation = (
+        float(np.sqrt(np.mean(np.square(downside_losses))))
+        if downside_losses.size > 0
+        else 0.0
+    )
+    denom = downside_deviation if downside_deviation > 1e-9 else 1e-9
+    sortino = float(mean_pnl / denom)
+
+    alpha = min(max(float(cvar_alpha), 1e-3), 0.999)
+    quantile_level = max(0.0, min(1.0, 1.0 - alpha))
+    if 0.0 < quantile_level < 1.0:
+        tail_cutoff = float(np.quantile(pnl, quantile_level))
+        tail_mask = pnl <= tail_cutoff
+        cvar_value = (
+            float(np.mean(pnl[tail_mask])) if np.any(tail_mask) else tail_cutoff
+        )
+    else:
+        cvar_value = float(np.min(pnl))
+
+    equity_curve = np.cumprod(np.clip(1.0 + pnl, 1e-9, None))
+    drawdown = float(compute_max_drawdown(equity_curve)) if pnl.size else 0.0
+    return {
+        "mean_pnl": mean_pnl,
+        "std_pnl": std_pnl,
+        "sharpe": sharpe,
+        "sortino": sortino,
+        "downside_deviation": float(downside_deviation),
+        "cvar": float(cvar_value),
+        "drawdown": drawdown,
+        "skew": float(skew),
+        "kurt": float(kurt),
+        "n": float(pnl.size),
+    }
 
 
 def evaluate_program(
@@ -882,7 +943,9 @@ def evaluate_program(
         factor_names = tuple(str(n) for n in factor_names_cfg if str(n))
     else:
         factor_names = tuple()
-    factor_corr_tracker: Dict[str, List[float]] = {name: [] for name in factor_names}
+    factor_corr_tracker: Dict[str, np.ndarray] = {
+        name: np.full(num_evaluation_steps, np.nan, dtype=float) for name in factor_names
+    }
 
     regime_names_cfg = _EVAL_CONFIG.get("regime_diagnostic_factors", tuple())
     if isinstance(regime_names_cfg, (list, tuple, set)):
@@ -897,7 +960,9 @@ def evaluate_program(
     )
     if not regime_names:
         regime_names = default_regime_names
-    regime_corr_tracker: Dict[str, List[float]] = {name: [] for name in regime_names}
+    regime_corr_tracker: Dict[str, np.ndarray] = {
+        name: np.full(num_evaluation_steps, np.nan, dtype=float) for name in regime_names
+    }
 
     # The common_time_index from data_handling is already sliced appropriately for eval_lag
     # Loop until common_time_index.size - eval_lag -1 (for python 0-indexing)
@@ -1009,7 +1074,7 @@ def evaluate_program(
                             corr = float(np.dot(pred_z, vec_z) / pred_z.size)
                             if not np.isfinite(corr):
                                 continue
-                            tracker[fname].append(abs(corr) if use_abs else corr)
+                            tracker[fname][t_idx] = abs(corr) if use_abs else corr
 
             # Early abort checks (on raw predictions)
             if len(all_raw_predictions_timeseries) == _EVAL_CONFIG["early_abort_bars"]:
@@ -1181,41 +1246,22 @@ def evaluate_program(
         )
     else:
         mean_daily_ic = float(np.mean(daily_ic_values))
-    pnl_primary = np.array(pnl_values_by_h.get(primary_horizon, []), dtype=float)
-    pnl_primary = pnl_primary[np.isfinite(pnl_primary)]
-    pnl_used = pnl_primary
-    pnl_skew, pnl_kurt = ae_stats.safe_skew_kurtosis(pnl_used)
+    try:
+        cvar_alpha = float(_EVAL_CONFIG.get("cvar_alpha", 0.95) or 0.95)
+    except Exception:
+        cvar_alpha = 0.95
+    cvar_alpha = min(max(cvar_alpha, 1e-3), 0.999)
+
+    metric_mask = np.ones(total_steps, dtype=bool)
+    mean_pnl = 0.0
+    sharpe_proxy = 0.0
     sortino_ratio = 0.0
     downside_deviation = 0.0
     cvar_value = 0.0
-    if pnl_primary.size > 0:
-        mean_pnl = float(np.mean(pnl_primary))
-        std_pnl = float(np.std(pnl_primary, ddof=0))
-        sharpe_proxy = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
-        downside_losses = pnl_primary[pnl_primary < 0.0]
-        if downside_losses.size > 0:
-            downside_deviation = float(np.sqrt(np.mean(np.square(downside_losses))))
-        denom = downside_deviation if downside_deviation > 1e-9 else 1e-9
-        sortino_ratio = float(mean_pnl / denom)
-        try:
-            alpha = float(_EVAL_CONFIG.get("cvar_alpha", 0.95) or 0.95)
-        except Exception:
-            alpha = 0.95
-        alpha = min(max(alpha, 1e-3), 0.999)
-        quantile_level = max(0.0, min(1.0, 1.0 - alpha))
-        if 0.0 < quantile_level < 1.0:
-            tail_cutoff = float(np.quantile(pnl_primary, quantile_level))  # type: ignore[arg-type]
-            tail_mask = pnl_primary <= tail_cutoff
-            if np.any(tail_mask):
-                cvar_value = float(np.mean(pnl_primary[tail_mask]))
-            else:
-                cvar_value = tail_cutoff
-        else:
-            cvar_value = float(np.min(pnl_primary))
-    else:
-        mean_pnl = 0.0
-        std_pnl = 0.0
-        sharpe_proxy = 0.0
+    drawdown_proxy = 0.0
+    pnl_used = np.zeros(0, dtype=float)
+    pnl_skew = 0.0
+    pnl_kurt = 3.0
     ic_std = float(np.std(daily_ic_values, ddof=0)) if daily_ic_values else 0.0
     turnover_proxy = 0.0
     ic_n_points = int(total_steps)
@@ -1223,11 +1269,15 @@ def evaluate_program(
     ic_fold_std = 0.0
     sharpe_fold_n = 0
     sharpe_fold_std = 0.0
+    cv_active = False
+    split_active = False
 
     cv_k = int(_EVAL_CONFIG.get("cv_k_folds", 0) or 0)
     cv_emb = int(_EVAL_CONFIG.get("cv_embargo", 0) or 0)
 
     if cv_k > 1 and total_steps > cv_k:
+        cv_active = True
+        metric_mask = np.zeros(total_steps, dtype=bool)
         # Combinatorial (contiguous) purged CV: split into K folds, compute validation metrics
         cv_mode = str(_EVAL_CONFIG.get("cv_agg_mode", "mean") or "mean").lower()
         try:
@@ -1267,6 +1317,7 @@ def evaluate_program(
             arr_va = arr_va[np.isfinite(arr_va)]
             if arr_va.size == 0:
                 continue
+            metric_mask[va] = True
             used_points += int(arr_va.size)
             if hl > 0.0:
                 w_va = _decay_weights(arr_va.size, hl)
@@ -1334,10 +1385,6 @@ def evaluate_program(
             )
         if used_points > 0:
             ic_n_points = int(used_points)
-        if pnl_segs:
-            pnl_used = np.concatenate(pnl_segs)
-            pnl_used = pnl_used[np.isfinite(pnl_used)]
-            pnl_skew, pnl_kurt = ae_stats.safe_skew_kurtosis(pnl_used)
 
         processed_for_hof = (
             np.vstack(val_pred_segs)
@@ -1350,8 +1397,11 @@ def evaluate_program(
         and v_points > 0
         and (t_points + v_points) <= total_steps
     ):
+        split_active = True
         tr = slice(0, t_points)
         va = slice(t_points, t_points + v_points)
+        metric_mask = np.zeros(total_steps, dtype=bool)
+        metric_mask[va] = True
         if hl > 0.0:
             arr_tr = np.array(daily_ic_values[tr], dtype=float)
             arr_va = np.array(daily_ic_values[va], dtype=float)
@@ -1432,6 +1482,30 @@ def evaluate_program(
             turnover_proxy = 0.0
         processed_for_hof = full_processed_predictions_matrix
 
+    pnl_metric_sample = np.array(daily_pnl_values, dtype=float)
+    if pnl_metric_sample.size == metric_mask.size:
+        pnl_metric_sample = pnl_metric_sample[metric_mask]
+    pnl_summary = _compute_pnl_summary(pnl_metric_sample, cvar_alpha=cvar_alpha)
+    pnl_used = np.array(pnl_metric_sample, dtype=float)
+    pnl_used = pnl_used[np.isfinite(pnl_used)]
+    pnl_skew = float(pnl_summary["skew"])
+    pnl_kurt = float(pnl_summary["kurt"])
+    mean_pnl = float(pnl_summary["mean_pnl"])
+    if not cv_active:
+        sharpe_proxy = float(pnl_summary["sharpe"])
+    sortino_ratio = float(pnl_summary["sortino"])
+    downside_deviation = float(pnl_summary["downside_deviation"])
+    cvar_value = float(pnl_summary["cvar"])
+    drawdown_proxy = float(pnl_summary["drawdown"])
+
+    def _slice_with_mask(values: List[float] | np.ndarray) -> np.ndarray:
+        arr = np.array(values, dtype=float)
+        if arr.size == 0:
+            return arr
+        if arr.size == metric_mask.size:
+            arr = arr[metric_mask]
+        return arr[np.isfinite(arr)]
+
     horizon_metrics: Dict[int, Dict[str, float]] = {}
     combined_ic_values = None
     if len(horizons) > 1:
@@ -1441,8 +1515,8 @@ def evaluate_program(
         combined_segments: List[np.ndarray] = []
         mean_pnl_components: List[float] = []
         for h in horizons:
-            ic_vals = np.array(ic_values_by_h.get(h, []), dtype=float)
-            pnl_vals = np.array(pnl_values_by_h.get(h, []), dtype=float)
+            ic_vals = _slice_with_mask(ic_values_by_h.get(h, []))
+            pnl_vals = _slice_with_mask(pnl_values_by_h.get(h, []))
             mean_ic_h = float(np.mean(ic_vals)) if ic_vals.size else 0.0
             ic_std_h = float(np.std(ic_vals, ddof=0)) if ic_vals.size else 0.0
             mean_pnl_h = float(np.mean(pnl_vals)) if pnl_vals.size else 0.0
@@ -1467,13 +1541,13 @@ def evaluate_program(
             if pnl_vals.size:
                 mean_pnl_components.append(mean_pnl_h)
             sharpe_components.append(sharpe_h)
-        if ic_means_components:
+        if ic_means_components and not (cv_active or split_active):
             mean_daily_ic = float(np.mean(ic_means_components))
-        if ic_std_components:
+        if ic_std_components and not (cv_active or split_active):
             ic_std = float(np.mean(ic_std_components))
-        if sharpe_components:
+        if sharpe_components and not cv_active:
             sharpe_proxy = float(np.mean(sharpe_components))
-        if mean_pnl_components:
+        if mean_pnl_components and not (cv_active or split_active):
             mean_pnl = float(np.mean(mean_pnl_components))
         if combined_segments:
             combined_ic_values = np.concatenate(combined_segments)
@@ -1484,11 +1558,10 @@ def evaluate_program(
             "mean_pnl": mean_pnl,
             "sharpe": sharpe_proxy,
         }
-        combined_ic_values = np.array(daily_ic_values, dtype=float)
+        combined_ic_values = _slice_with_mask(daily_ic_values)
 
-    drawdown_proxy = 0.0
     for horizon in horizons:
-        pnl_series = np.array(pnl_values_by_h.get(horizon, []), dtype=float)
+        pnl_series = _slice_with_mask(pnl_values_by_h.get(horizon, []))
         dd_value = 0.0
         if pnl_series.size:
             # Compute drawdown on equity, not cumulative raw PnL, to avoid
@@ -1514,7 +1587,7 @@ def evaluate_program(
     def _compute_stress(
         label: str, fee_bps: float, slip_bps: float, shock_scale: float
     ) -> Dict[str, float]:
-        if pnl_primary.size == 0:
+        if pnl_used.size == 0:
             metrics_local = {
                 "cost": 0.0,
                 "drawdown": 0.0,
@@ -1526,7 +1599,7 @@ def evaluate_program(
         fee_total = (float(fee_bps) + float(slip_bps)) / 10000.0
         turnover_est = max(0.0, float(turnover_proxy))
         stress_cost_local = fee_total * turnover_est
-        stressed = pnl_primary.astype(float, copy=True)
+        stressed = pnl_used.astype(float, copy=True)
         scale = float(max(1.0, shock_scale))
         if stressed.size > 0:
             neg_mask = stressed < 0.0
@@ -1647,9 +1720,11 @@ def evaluate_program(
     factor_penalty_components: Dict[str, float] = {}
     if factor_corr_tracker:
         for name, values in factor_corr_tracker.items():
-            if not values:
+            vals = values[metric_mask]
+            vals = vals[np.isfinite(vals)]
+            if vals.size == 0:
                 continue
-            mean_abs_corr = float(np.mean(np.abs(values)))
+            mean_abs_corr = float(np.mean(vals))
             factor_penalty_components[name] = mean_abs_corr
     factor_exposure_sum = (
         float(sum(factor_penalty_components.values()))
@@ -1663,9 +1738,11 @@ def evaluate_program(
 
     regime_exposures: Dict[str, float] = {}
     for name, values in regime_corr_tracker.items():
-        if not values:
+        vals = values[metric_mask]
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
             continue
-        regime_exposures[name] = float(np.mean(values))
+        regime_exposures[name] = float(np.mean(vals))
 
     stress_penalty_weight = float(_EVAL_CONFIG.get("stress_penalty_weight", 0.0) or 0.0)
     if stress_penalty_weight > 0.0 and robustness_penalty > 0.0:

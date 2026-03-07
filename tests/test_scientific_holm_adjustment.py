@@ -6,7 +6,9 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +79,84 @@ def test_checkpoint_pairwise_report_uses_holm_adjusted_scientific_pass() -> None
         assert metric["scientific_pass_unadjusted"] is True
         assert metric["scientific_pass"] is False
         assert metric["p_perm_one_sided_holm"] > 0.05
+
+
+def test_checkpoint_pairwise_report_holm_adjusts_across_all_pairs() -> None:
+    rows: list[dict[str, float | int]] = []
+    for seed in range(5):
+        rows.extend(
+            [
+                {"seed": seed, "generation": 1, "best_backtest_sharpe": 1.0},
+                {"seed": seed, "generation": 2, "best_backtest_sharpe": 2.0},
+                {"seed": seed, "generation": 3, "best_backtest_sharpe": 3.0},
+            ]
+        )
+
+    for stem in (
+        "benchmark_sp500",
+        "analyze_completed_runs",
+        "aggregate_parallel_benchmarks",
+    ):
+        mod = _load_script_module(stem)
+        if stem == "aggregate_parallel_benchmarks":
+            payload = mod._checkpoint_pairwise_report(pd.DataFrame(rows))
+        else:
+            payload = mod._checkpoint_pairwise_report(rows)
+        metrics = [pair["metrics"][0] for pair in payload["pairs"]]
+        assert all(metric["scientific_pass_unadjusted"] is True for metric in metrics)
+        assert all(metric["scientific_pass"] is False for metric in metrics)
+        assert all(metric["p_perm_one_sided_holm"] > 0.05 for metric in metrics)
+
+
+def test_permutation_monte_carlo_pvalues_have_positive_floor() -> None:
+    vals = np.ones(21, dtype=float)
+    for stem in (
+        "scientific_compare",
+        "benchmark_sp500",
+        "analyze_completed_runs",
+        "aggregate_parallel_benchmarks",
+    ):
+        mod = _load_script_module(stem)
+        p_one, p_two = mod._paired_sign_flip_pvalues(vals)
+        assert 0.0 < p_one < 1e-4
+        assert 0.0 < p_two < 1e-4
+
+
+def test_scientific_compare_rejects_duplicate_seed_dirs(tmp_path) -> None:
+    mod = _load_script_module("scientific_compare")
+    root = tmp_path / "dup_root"
+
+    def _write_run(run_name: str) -> None:
+        run_dir = root / run_name
+        bt_dir = run_dir / "backtest_portfolio_csvs"
+        bt_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "SUMMARY.json").write_text(
+            json.dumps({"best_metrics": {"Sharpe": 1.0}}), encoding="utf-8"
+        )
+        with (bt_dir / "backtest_summary_ensemble.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as fh:
+            writer = csv.DictWriter(
+                fh, fieldnames=["Sharpe", "AnnReturn", "MaxDD"], lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerow({"Sharpe": 0.0, "AnnReturn": 0.0, "MaxDD": 0.1})
+        with (bt_dir / "return_corr_matrix.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as fh:
+            writer = csv.writer(fh, lineterminator="\n")
+            writer.writerow(["", "a", "b"])
+            writer.writerow(["a", "1.0", "0.2"])
+            writer.writerow(["b", "0.2", "1.0"])
+        (bt_dir / "ensemble_selection.json").write_text(
+            json.dumps({"members": ["a", "b"]}), encoding="utf-8"
+        )
+
+    _write_run("run_seed1_a")
+    _write_run("run_seed1_b")
+
+    with pytest.raises(ValueError, match="Duplicate seed 1"):
+        mod._collect_group(root)
 
 
 def test_scientific_compare_main_applies_holm_adjustment(tmp_path, monkeypatch) -> None:

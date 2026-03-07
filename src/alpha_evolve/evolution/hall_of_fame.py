@@ -33,7 +33,8 @@ _hof_rank_pred_matrix: List[np.ndarray] = []
 _hof_corr_fingerprints: List[str] = []  # keep order to manage eviction
 _hof_raw_pred_matrix: List[
     np.ndarray
-] = []  # store raw flattened predictions for exact-match fast path
+] = []  # store raw prediction matrices for exact-match fast path
+_hof_bar_rank_matrices: List[np.ndarray] = []  # per-bar ranks for per_bar mode
 # Default correlation penalty configuration mirrors Section 9
 _corr_penalty_config: Dict[str, float] = {"weight": 0.35, "cutoff": 0.15}
 # Monotonic counter used to invalidate cross-generation eval caches when HOF state changes.
@@ -214,7 +215,8 @@ def initialize_hof(
         _hof_rank_pred_matrix, \
         _corr_penalty_config, \
         _hof_corr_fingerprints, \
-        _hof_raw_pred_matrix
+        _hof_raw_pred_matrix, \
+        _hof_bar_rank_matrices
 
     _hof_programs_data = []
     _hof_max_size = max_size
@@ -225,6 +227,7 @@ def initialize_hof(
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _hof_raw_pred_matrix = []
+    _hof_bar_rank_matrices = []
     _corr_penalty_config = {"weight": corr_penalty_weight, "cutoff": corr_cutoff}
     _bump_hof_state_version()
     logging.getLogger(__name__).info(
@@ -275,6 +278,9 @@ def export_correlation_state(*, include_raw: bool = True) -> dict[str, Any]:
         "rank_pred_matrix": [
             np.array(x, dtype=float, copy=True) for x in _hof_rank_pred_matrix
         ],
+        "bar_rank_matrices": [
+            np.array(x, dtype=float, copy=True) for x in _hof_bar_rank_matrices
+        ],
     }
     if include_raw:
         payload["raw_pred_matrix"] = [
@@ -287,6 +293,7 @@ def import_correlation_state(state: Mapping[str, Any] | None) -> None:
     """Restore correlation-penalty state snapshot (used by multiprocessing workers)."""
     global _corr_penalty_config, _hof_state_version
     global _hof_corr_fingerprints, _hof_rank_pred_matrix, _hof_raw_pred_matrix
+    global _hof_bar_rank_matrices
     if state is None:
         return
 
@@ -310,6 +317,14 @@ def import_correlation_state(state: Mapping[str, Any] | None) -> None:
         _hof_rank_pred_matrix = [np.asarray(x, dtype=float) for x in rank_mat]
     elif "rank_pred_matrix" in state:
         _hof_rank_pred_matrix = []
+
+    bar_rank_mat = state.get("bar_rank_matrices")
+    if isinstance(bar_rank_mat, list):
+        _hof_bar_rank_matrices = [np.asarray(x, dtype=float) for x in bar_rank_mat]
+    elif "bar_rank_matrices" in state:
+        _hof_bar_rank_matrices = []
+    else:
+        _hof_bar_rank_matrices = []
 
     raw_mat = state.get("raw_pred_matrix")
     if isinstance(raw_mat, list):
@@ -364,6 +379,20 @@ def _rank_vector(vec: np.ndarray) -> np.ndarray:
     return ranks
 
 
+def _rank_rows(mat: np.ndarray) -> np.ndarray:
+    """Return zero-mean average-tie ranks for each row in ``mat``."""
+
+    arr = np.asarray(mat, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.ndim != 2 or arr.size == 0:
+        return np.zeros((0, 0), dtype=float)
+    out = np.zeros_like(arr, dtype=float)
+    for row in range(arr.shape[0]):
+        out[row, :] = _rank_vector(arr[row, :])
+    return out
+
+
 def get_correlation_penalty_with_hof(
     current_prog_flat_processed_ts: np.ndarray,
 ) -> float:
@@ -372,10 +401,12 @@ def get_correlation_penalty_with_hof(
 
     cand_rank = _rank_vector(current_prog_flat_processed_ts)
     # Fast-path: if an identical or numerically equal raw vector exists, full penalty
+    cand_raw = np.asarray(current_prog_flat_processed_ts, dtype=float).ravel()
     for raw in _hof_raw_pred_matrix:
-        if raw.shape == current_prog_flat_processed_ts.shape and (
-            np.array_equal(raw, current_prog_flat_processed_ts)
-            or np.allclose(raw, current_prog_flat_processed_ts, rtol=0, atol=1e-8)
+        raw_flat = np.asarray(raw, dtype=float).ravel()
+        if raw_flat.shape == cand_raw.shape and (
+            np.array_equal(raw_flat, cand_raw)
+            or np.allclose(raw_flat, cand_raw, rtol=0, atol=1e-8)
         ):
             return _corr_penalty_config["weight"]
     corrs: List[float] = []
@@ -398,33 +429,26 @@ def get_correlation_penalty_per_bar(processed_preds_matrix: np.ndarray) -> float
     """
     if processed_preds_matrix.ndim != 2 or processed_preds_matrix.shape[0] == 0:
         return 0.0
-    # Fallback to flat if no HOF entries
-    if not _hof_rank_pred_matrix:
+    if not _hof_bar_rank_matrices:
         return 0.0
-    # Build candidate ranks per bar (zero-mean ranks along axis=1)
-    t, n = processed_preds_matrix.shape
-    # Flatten per bar and average correlation to HOF flattened per-bar shapes
-    # Since HOF stores flattened whole-series ranks, approximate by comparing
-    # each bar against the corresponding segments if lengths match; otherwise
-    # fall back to flat behavior (rare in practice if same eval window used).
-    # For a robust generic implementation, compute flat penalty as proxy.
+    cand = np.asarray(processed_preds_matrix, dtype=float)
+    if not np.all(np.isfinite(cand)):
+        return 0.0
+    cand_bar_ranks = _rank_rows(cand)
     try:
-        # Rank each bar
         corrs: list[float] = []
-        for bar in range(t):
-            v = processed_preds_matrix[bar, :]
-            if v.size < 2 or not np.all(np.isfinite(v)):
+        for idx, hof_bar_ranks in enumerate(_hof_bar_rank_matrices):
+            raw = _hof_raw_pred_matrix[idx] if idx < len(_hof_raw_pred_matrix) else None
+            if raw is not None and raw.shape == cand.shape and (
+                np.array_equal(raw, cand) or np.allclose(raw, cand, rtol=0, atol=1e-8)
+            ):
+                return _corr_penalty_config["weight"]
+            if hof_bar_ranks.shape != cand_bar_ranks.shape:
                 continue
-            vr = _rank_vector(v)
-            for hof_rank in _hof_rank_pred_matrix:
-                # Extract trailing segment of matching length if possible
-                if hof_rank.size % t == 0:
-                    seg_len = hof_rank.size // t
-                    if seg_len == v.size:
-                        seg = hof_rank[bar * seg_len : (bar + 1) * seg_len]
-                        c = abs(_safe_corr(vr, seg))
-                        if not np.isnan(c) and c > _corr_penalty_config["cutoff"]:
-                            corrs.append(c)
+            for bar in range(cand_bar_ranks.shape[0]):
+                c = abs(_safe_corr(cand_bar_ranks[bar, :], hof_bar_ranks[bar, :]))
+                if not np.isnan(c) and c > _corr_penalty_config["cutoff"]:
+                    corrs.append(c)
         if not corrs:
             return 0.0
         return _corr_penalty_config["weight"] * float(np.mean(corrs))
@@ -493,12 +517,12 @@ def get_min_prediction_distance_with_hof(
 
     best = None
     for hof_raw in _hof_raw_pred_matrix:
-        if hof_raw.size != mat.size:
+        hof_arr = np.asarray(hof_raw, dtype=float)
+        if hof_arr.ndim == 1:
+            hof_arr = hof_arr.reshape(-1, 1)
+        if hof_arr.shape != mat.shape:
             continue
-        try:
-            hof_probe = hof_raw[-cand.size :]
-        except Exception:
-            continue
+        hof_probe = hof_arr[-pb:, :].ravel()
         hof_probe = np.nan_to_num(hof_probe, nan=0.0, posinf=0.0, neginf=0.0)
         hof_norm = float(np.linalg.norm(hof_probe))
         denom = cand_norm + hof_norm + 1e-12
@@ -561,29 +585,31 @@ def get_correlation_penalty_with_weight_per_bar(
     """Per-bar variant mirroring get_correlation_penalty_per_bar with custom weight."""
     if processed_preds_matrix.ndim != 2 or processed_preds_matrix.shape[0] == 0:
         return 0.0
-    if not _hof_rank_pred_matrix:
+    if not _hof_bar_rank_matrices:
         return 0.0
     try:
-        t, n = processed_preds_matrix.shape
+        cand = np.asarray(processed_preds_matrix, dtype=float)
+        if not np.all(np.isfinite(cand)):
+            return 0.0
+        cand_bar_ranks = _rank_rows(cand)
         corrs: list[float] = []
-        for bar in range(t):
-            v = processed_preds_matrix[bar, :]
-            if v.size < 2 or not np.all(np.isfinite(v)):
+        for idx, hof_bar_ranks in enumerate(_hof_bar_rank_matrices):
+            raw = _hof_raw_pred_matrix[idx] if idx < len(_hof_raw_pred_matrix) else None
+            if raw is not None and raw.shape == cand.shape and (
+                np.array_equal(raw, cand) or np.allclose(raw, cand, rtol=0, atol=1e-8)
+            ):
+                return float(weight)
+            if hof_bar_ranks.shape != cand_bar_ranks.shape:
                 continue
-            vr = _rank_vector(v)
-            for hof_rank in _hof_rank_pred_matrix:
-                if hof_rank.size % t == 0:
-                    seg_len = hof_rank.size // t
-                    if seg_len == v.size:
-                        seg = hof_rank[bar * seg_len : (bar + 1) * seg_len]
-                        c = abs(_safe_corr(vr, seg))
-                        co = (
-                            _corr_penalty_config["cutoff"]
-                            if cutoff is None
-                            else float(cutoff)
-                        )
-                        if not np.isnan(c) and c > co:
-                            corrs.append(c)
+            for bar in range(cand_bar_ranks.shape[0]):
+                c = abs(_safe_corr(cand_bar_ranks[bar, :], hof_bar_ranks[bar, :]))
+                co = (
+                    _corr_penalty_config["cutoff"]
+                    if cutoff is None
+                    else float(cutoff)
+                )
+                if not np.isnan(c) and c > co:
+                    corrs.append(c)
         if not corrs:
             return 0.0
         return float(weight) * float(np.mean(corrs))
@@ -611,7 +637,8 @@ def add_program_to_hof(
         _hof_programs_data, \
         _hof_fingerprints_set, \
         _hof_rank_pred_matrix, \
-        _hof_corr_fingerprints
+        _hof_corr_fingerprints, \
+        _hof_bar_rank_matrices
 
     logger = logging.getLogger(__name__)
 
@@ -715,15 +742,18 @@ def add_program_to_hof(
     corr_state_changed = False
     if processed_preds_matrix is not None and metrics.fitness > -float("inf"):
         if fp not in _hof_corr_fingerprints:
-            flat = processed_preds_matrix.ravel()
+            raw = np.asarray(processed_preds_matrix, dtype=float).copy()
+            flat = raw.ravel()
             _hof_rank_pred_matrix.append(_rank_vector(flat))
-            _hof_raw_pred_matrix.append(flat.copy())
+            _hof_raw_pred_matrix.append(raw)
+            _hof_bar_rank_matrices.append(_rank_rows(raw))
             _hof_corr_fingerprints.append(fp)
             corr_state_changed = True
             if len(_hof_rank_pred_matrix) > _hof_max_size:
                 _hof_rank_pred_matrix.pop(0)
                 _hof_corr_fingerprints.pop(0)
                 _hof_raw_pred_matrix.pop(0)
+                _hof_bar_rank_matrices.pop(0)
                 corr_state_changed = True
 
     if inserted:
@@ -754,19 +784,23 @@ def add_program_to_hof(
 def update_correlation_hof(program_fp: str, processed_preds_matrix: np.ndarray):
     """Add a program's predictions to the correlation HOF, ensuring uniqueness."""
     global _hof_rank_pred_matrix, _hof_corr_fingerprints, _hof_raw_pred_matrix
+    global _hof_bar_rank_matrices
 
     if program_fp in _hof_corr_fingerprints:
         return
 
-    flat = processed_preds_matrix.ravel()
+    raw = np.asarray(processed_preds_matrix, dtype=float).copy()
+    flat = raw.ravel()
     _hof_rank_pred_matrix.append(_rank_vector(flat))
-    _hof_raw_pred_matrix.append(flat.copy())
+    _hof_raw_pred_matrix.append(raw)
+    _hof_bar_rank_matrices.append(_rank_rows(raw))
     _hof_corr_fingerprints.append(program_fp)
     changed = True
     if len(_hof_rank_pred_matrix) > _hof_max_size:
         _hof_rank_pred_matrix.pop(0)
         _hof_corr_fingerprints.pop(0)
         _hof_raw_pred_matrix.pop(0)
+        _hof_bar_rank_matrices.pop(0)
         changed = True
     if changed:
         _bump_hof_state_version()
@@ -860,12 +894,14 @@ def clear_hof():
         _hof_fingerprints_set, \
         _hof_rank_pred_matrix, \
         _hof_corr_fingerprints, \
-        _hof_raw_pred_matrix
+        _hof_raw_pred_matrix, \
+        _hof_bar_rank_matrices
     _hof_programs_data = []
     _hof_fingerprints_set = set()
     _hof_rank_pred_matrix = []
     _hof_corr_fingerprints = []
     _hof_raw_pred_matrix = []
+    _hof_bar_rank_matrices = []
     _bump_hof_state_version()
     data.clear_feature_cache()
     logging.getLogger(__name__).info("Hall of Fame cleared.")

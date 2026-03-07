@@ -109,7 +109,7 @@ def _slope_perm_p_one_sided(x: np.ndarray, y: np.ndarray) -> float:
                 ge += 1
     if total <= 0:
         return float("nan")
-    return float(ge / total)
+    return float((ge + 1) / (total + 1))
 
 
 def _evaluate_pairwise_block(
@@ -269,10 +269,10 @@ def _evaluate_curve_block(
         monotonic_pass = bool(np.all(diffs >= -abs(tolerance)))
         slope = _slope(x, y)
         if x.size < 4:
-            # With 3 points, exact permutation p-values are too coarse to hit
-            # alpha=0.05; treat this as a directional trend check only.
+            # With fewer than 4 checkpoints, the one-sided slope test cannot
+            # deliver meaningful 5% evidence, so do not pass on direction alone.
             p_slope = float("nan")
-            trend_pass = bool(np.isfinite(slope) and slope > 0.0)
+            trend_pass = False
         else:
             p_slope = _slope_perm_p_one_sided(x, y)
             trend_pass = bool(

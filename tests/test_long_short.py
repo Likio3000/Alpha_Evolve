@@ -3,7 +3,11 @@ import pandas as pd
 from collections import OrderedDict
 import pytest
 
-from alpha_evolve.backtesting.core import backtest_cross_sectional_alpha, _scale_signal_cross_sectionally
+from alpha_evolve.backtesting.core import (
+    _build_long_short_basket,
+    _scale_signal_cross_sectionally,
+    backtest_cross_sectional_alpha,
+)
 
 class DummyProg:
     def __init__(self, signals):
@@ -54,11 +58,7 @@ def manual_backtest(signals, rets, long_short_n):
         scaled = _scale_signal_cross_sectionally(signals[t], "zscore")
         if long_short_n > 0:
             k = min(long_short_n, n_stocks // 2)
-            order = np.argsort(scaled)
-            ls = np.zeros_like(scaled)
-            ls[order[-k:]] = 1.0
-            ls[order[:k]] = -1.0
-            scaled = ls
+            scaled = _build_long_short_basket(scaled, k)
         centered = scaled - np.mean(scaled)
         sa = np.sum(np.abs(centered))
         pos[t] = centered / sa if sa > 1e-9 else 0
@@ -110,6 +110,79 @@ def test_long_short_n_trades_only_requested_symbols():
     std_ret = manual_ret.std(ddof=0)
     sharpe = (mean_ret / (std_ret + 1e-9)) * np.sqrt(252)
     assert metrics["Sharpe"] == pytest.approx(sharpe)
+
+
+def test_long_short_n_fully_tied_cross_section_stays_flat():
+    """Fully tied baskets should not trade arbitrary symbols based on array order."""
+    index = pd.date_range("2020-02-01", periods=5)
+    rets = np.zeros((5, 4), dtype=float)
+    aligned = OrderedDict({
+        "AAA": _build_df(rets[:, 0], index),
+        "BBB": _build_df(rets[:, 1], index),
+        "CCC": _build_df(rets[:, 2], index),
+        "DDD": _build_df(rets[:, 3], index),
+    })
+    signals = np.zeros((4, 4), dtype=float)
+    prog = DummyProg(signals)
+    metrics = backtest_cross_sectional_alpha(
+        prog=prog,
+        aligned_dfs=aligned,
+        common_time_index=index,
+        stock_symbols=list(aligned.keys()),
+        n_stocks=4,
+        fee_bps=0.0,
+        lag=0,
+        hold=1,
+        scale_method="zscore",
+        long_short_n=2,
+        net_exposure_target=0.0,
+        initial_state_vars_config={},
+        scalar_feature_names=[],
+        cross_sectional_feature_vector_names=[],
+    )
+    manual_pos, manual_ret = manual_backtest(signals, rets[:-1], 2)
+    assert np.allclose(manual_pos, 0.0)
+    assert np.allclose(manual_ret, 0.0)
+    assert metrics["Turnover"] == pytest.approx(0.0)
+    assert metrics["Sharpe"] == pytest.approx(0.0)
+    assert metrics["AnnReturn"] == pytest.approx(0.0)
+
+
+def test_backtest_ann_return_floors_at_minus_one_after_bankruptcy():
+    """Annualized return should remain finite when terminal equity goes non-positive."""
+    index = pd.date_range("2020-03-01", periods=3)
+    rets = np.array([
+        [-3.0, 3.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+    ])
+    aligned = OrderedDict({
+        "AAA": _build_df(rets[:, 0], index),
+        "BBB": _build_df(rets[:, 1], index),
+    })
+    signals = np.array([
+        [1.0, -1.0],
+        [1.0, -1.0],
+    ])
+    prog = DummyProg(signals)
+    metrics = backtest_cross_sectional_alpha(
+        prog=prog,
+        aligned_dfs=aligned,
+        common_time_index=index,
+        stock_symbols=list(aligned.keys()),
+        n_stocks=2,
+        fee_bps=0.0,
+        lag=0,
+        hold=1,
+        scale_method="zscore",
+        long_short_n=0,
+        net_exposure_target=0.0,
+        initial_state_vars_config={},
+        scalar_feature_names=[],
+        cross_sectional_feature_vector_names=[],
+    )
+    assert metrics["EquityCurve"][-1] <= 0.0
+    assert metrics["AnnReturn"] == pytest.approx(-1.0)
 
 
 def test_backtest_reports_extended_stress_metrics():

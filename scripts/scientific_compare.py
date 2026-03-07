@@ -132,6 +132,11 @@ def _collect_group(root: Path) -> dict[int, dict[str, float]]:
         seed = _parse_seed(run_dir.name)
         if seed is None:
             continue
+        if seed in out:
+            raise ValueError(
+                f"Duplicate seed {seed} under {root}: "
+                f"{run_dir.name} conflicts with another run_* directory."
+            )
         try:
             out[seed] = _collect_run_metrics(run_dir)
         except Exception:
@@ -196,8 +201,10 @@ def _paired_sign_flip_pvalues(values: np.ndarray) -> tuple[float, float]:
     n_perm = 200000
     signs = rng.choice(np.array([-1.0, 1.0], dtype=float), size=(n_perm, n))
     means = np.mean(signs * vals[None, :], axis=1)
-    p_one = float(np.mean(means >= obs))
-    p_two = float(np.mean(np.abs(means) >= abs(obs)))
+    ge_one = int(np.sum(means >= obs))
+    ge_two = int(np.sum(np.abs(means) >= abs(obs)))
+    p_one = float((ge_one + 1) / (n_perm + 1))
+    p_two = float((ge_two + 1) / (n_perm + 1))
     return p_one, p_two
 
 
@@ -290,8 +297,11 @@ def main() -> int:
     args = parse_args()
     control_root = Path(args.control_root).resolve()
     treatment_root = Path(args.treatment_root).resolve()
-    control = _collect_group(control_root)
-    treatment = _collect_group(treatment_root)
+    try:
+        control = _collect_group(control_root)
+        treatment = _collect_group(treatment_root)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     common_seeds = sorted(set(control.keys()).intersection(treatment.keys()))
     if not common_seeds:
         raise SystemExit("No overlapping seeds between control and treatment groups.")
