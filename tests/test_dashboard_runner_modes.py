@@ -27,6 +27,21 @@ def _reset_state() -> None:
     STATE.logs.clear()
     STATE.meta.clear()
     STATE.activity.clear()
+    for timer in STATE.cleanup_timers.values():
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+    STATE.cleanup_timers.clear()
+
+
+def _write_sharpe_summary(run_dir: Path, sharpe: float, *, top_n: int = 1) -> None:
+    bt_dir = run_dir / "backtest_portfolio_csvs"
+    bt_dir.mkdir(parents=True, exist_ok=True)
+    (bt_dir / f"backtest_summary_top{top_n}.csv").write_text(
+        f"Sharpe\n{sharpe}\n",
+        encoding="utf-8",
+    )
 
 
 @pytest_asyncio.fixture()
@@ -144,6 +159,91 @@ async def test_subprocess_runner_streams_sse_and_persists_meta(dashboard_env, tm
     assert "gen_summary" in types
 
 
+async def test_pipeline_run_accepts_repo_relative_config_when_cwd_changes(
+    dashboard_env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        dashboard_env.run_pipeline,
+        "_build_subprocess_command",
+        lambda _cli_args: [sys.executable, "-u", "-c", "print('dry start', flush=True)"],
+    )
+
+    resp = await dashboard_env.client.post(
+        "/api/pipeline/run",
+        json={
+            "generations": 1,
+            "runner_mode": "subprocess",
+            "config": "configs/sp500.toml",
+        },
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+
+    meta = await _wait_for(lambda: STATE.meta.get(job_id), timeout=2.0)
+    assert isinstance(meta, dict)
+    assert meta["payload"]["config"].endswith("configs/sp500.toml")
+    assert Path(meta["payload"]["config"]).is_absolute()
+
+
+async def test_pipeline_worker_final_uses_returned_run_dir_sharpe(
+    dashboard_env, monkeypatch: pytest.MonkeyPatch
+):
+    actual_run = dashboard_env.pipeline_dir / "run_actual"
+    latest_run = dashboard_env.pipeline_dir / "run_latest"
+    actual_run.mkdir()
+    latest_run.mkdir()
+    _write_sharpe_summary(actual_run, 2.5)
+    _write_sharpe_summary(latest_run, 0.5)
+    (dashboard_env.pipeline_dir / "LATEST").write_text("run_latest", encoding="utf-8")
+
+    import alpha_evolve.cli.pipeline as pipeline_mod
+    from alpha_evolve.config import BacktestConfig, EvolutionConfig
+
+    monkeypatch.setattr(
+        pipeline_mod,
+        "parse_args",
+        lambda _argv: (
+            EvolutionConfig(generations=1, data_dir="tests/data/good"),
+            BacktestConfig(data_dir="tests/data/good"),
+            SimpleNamespace(
+                debug_prints=False,
+                run_baselines=False,
+                retrain_baselines=False,
+                log_level="INFO",
+                log_file=None,
+                dry_run=False,
+                output_dir=None,
+                persist_hof_per_gen=True,
+                disable_align_cache=False,
+                align_cache_dir=None,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline_mod,
+        "run_pipeline_programmatic",
+        lambda *_args, **_kwargs: actual_run,
+    )
+
+    event_queue: "queue_mod.Queue[dict[str, object]]" = queue_mod.Queue()
+    dashboard_env.run_pipeline._pipeline_worker(["1"], str(dashboard_env.helpers.ROOT), event_queue)
+
+    final_event = None
+    while True:
+        try:
+            item = event_queue.get_nowait()
+        except queue_mod.Empty:
+            break
+        if item.get("type") == "final":
+            final_event = item
+            break
+
+    assert final_event is not None
+    assert final_event["run_dir"] == str(actual_run.resolve())
+    assert final_event["sharpe_best"] == pytest.approx(2.5)
+
+
 async def test_multiprocessing_runner_can_stop_without_blocking(dashboard_env, monkeypatch: pytest.MonkeyPatch):
     release = threading.Event()
     started = threading.Event()
@@ -214,6 +314,22 @@ async def test_multiprocessing_runner_can_stop_without_blocking(dashboard_env, m
         raise AssertionError("Expected job activity to report stopped/error status.")
 
     await asyncio.wait_for(_wait_for_stop(), timeout=4.0)
+
+
+async def test_job_state_schedule_cleanup_releases_completed_state():
+    job_id = "job-cleanup"
+    STATE.new_queue(job_id)
+    STATE.set_meta(job_id, {"payload": {"generations": 1}})
+    STATE.init_activity(job_id, {"status": "complete"})
+    STATE.schedule_cleanup(job_id, delay_seconds=0.01)
+
+    cleared = await _wait_for(lambda: job_id not in STATE.queues, timeout=1.0, interval=0.02)
+    assert cleared is True
+
+    assert job_id not in STATE.queues
+    assert job_id not in STATE.logs
+    assert job_id not in STATE.meta
+    assert job_id not in STATE.activity
 
 
 async def test_make_sse_response_formats_frames():

@@ -4,8 +4,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 import subprocess
+import threading
 from queue import Queue
 import asyncio
+import time
+import uuid
 
 
 @dataclass
@@ -63,13 +66,29 @@ class JobState:
         self.logs: Dict[str, deque[str]] = {}
         self.meta: Dict[str, Any] = {}
         self.activity: Dict[str, Dict[str, Any]] = {}
+        self.cleanup_timers: Dict[str, threading.Timer] = {}
 
     def new_queue(self, job_id: str):
+        self._cancel_cleanup(job_id)
         q: Queue[str] = Queue()
         self.queues[job_id] = q
         # Keep up to ~10k lines per job in memory
         self.logs[job_id] = deque(maxlen=10000)
         return q
+
+    def initialize_job(
+        self,
+        *,
+        job_id: str | None = None,
+        meta: Any = None,
+        activity: Dict[str, Any] | None = None,
+    ) -> tuple[str, Queue]:
+        resolved_job_id = job_id or str(uuid.uuid4())
+        queue = self.new_queue(resolved_job_id)
+        if meta is not None:
+            self.set_meta(resolved_job_id, meta)
+        self.init_activity(resolved_job_id, activity)
+        return resolved_job_id, queue
 
     def get_queue(self, job_id: str):
         return self.queues.get(job_id)
@@ -120,6 +139,13 @@ class JobState:
         data.update(updates)
         return data
 
+    def touch_activity(self, job_id: str, **updates: Any) -> Dict[str, Any]:
+        updates.setdefault("updated_at", time.time())
+        return self.update_activity(job_id, **updates)
+
+    def set_log_path(self, job_id: str, log_path: str) -> Dict[str, Any]:
+        return self.touch_activity(job_id, log_path=log_path)
+
     def append_activity_summary(self, job_id: str, summary: Any, limit: int = 400) -> None:
         data = self.activity.setdefault(job_id, {})
         history = data.setdefault("summaries", [])
@@ -129,6 +155,27 @@ class JobState:
                 del history[0 : len(history) - limit]
         else:
             data["summaries"] = [summary]
+
+    def append_meta_sequence(
+        self,
+        job_id: str,
+        key: str,
+        item: Any,
+        *,
+        limit: int,
+    ) -> list[Any]:
+        meta = self.meta.setdefault(job_id, {})
+        if not isinstance(meta, dict):
+            meta = {}
+            self.meta[job_id] = meta
+        sequence = meta.setdefault(key, [])
+        if not isinstance(sequence, list):
+            sequence = []
+            meta[key] = sequence
+        sequence.append(item)
+        if len(sequence) > limit:
+            del sequence[0 : len(sequence) - limit]
+        return sequence
 
     def clear_activity(self, job_id: str) -> None:
         self.activity.pop(job_id, None)
@@ -141,6 +188,36 @@ class JobState:
 
     def clear_handle(self, job_id: str) -> None:
         self.handles.pop(job_id, None)
+
+    def clear_job(self, job_id: str) -> None:
+        self._cancel_cleanup(job_id)
+        self.handles.pop(job_id, None)
+        self.queues.pop(job_id, None)
+        self.logs.pop(job_id, None)
+        self.meta.pop(job_id, None)
+        self.activity.pop(job_id, None)
+
+    def schedule_cleanup(self, job_id: str, delay_seconds: float = 300.0) -> None:
+        self._cancel_cleanup(job_id)
+        if delay_seconds <= 0:
+            self.clear_job(job_id)
+            return
+
+        def _cleanup() -> None:
+            self.clear_job(job_id)
+
+        timer = threading.Timer(delay_seconds, _cleanup)
+        timer.daemon = True
+        self.cleanup_timers[job_id] = timer
+        timer.start()
+
+    def _cancel_cleanup(self, job_id: str) -> None:
+        timer = self.cleanup_timers.pop(job_id, None)
+        if timer is not None:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
 
 
 # Global job state singleton for ease of wiring across routers

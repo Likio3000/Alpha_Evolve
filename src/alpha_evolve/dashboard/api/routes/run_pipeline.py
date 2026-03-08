@@ -4,15 +4,12 @@ import asyncio
 import io
 import json
 import logging
-import math
 import multiprocessing as mp
 import os
-import re
 import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 import queue as queue_mod
 from queue import Queue
@@ -23,78 +20,34 @@ from django.views.decorators.csrf import csrf_exempt
 
 from pydantic import ValidationError
 
-from ..jobs import STATE, JobHandle
+from ..job_controller import DashboardJobController, get_dashboard_jobs
+from ..jobs import JobHandle
+from ..pipeline_events import forward_pipeline_events
+from ..pipeline_output import (
+    line_to_pipeline_event as _line_to_event,
+    resolve_run_dir_hint as _resolve_run_dir_hint,
+)
+from ..pipeline_runtime import (
+    initialize_pipeline_job,
+    launch_pipeline_job,
+    PipelineLaunchRequest,
+    multiprocessing_available as _runtime_multiprocessing_available,
+    normalize_runner_mode as _runtime_normalize_runner_mode,
+)
+from ..subprocess_runtime import pump_text_subprocess_output
 from ..helpers import (
     ROOT,
     build_pipeline_args,
     read_best_sharpe_from_run,
+    resolve_config_path,
     resolve_dataset_preset,
     resolve_latest_run_dir,
-    RE_SHARPE,
-    RE_DIAG,
-    RE_PROGRESS,
 )
 from ..http import json_error, json_response
 from ..models import PipelineRunRequest
 
 
-ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
-
-
-def _parse_constant(token: str) -> float:
-    if token == "NaN":
-        return float("nan")
-    if token == "Infinity":
-        return float("inf")
-    if token == "-Infinity":
-        return float("-inf")
-    raise ValueError(f"Unexpected JSON constant: {token}")
-
-
-def _sanitize_json_data(value: Any) -> Any:
-    if isinstance(value, float):
-        if math.isnan(value) or math.isinf(value):
-            return None
-        return value
-    if isinstance(value, dict):
-        return {k: _sanitize_json_data(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_json_data(v) for v in value]
-    return value
-
-
-def _line_to_event(line: str) -> Dict[str, Any]:
-    line = line.rstrip("\n")
-    if line:
-        line = ANSI_ESCAPE_RE.sub("", line)
-    if not line:
-        return {"type": "log", "raw": ""}
-    if (m := RE_DIAG.search(line)) is not None:
-        try:
-            data = json.loads(m.group(1), parse_constant=_parse_constant)
-            data = _sanitize_json_data(data)
-            return {"type": "diag", "data": data, "raw": line}
-        except Exception:
-            return {"type": "log", "raw": line}
-    if (m := RE_PROGRESS.search(line)) is not None:
-        try:
-            data = json.loads(m.group(1), parse_constant=_parse_constant)
-            data = _sanitize_json_data(data)
-            subtype = data.get("type") if isinstance(data, dict) else None
-            if subtype == "gen_summary":
-                return {"type": "gen_summary", "data": data, "raw": line}
-            event = {"type": "progress", "data": data, "raw": line}
-            if isinstance(subtype, str):
-                event["subtype"] = subtype
-            return event
-        except Exception:
-            return {"type": "log", "raw": line}
-    if (m := RE_SHARPE.search(line)) is not None:
-        try:
-            return {"type": "score", "sharpe_best": float(m.group(1)), "raw": line}
-        except Exception:
-            return {"type": "log", "raw": line}
-    return {"type": "log", "raw": line}
+JOB_STATE_RETENTION_SECONDS = 300.0
 
 
 def _pipeline_worker(
@@ -253,8 +206,7 @@ def _pipeline_worker(
             options = options_from_namespace(ns)
 
         run_dir = run_pipeline_programmatic(evo_cfg, bt_cfg, options)
-        latest = resolve_latest_run_dir()
-        best = read_best_sharpe_from_run(latest) if latest is not None else None
+        best = read_best_sharpe_from_run(run_dir) if run_dir.exists() else None
         event_queue.put(
             {
                 "type": "final",
@@ -277,13 +229,6 @@ def _pipeline_worker(
         logging_setup.setup_logging = original_setup
         event_queue.put({"type": "__complete__"})
 
-
-_PIPELINE_WORKER_DEFAULT = _pipeline_worker
-
-
-_ARTEFACTS_PATH_RE = re.compile(r"artefacts in\s+(?P<path>.+)$", re.IGNORECASE)
-
-
 def _build_subprocess_command(cli_args: list[str]) -> list[str]:
     """Return the command used for the sandbox-safe subprocess runner.
 
@@ -294,50 +239,11 @@ def _build_subprocess_command(cli_args: list[str]) -> list[str]:
 
 
 def _normalize_runner_mode(value: str | None) -> str:
-    raw = (value or "").strip().lower()
-    if not raw:
-        return "auto"
-    if raw in {"auto", "default"}:
-        return "auto"
-    if raw in {"mp", "multiprocessing", "process", "proc"}:
-        return "multiprocessing"
-    if raw in {"subprocess", "subproc", "spawn"}:
-        return "subprocess"
-    return raw
+    return _runtime_normalize_runner_mode(value)
 
 
 def _multiprocessing_available() -> bool:
-    try:
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
-        try:
-            q.put_nowait({"type": "__probe__"})
-        except Exception:
-            q.put({"type": "__probe__"})
-        close = getattr(q, "close", None)
-        if callable(close):
-            close()
-        join_thread = getattr(q, "join_thread", None)
-        if callable(join_thread):
-            try:
-                join_thread()
-            except Exception:
-                pass
-        return True
-    except Exception:
-        return False
-
-
-def _resolve_run_dir_hint(line: str) -> Optional[str]:
-    """Best-effort extraction of a run directory from a log line."""
-
-    if not line:
-        return None
-    match = _ARTEFACTS_PATH_RE.search(line)
-    if match is None:
-        return None
-    path = match.group("path").strip()
-    return path or None
+    return _runtime_multiprocessing_available(mp_context_getter=lambda: mp.get_context("spawn"))
 
 
 def _pump_subprocess_output(
@@ -347,219 +253,65 @@ def _pump_subprocess_output(
     event_queue: "queue_mod.Queue[dict[str, Any]]",
 ) -> None:
     run_dir_hint: Optional[str] = None
-    try:
-        stdout = proc.stdout
-        if stdout is None:
-            raise RuntimeError("subprocess runner missing stdout pipe")
-        for line in stdout:
-            if run_dir_hint is None:
-                run_dir_hint = _resolve_run_dir_hint(line)
-            event_queue.put(_line_to_event(line))
-    except Exception as exc:
-        event_queue.put({"type": "error", "code": 1, "detail": str(exc)})
-    finally:
+
+    def _handle_line(line: str) -> None:
+        nonlocal run_dir_hint
+        if run_dir_hint is None:
+            run_dir_hint = _resolve_run_dir_hint(line)
+        event_queue.put(_line_to_event(line))
+
+    code = pump_text_subprocess_output(
+        proc=proc,
+        handle_line=_handle_line,
+        handle_error=lambda exc: event_queue.put({"type": "error", "code": 1, "detail": str(exc)}),
+    )
+
+    run_dir: Optional[Path] = None
+    if run_dir_hint:
         try:
-            code = proc.wait()
-        except Exception:
-            try:
-                code = proc.poll()
-            except Exception:
-                code = 1
-        if code is None:
-            code = 1
-
-        run_dir: Optional[Path] = None
-        if run_dir_hint:
-            try:
-                candidate = Path(run_dir_hint).expanduser()
-                run_dir = (
-                    candidate.resolve()
-                    if candidate.is_absolute()
-                    else (ROOT / candidate).resolve()
-                )
-            except Exception:
-                run_dir = None
-
-        if code == 0 and run_dir is None:
-            try:
-                run_dir = resolve_latest_run_dir()
-            except Exception:
-                run_dir = None
-
-        if code == 0 and run_dir is not None:
-            best = read_best_sharpe_from_run(run_dir) if run_dir is not None else None
-            event_queue.put(
-                {
-                    "type": "final",
-                    "run_dir": str(run_dir.resolve()),
-                    "sharpe_best": None if best is None else float(best),
-                }
+            candidate = Path(run_dir_hint).expanduser()
+            run_dir = (
+                candidate.resolve()
+                if candidate.is_absolute()
+                else (ROOT / candidate).resolve()
             )
+        except Exception:
+            run_dir = None
 
-        event_queue.put({"type": "status", "msg": "exit", "code": int(code)})
-        event_queue.put({"type": "__complete__"})
+    if code == 0 and run_dir is None:
+        try:
+            run_dir = resolve_latest_run_dir()
+        except Exception:
+            run_dir = None
+
+    if code == 0 and run_dir is not None:
+        best = read_best_sharpe_from_run(run_dir) if run_dir is not None else None
+        event_queue.put(
+            {
+                "type": "final",
+                "run_dir": str(run_dir.resolve()),
+                "sharpe_best": None if best is None else float(best),
+            }
+        )
+
+    event_queue.put({"type": "status", "msg": "exit", "code": int(code)})
+    event_queue.put({"type": "__complete__"})
 
 
 async def _forward_events(
     job_id: str,
     event_queue: Any,
     client_queue: Queue,
+    controller: DashboardJobController | None = None,
 ) -> None:
-    loop = asyncio.get_running_loop()
-    log_handle = None
-
-    def _log_line(line: str) -> None:
-        nonlocal log_handle
-        if not isinstance(line, str):
-            return
-        activity = STATE.get_activity(job_id) or {}
-        log_path = activity.get("log_path")
-        if not isinstance(log_path, str):
-            return
-        try:
-            if log_handle is None:
-                Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-                log_handle = open(log_path, "a", encoding="utf-8")
-            if line.endswith("\n"):
-                log_handle.write(line)
-            else:
-                log_handle.write(line + "\n")
-            log_handle.flush()
-        except Exception:
-            pass
-
-    def _touch_activity(**updates: Any) -> None:
-        STATE.update_activity(job_id, updated_at=time.time(), **updates)
-
-    try:
-        while True:
-            item = await loop.run_in_executor(None, event_queue.get)
-            if not isinstance(item, dict):
-                break
-            event_type = item.get("type")
-            raw_line = item.get("raw") if isinstance(item, dict) else None
-            if event_type == "__complete__":
-                break
-            _touch_activity()
-            if event_type == "log":
-                if isinstance(raw_line, str):
-                    text = raw_line.strip()
-                    if text:
-                        _touch_activity(last_message=text)
-            elif event_type == "progress":
-                data = item.get("data")
-                subtype = item.get("subtype") or (
-                    data.get("type") if isinstance(data, dict) else None
-                )
-                if subtype == "gen_progress" and isinstance(data, dict):
-                    _touch_activity(progress=data)
-                elif subtype == "gen_summary" and isinstance(data, dict):
-                    meta = STATE.meta.get(job_id)
-                    if isinstance(meta, dict):
-                        history = meta.setdefault("gen_history", [])
-                        history.append(data)
-                        # keep history bounded to avoid runaway memory use
-                        if len(history) > 2000:
-                            del history[0 : len(history) - 2000]
-                    STATE.append_activity_summary(job_id, data)
-                    _touch_activity(progress=data)
-            elif event_type == "gen_summary":
-                data = item.get("data")
-                if isinstance(data, dict):
-                    meta = STATE.meta.get(job_id)
-                    if isinstance(meta, dict):
-                        history = meta.setdefault("gen_history", [])
-                        history.append(data)
-                        if len(history) > 2000:
-                            del history[0 : len(history) - 2000]
-                    STATE.append_activity_summary(job_id, data)
-                    _touch_activity(progress=data)
-            elif event_type == "score":
-                sharpe = item.get("sharpe_best")
-                try:
-                    value = float(sharpe)
-                except (TypeError, ValueError):
-                    value = None
-                if value is not None:
-                    _touch_activity(sharpe_best=value)
-            elif event_type == "status":
-                msg = item.get("msg")
-                if msg == "exit":
-                    try:
-                        code = int(item.get("code", 1))
-                    except Exception:
-                        code = 1
-                    success = code == 0
-                    _touch_activity(
-                        status="complete" if success else "error",
-                        last_message="Pipeline finished."
-                        if success
-                        else "Pipeline stopped.",
-                    )
-                    if not success:
-                        STATE.pop_meta(job_id)
-                elif isinstance(msg, str):
-                    mapped = "Pipeline started." if msg == "started" else msg
-                    _touch_activity(status="running", last_message=mapped)
-            elif event_type == "error":
-                detail = item.get("detail")
-                if isinstance(detail, str) and detail.strip():
-                    message = detail
-                    _log_line(detail)
-                else:
-                    message = "Pipeline error."
-                _touch_activity(status="error", last_message=message)
-            elif event_type == "final":
-                context = STATE.pop_meta(job_id)
-                history = None
-                if isinstance(context, dict):
-                    history = context.pop("gen_history", None)
-                if context:
-                    try:
-                        run_path = Path(item["run_dir"]).resolve()
-                        meta_dir = run_path / "meta"
-                        meta_dir.mkdir(exist_ok=True)
-                        context_out = dict(context)
-                        context_out["run_dir"] = str(run_path)
-                        with open(
-                            meta_dir / "ui_context.json", "w", encoding="utf-8"
-                        ) as fh:
-                            json.dump(context_out, fh, indent=2)
-                        if history:
-                            with open(
-                                meta_dir / "gen_summary.jsonl", "w", encoding="utf-8"
-                            ) as fh_hist:
-                                for entry in history:
-                                    fh_hist.write(json.dumps(entry))
-                                    fh_hist.write("\n")
-                    except Exception:
-                        pass
-                run_dir = item.get("run_dir")
-                if isinstance(run_dir, str) and run_dir.strip():
-                    _touch_activity(run_dir=run_dir.strip())
-                sharpe = item.get("sharpe_best")
-                try:
-                    value = float(sharpe)
-                except (TypeError, ValueError):
-                    value = None
-                if value is not None:
-                    _touch_activity(sharpe_best=value)
-                _touch_activity(status="complete")
-            if isinstance(raw_line, str):
-                STATE.add_log(job_id, raw_line)
-                if raw_line:
-                    _log_line(raw_line)
-            try:
-                client_queue.put_nowait(json.dumps(item))
-            except Exception:
-                pass
-    finally:
-        STATE.clear_handle(job_id)
-        if log_handle is not None:
-            try:
-                log_handle.close()
-            except Exception:
-                pass
+    resolved_controller = controller or get_dashboard_jobs()
+    await forward_pipeline_events(
+        controller=resolved_controller,
+        job_id=job_id,
+        event_queue=event_queue,
+        client_queue=client_queue,
+        cleanup_delay_seconds=JOB_STATE_RETENTION_SECONDS,
+    )
 
 
 @csrf_exempt
@@ -580,9 +332,10 @@ async def start_pipeline_run(request: HttpRequest):
     dataset = (payload_dict.get("dataset") or "").strip().lower()
     cfg_path = payload_dict.get("config")
     if cfg_path:
-        path_obj = Path(str(cfg_path))
-        if not path_obj.exists():
-            return json_error(f"Config not found: {path_obj}", 404)
+        resolved_cfg = resolve_config_path(str(cfg_path))
+        if resolved_cfg is None:
+            return json_error(f"Config not found: {cfg_path}", 404)
+        payload_dict["config"] = str(resolved_cfg)
     elif dataset and not resolve_dataset_preset(dataset):
         return json_error(
             "Unknown dataset; use dataset=sp500, dataset=sp500_small, or provide a config path",
@@ -591,167 +344,53 @@ async def start_pipeline_run(request: HttpRequest):
 
     cli_args = build_pipeline_args(payload_dict, include_runner=False)
     full_args = build_pipeline_args(payload_dict, include_runner=True)
-
-    import uuid as _uuid
-
-    job_id = str(_uuid.uuid4())
-    client_queue = STATE.new_queue(job_id)
-
-    submitted_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    ui_context = {
-        "job_id": job_id,
-        "submitted_at": submitted_at,
-        "payload": payload_dict,
-        "pipeline_args": full_args,
-    }
-    STATE.set_meta(job_id, ui_context)
-    STATE.init_activity(
-        job_id,
-        {
-            "status": "running",
-            "last_message": "Pipeline started.",
-            "sharpe_best": None,
-            "progress": None,
-            "summaries": [],
-            "updated_at": time.time(),
-        },
+    controller = get_dashboard_jobs()
+    job = initialize_pipeline_job(
+        controller=controller,
+        root_dir=ROOT,
+        payload_dict=payload_dict,
+        full_args=full_args,
     )
-
-    client_queue.put_nowait(
-        json.dumps({"type": "status", "msg": "started", "args": full_args})
-    )
-
-    log_dir = ROOT / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file_path = log_dir / f"pipeline_{job_id}.log"
-    STATE.update_activity(job_id, log_path=str(log_file_path))
-
-    requested_mode = _normalize_runner_mode(
-        payload_dict.get("runner_mode") or os.environ.get("AE_DASHBOARD_RUNNER_MODE")
-    )
-    resolved_mode = requested_mode
-    if requested_mode == "auto":
-        resolved_mode = (
-            "multiprocessing" if _multiprocessing_available() else "subprocess"
-        )
-    if resolved_mode not in {"multiprocessing", "subprocess"}:
-        return json_error(
-            "runner_mode must be one of: auto, multiprocessing, subprocess", 400
-        )
-
-    STATE.update_activity(job_id, runner_mode=resolved_mode)
-
-    def _mark_stop_requested() -> None:
-        STATE.update_activity(
-            job_id, updated_at=time.time(), last_message="Stop requested…"
-        )
-
-    proc: Any
-    event_queue: Any
-
-    def _start_subprocess_runner() -> tuple[
-        subprocess.Popen[str], "queue_mod.Queue[dict[str, Any]]"
-    ]:
-        q: "queue_mod.Queue[dict[str, Any]]" = queue_mod.Queue()
-        cmd = _build_subprocess_command(cli_args)
-        env = os.environ.copy()
-        env.setdefault("PIPELINE_JOB_ID", job_id)
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        p = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            env=env,
-        )
-        t = threading.Thread(
-            target=_pump_subprocess_output,
-            kwargs={"job_id": job_id, "proc": p, "event_queue": q},
-            daemon=True,
-        )
-        t.start()
-        return p, q
 
     try:
-        if resolved_mode == "multiprocessing":
-            try:
-                ctx = mp.get_context("spawn")
-                event_queue = ctx.Queue()
-                worker_fn = _pipeline_worker
-                worker_args: tuple[Any, ...] = (cli_args, str(ROOT), event_queue)
-                if worker_fn is _PIPELINE_WORKER_DEFAULT:
-                    worker_args += (job_id,)
-                proc = ctx.Process(target=worker_fn, args=worker_args)
-                proc.start()
-            except Exception as exc:
-                if requested_mode != "auto":
-                    raise
-                STATE.update_activity(
-                    job_id,
-                    runner_mode="subprocess",
-                    last_message=f"Falling back to subprocess runner ({exc}).",
-                )
-                resolved_mode = "subprocess"
-                proc, event_queue = _start_subprocess_runner()
-        else:
-            proc, event_queue = _start_subprocess_runner()
+        launch = launch_pipeline_job(
+            PipelineLaunchRequest(
+                controller=controller,
+                job=job,
+                cli_args=cli_args,
+                requested_mode_raw=payload_dict.get("runner_mode")
+                or os.environ.get("AE_DASHBOARD_RUNNER_MODE"),
+                root_dir=ROOT,
+                pipeline_worker=_pipeline_worker,
+                build_subprocess_command=_build_subprocess_command,
+                pump_subprocess_output=_pump_subprocess_output,
+                mp_context_getter=lambda: mp.get_context("spawn"),
+            )
+        )
+    except ValueError as exc:
+        controller.clear_job(job.job_id)
+        return json_error(str(exc), 400)
     except Exception as exc:
         # Fail fast but keep a JSON error payload for the UI.
-        STATE.clear_handle(job_id)
-        STATE.activity.pop(job_id, None)
-        STATE.meta.pop(job_id, None)
-        STATE.logs.pop(job_id, None)
-        STATE.queues.pop(job_id, None)
+        controller.clear_job(job.job_id)
         return json_error(
-            f"Failed to start pipeline runner ({resolved_mode}): {exc}", 500
+            f"Failed to start pipeline runner: {exc}", 500
         )
 
     forward_task = asyncio.create_task(
-        _forward_events(job_id, event_queue, client_queue)
+        _forward_events(job.job_id, launch.event_queue, job.client_queue, controller=controller)
     )
 
-    def _stop() -> None:
-        _mark_stop_requested()
-        try:
-            if resolved_mode == "multiprocessing":
-                if getattr(proc, "is_alive", lambda: False)():
-                    proc.terminate()
-                try:
-                    event_queue.put_nowait({"type": "status", "msg": "exit", "code": 1})
-                    event_queue.put_nowait({"type": "__complete__"})
-                except Exception:
-                    pass
-                return
-            # subprocess runner
-            if hasattr(proc, "poll") and proc.poll() is None:
-                proc.terminate()
+    controller.set_handle(
+        job.job_id,
+        JobHandle(proc=launch.proc, task=forward_task, stop_cb=launch.stop_cb),
+    )
 
-                def _kill_after_timeout(p: subprocess.Popen[str]) -> None:
-                    time.sleep(5)
-                    try:
-                        if p.poll() is None:
-                            p.kill()
-                    except Exception:
-                        pass
-
-                threading.Thread(
-                    target=_kill_after_timeout, args=(proc,), daemon=True
-                ).start()
-        except Exception:
-            pass
-
-    STATE.set_handle(job_id, JobHandle(proc=proc, task=forward_task, stop_cb=_stop))
-
-    return json_response({"job_id": job_id})
+    return json_response({"job_id": job.job_id})
 
 
 def sse_events(request: HttpRequest, job_id: str):
-    queue = STATE.get_queue(job_id)
+    queue = get_dashboard_jobs().get_queue(job_id)
     if queue is None:
         return json_error("Unknown job id", 404)
     from ..helpers import make_sse_response
@@ -763,10 +402,11 @@ def sse_events(request: HttpRequest, job_id: str):
 async def stop(request: HttpRequest, job_id: str):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
-    ok = STATE.stop(job_id)
+    controller = get_dashboard_jobs()
+    ok = controller.stop(job_id)
     if not ok:
         return json_error("Unknown job id or already stopped", 404)
-    q = STATE.get_queue(job_id)
+    q = controller.get_queue(job_id)
     if q is not None:
         try:
             q.put_nowait(json.dumps({"type": "status", "msg": "stop_requested"}))

@@ -5,13 +5,14 @@ from pathlib import Path
 
 from django.http import HttpRequest, HttpResponse
 
+from .job_controller import get_dashboard_jobs
 from .helpers import PIPELINE_DIR, ROOT
-from .jobs import STATE
 
 
 def metrics(_request: HttpRequest):
-    jobs_total = len(STATE.handles)
-    jobs_running = sum(1 for handle in STATE.handles.values() if handle.is_running())
+    job_counts = get_dashboard_jobs().summarize_counts()
+    jobs_total = job_counts["jobs_total"]
+    jobs_running = job_counts["jobs_running"]
     runs_total = len([p for p in PIPELINE_DIR.glob("run_*") if p.is_dir()])
 
     lines: list[str] = []

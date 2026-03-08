@@ -1,6 +1,8 @@
 import logging
 import json
 from alpha_evolve.cli.pipeline import parse_args
+from alpha_evolve.cli.pipeline import PipelineOptions, run_pipeline_programmatic
+from alpha_evolve.config import BacktestConfig, EvolutionConfig
 
 
 def test_parse_args_defaults():
@@ -60,3 +62,20 @@ def test_write_summary_json_without_csv(tmp_path):
     assert payload["backtested_alphas"] == 0
     assert payload["backtest_summary_csv"] is None
     assert payload["note"].startswith("No valid programmes")
+
+
+def test_run_pipeline_programmatic_dry_run_does_not_create_run_artifacts(tmp_path):
+    output_dir = tmp_path / "pipeline_runs_cs"
+    evo_cfg = EvolutionConfig(generations=2, data_dir="tests/data/good")
+    bt_cfg = BacktestConfig(data_dir="tests/data/good")
+
+    run_dir = run_pipeline_programmatic(
+        evo_cfg,
+        bt_cfg,
+        PipelineOptions(dry_run=True, output_dir=str(output_dir)),
+    )
+
+    assert run_dir.parent == output_dir
+    assert not run_dir.exists()
+    assert not output_dir.exists()
+    assert not (output_dir / "LATEST").exists()

@@ -54,3 +54,30 @@ async def test_run_assets_respects_prefix(dashboard):
 async def test_run_assets_rejects_traversal_prefix(dashboard):
     resp = await dashboard.client.get("/api/run-assets", params={"run_dir": "run_demo", "prefix": "../../"})
     assert resp.status_code == 400
+
+
+async def test_run_assets_sorts_before_limiting(dashboard, monkeypatch: pytest.MonkeyPatch):
+    (dashboard.run_dir / "meta" / "z_last.json").write_text("{}", encoding="utf-8")
+    (dashboard.run_dir / "aaa_first.log").write_text("ok\n", encoding="utf-8")
+    (dashboard.run_dir / "zzz_last.log").write_text("ok\n", encoding="utf-8")
+
+    original_rglob = Path.rglob
+
+    def fake_rglob(self: Path, pattern: str):
+        if self == dashboard.run_dir and pattern == "*":
+            return iter(
+                [
+                    dashboard.run_dir / "zzz_last.log",
+                    dashboard.run_dir / "meta" / "ui_context.json",
+                    dashboard.run_dir / "aaa_first.log",
+                ]
+            )
+        return original_rglob(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", fake_rglob)
+
+    resp = await dashboard.client.get(
+        "/api/run-assets", params={"run_dir": "run_demo", "limit": 2}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["items"] == ["aaa_first.log", "meta/ui_context.json"]
