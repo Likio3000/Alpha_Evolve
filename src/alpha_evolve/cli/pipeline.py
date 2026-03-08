@@ -573,8 +573,6 @@ def run_pipeline_programmatic(
     logger = logging.getLogger(__name__)
 
     base_output_dir = _resolve_output_dir(opts.output_dir)
-    base_output_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["AE_PIPELINE_DIR"] = str(base_output_dir)
 
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
     codename = _generate_run_codename()
@@ -592,8 +590,20 @@ def run_pipeline_programmatic(
             / f"run_{codename}_g{evo_cfg.generations}_seed{evo_cfg.seed}_"
             f"{evo_cfg.max_lookback_data_option}_{run_stamp}"
         )
-    run_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Run codename: %s", codename)
+
+    if opts.dry_run:
+        logger.info(
+            "Dry run: would evolve %d generations and backtest top %d; outputs → %s",
+            evo_cfg.generations,
+            bt_cfg.top_to_backtest,
+            run_dir,
+        )
+        return run_dir
+
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["AE_PIPELINE_DIR"] = str(base_output_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
     try:
         ckpt_gens = []
         for g in getattr(evo_cfg, "checkpoint_gens", ()) or ():
@@ -665,27 +675,6 @@ def run_pipeline_programmatic(
             logger.warning("Failed to update LATEST pointer", exc_info=True)
     except Exception:
         logger.warning("Failed to save run metadata.")
-
-    if opts.dry_run:
-        logger.info(
-            "Dry run: would evolve %d generations and backtest top %d; outputs → %s",
-            evo_cfg.generations,
-            bt_cfg.top_to_backtest,
-            run_dir,
-        )
-        try:
-            with open(run_dir / "README.txt", "w") as fh:
-                fh.write(
-                    f"Alpha Evolve Pipeline (dry run)\n\n"
-                    f"Run directory: {run_dir}\n"
-                    f"Run codename: {codename}\n"
-                    f"Generations: {evo_cfg.generations}\n"
-                    f"Data: {bt_cfg.data_dir}\n"
-                    f"Backtest top: {bt_cfg.top_to_backtest}\n"
-                )
-        except Exception:
-            pass
-        return run_dir
 
     try:
         pickle_path, hof_count = _evolve_and_save(evo_cfg, run_dir)

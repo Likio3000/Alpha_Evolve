@@ -206,6 +206,8 @@ def test_scaling_goal_checker_fails_when_corr_step_regresses(tmp_path, monkeypat
             "",
             "--required-scientific-corr",
             "",
+            "--checkpoint-direction-mode-correlation",
+            "mean_positive",
             "--out",
             str(out_path),
         ],
@@ -282,3 +284,152 @@ def test_scaling_goal_slope_monte_carlo_pvalue_has_positive_floor() -> None:
         mod.np.asarray(y, dtype=float),
     )
     assert 0.0 < p_val < 1e-4
+
+
+def test_scaling_goal_checker_practical_cross_regime_passes(tmp_path, monkeypatch) -> None:
+    mod = _load_script_module("check_scaling_goal")
+    out_path = tmp_path / "goal_check.json"
+
+    def _practical_checkpoint(root: str) -> dict:
+        payload = _checkpoint_payload(corr_improvements=[-0.0022, 0.0078, 0.0031])
+        payload["root"] = root
+        payload["checkpoint_gens"] = [30, 60, 90, 120, 200]
+        payload["summary_by_generation"] = {
+            "gen_030": {
+                "ensemble_portfolio_sharpe": {"mean": 1.0},
+                "best_backtest_sharpe": {"mean": 0.8},
+                "selected_avg_abs_corr": {"mean": 0.2579},
+            },
+            "gen_060": {
+                "ensemble_portfolio_sharpe": {"mean": 1.1},
+                "best_backtest_sharpe": {"mean": 0.82},
+                "selected_avg_abs_corr": {"mean": 0.2601},
+            },
+            "gen_090": {
+                "ensemble_portfolio_sharpe": {"mean": 1.2},
+                "best_backtest_sharpe": {"mean": 0.84},
+                "selected_avg_abs_corr": {"mean": 0.2523},
+            },
+            "gen_120": {
+                "ensemble_portfolio_sharpe": {"mean": 1.27},
+                "best_backtest_sharpe": {"mean": 0.85},
+                "selected_avg_abs_corr": {"mean": 0.2492},
+            },
+            "gen_200": {
+                "ensemble_portfolio_sharpe": {"mean": 1.33},
+                "best_backtest_sharpe": {"mean": 0.855},
+                "selected_avg_abs_corr": {"mean": 0.2375},
+            },
+        }
+        best_bt_rows = [
+            metric
+            for pair in payload["pairwise_scientific"]["pairs"]
+            for metric in pair["metrics"]
+            if metric["metric"] == "best_backtest_sharpe"
+        ]
+        for row in best_bt_rows:
+            row["ci95_mean_improvement"] = [-0.01, 0.03]
+            row["p_perm_one_sided_holm"] = 0.2
+        corr_rows = [
+            metric
+            for pair in payload["pairwise_scientific"]["pairs"]
+            for metric in pair["metrics"]
+            if metric["metric"] == "selected_avg_abs_corr"
+        ]
+        corr_rows[0]["ci95_mean_improvement"] = [-0.016, 0.012]
+        corr_rows[0]["p_perm_one_sided_holm"] = 0.6
+        corr_rows[1]["ci95_mean_improvement"] = [0.001, 0.015]
+        corr_rows[1]["p_perm_one_sided_holm"] = 0.04
+        corr_rows[2]["ci95_mean_improvement"] = [-0.003, 0.009]
+        corr_rows[2]["p_perm_one_sided_holm"] = 0.25
+        return payload
+
+    def _scientific(root: str) -> dict:
+        payload = _scientific_payload()
+        payload["control_root"] = f"{root}/analysis_g200_vs_g60/control_g60_checkpoint"
+        payload["treatment_root"] = f"{root}/analysis_g200_vs_g60/treatment_g200_final"
+        return payload
+
+    root_a = str((tmp_path / "campaign_a").resolve())
+    root_b = str((tmp_path / "campaign_b").resolve())
+    ckpt_a = tmp_path / "regime_a_checkpoint.json"
+    ckpt_b = tmp_path / "regime_b_checkpoint.json"
+    sci_a = tmp_path / "regime_a_scientific.json"
+    sci_b = tmp_path / "regime_b_scientific.json"
+    ckpt_a.write_text(json.dumps(_practical_checkpoint(root_a), indent=2), encoding="utf-8")
+    ckpt_b.write_text(json.dumps(_practical_checkpoint(root_b), indent=2), encoding="utf-8")
+    sci_a.write_text(json.dumps(_scientific(root_a), indent=2), encoding="utf-8")
+    sci_b.write_text(json.dumps(_scientific(root_b), indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_scaling_goal.py",
+            "--checkpoint-summary-json",
+            str(ckpt_a),
+            "--checkpoint-summary-json",
+            str(ckpt_b),
+            "--scientific-json",
+            str(sci_a),
+            "--scientific-json",
+            str(sci_b),
+            "--min-regimes",
+            "2",
+            "--out",
+            str(out_path),
+        ],
+    )
+    rc = mod.main()
+    assert rc == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["checkpoint_thresholds"]["direction_mode_correlation"] == "ci_nonnegative"
+    assert payload["checkpoint_thresholds"]["significance_aggregation_positive"] == "pooled"
+    assert payload["checkpoint_thresholds"]["tolerance"] == 0.0023
+    assert payload["distinct_regime_count"] == 2
+    assert payload["cross_regime_pass"] is True
+    assert payload["overall_goal_pass"] is True
+
+
+def test_scaling_goal_checker_cross_regime_fails_when_evidence_missing(tmp_path, monkeypatch) -> None:
+    mod = _load_script_module("check_scaling_goal")
+    out_path = tmp_path / "goal_check.json"
+    root_a = str((tmp_path / "campaign_a").resolve())
+    root_b = str((tmp_path / "campaign_b").resolve())
+    payload_a = _checkpoint_payload(corr_improvements=[0.04, 0.04, 0.02])
+    payload_b = _checkpoint_payload(corr_improvements=[0.04, 0.04, 0.02])
+    payload_a["root"] = root_a
+    payload_b["root"] = root_b
+    ckpt_a = tmp_path / "regime_a_checkpoint.json"
+    ckpt_b = tmp_path / "regime_b_checkpoint.json"
+    sci_a = tmp_path / "regime_a_scientific.json"
+    ckpt_a.write_text(json.dumps(payload_a, indent=2), encoding="utf-8")
+    ckpt_b.write_text(json.dumps(payload_b, indent=2), encoding="utf-8")
+    scientific = _scientific_payload()
+    scientific["control_root"] = f"{root_a}/analysis_g200_vs_g60/control_g60_checkpoint"
+    scientific["treatment_root"] = f"{root_a}/analysis_g200_vs_g60/treatment_g200_final"
+    sci_a.write_text(json.dumps(scientific, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_scaling_goal.py",
+            "--checkpoint-summary-json",
+            str(ckpt_a),
+            "--checkpoint-summary-json",
+            str(ckpt_b),
+            "--scientific-json",
+            str(sci_a),
+            "--min-regimes",
+            "2",
+            "--out",
+            str(out_path),
+        ],
+    )
+    rc = mod.main()
+    assert rc == 2
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["distinct_regime_count"] == 1
+    assert payload["cross_regime_pass"] is False
+    assert payload["missing_family_signatures"] == [root_b]

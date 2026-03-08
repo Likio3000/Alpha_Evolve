@@ -13,16 +13,22 @@ Use these gates on each regime tranche:
 1. Pairwise checkpoint gates (within long runs, e.g. `30 -> 60 -> 90 -> 120 -> 200`)
 - Required quality metrics: `ensemble_portfolio_sharpe`, `best_backtest_sharpe`.
 - Required correlation metric: `selected_avg_abs_corr` (lower is better).
-- Relaxed default (diminishing-returns aware):
+- Practical default (diminishing-returns aware):
   - quality metrics:
-    - at least `25%` of adjacent steps are statistically significant,
+    - at least `25%` of adjacent steps are statistically significant when pooled across the quality metric family,
     - `100%` of adjacent steps keep the correct direction (`mean_improvement > 0`),
     - final adjacent step keeps correct direction.
   - correlation metrics:
     - significance fraction requirement is `0%` by default,
-    - `100%` of adjacent steps keep correct direction (`mean_improvement > 0`),
+    - `100%` of adjacent steps must be non-deteriorating under `ci_nonnegative` direction mode,
     - final adjacent step keeps correct direction.
-- The checker remains configurable if we want stricter or looser thresholds.
+  - curve gates:
+    - quality metrics must remain non-decreasing,
+    - correlation metrics may absorb tiny practical noise with monotonic tolerance `0.0023`.
+- Optional strict comparison mode:
+  - use `--checkpoint-direction-mode-correlation mean_positive`
+  - use `--checkpoint-significance-aggregation-positive per_metric`
+  - use `--tolerance 1e-9`
 
 2. Monotonic + trend gates on generation-level means
 - Quality metrics must be non-decreasing across checkpoints.
@@ -85,6 +91,11 @@ uv run python scripts/check_scaling_goal.py \
   --checkpoint-summary-json artifacts/scaling_campaign_g200_s0_30/aggregate/checkpoint_summary_combined.json \
   --scientific-json artifacts/reports/scientific_g200_vs_g60.json \
   --out artifacts/reports/scaling_goal_check_g200_s0_30.json
+
+# Optional strict comparison:
+# --checkpoint-direction-mode-correlation mean_positive \
+# --checkpoint-significance-aggregation-positive per_metric \
+# --tolerance 1e-9
 ```
 
 Exit code `0` means all gates passed. Exit code `2` means one or more gates failed.

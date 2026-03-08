@@ -12,6 +12,10 @@ import asyncio
 import mimetypes
 from concurrent.futures import ThreadPoolExecutor
 from alpha_evolve.config.model import EvolutionConfig, BacktestConfig
+from alpha_evolve.utils.run_artifacts import (
+    resolve_latest_run_dir as resolve_latest_pipeline_run_dir,
+    select_backtest_summary_csv,
+)
 
 from django.http import HttpResponse, StreamingHttpResponse
 
@@ -37,10 +41,9 @@ PIPELINE_DIR: Path = _compute_pipeline_dir()
 
 def read_best_sharpe_from_run(run_dir: Path) -> Optional[float]:
     bt_dir = run_dir / "backtest_portfolio_csvs"
-    candidates = sorted(bt_dir.glob("backtest_summary_top*.csv"))
-    if not candidates:
+    csv_path = select_backtest_summary_csv(bt_dir)
+    if csv_path is None:
         return None
-    csv_path = candidates[-1]
     try:
         import csv
 
@@ -60,25 +63,24 @@ def read_best_sharpe_from_run(run_dir: Path) -> Optional[float]:
 
 
 def resolve_latest_run_dir() -> Optional[Path]:
-    latest = PIPELINE_DIR / "LATEST"
-    try:
-        if latest.exists():
-            p = latest.read_text().strip()
-            if p:
-                raw_path = Path(p)
-                candidates = []
-                if raw_path.is_absolute():
-                    candidates.append(raw_path.resolve())
-                else:
-                    candidates.append((ROOT / raw_path).resolve())
-                    parts = raw_path.parts
-                    if not parts or parts[0] != PIPELINE_DIR.name:
-                        candidates.append((PIPELINE_DIR / raw_path).resolve())
-                for run_path in candidates:
-                    if run_path.exists():
-                        return run_path
-    except Exception:
-        return None
+    return resolve_latest_pipeline_run_dir(PIPELINE_DIR, project_root=ROOT)
+
+
+def resolve_config_path(config_path: str | os.PathLike[str]) -> Optional[Path]:
+    raw_path = Path(config_path).expanduser()
+    candidates: list[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path.resolve())
+    else:
+        candidates.append((ROOT / raw_path).resolve())
+        candidates.append((Path.cwd() / raw_path).resolve())
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate
     return None
 
 

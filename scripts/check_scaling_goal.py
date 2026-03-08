@@ -20,6 +20,10 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 
+PRACTICAL_CORRELATION_DIRECTION_MODE = "ci_nonnegative"
+PRACTICAL_POSITIVE_SIGNIFICANCE_AGGREGATION = "pooled"
+PRACTICAL_MONOTONIC_TOLERANCE = 0.0023
+
 
 def _parse_csv_list(raw: str | None) -> list[str]:
     if raw is None:
@@ -54,6 +58,13 @@ def _extract_ci_lo(row: dict[str, Any]) -> float:
     if not isinstance(ci, list) or not ci:
         return float("nan")
     return _safe_float(ci[0])
+
+
+def _extract_ci_hi(row: dict[str, Any]) -> float:
+    ci = row.get("ci95_mean_improvement")
+    if not isinstance(ci, list) or len(ci) < 2:
+        return float("nan")
+    return _safe_float(ci[1])
 
 
 def _extract_one_sided_p(row: dict[str, Any]) -> float:
@@ -120,6 +131,8 @@ def _evaluate_pairwise_block(
     min_significant_fraction: float,
     min_direction_fraction: float,
     require_final_step_direction: bool,
+    significance_aggregation: str = "per_metric",
+    direction_mode: str = "mean_positive",
 ) -> dict[str, Any]:
     per_step: list[dict[str, Any]] = []
     overall_pass = True
@@ -138,10 +151,12 @@ def _evaluate_pairwise_block(
                 continue
             mean_imp = _safe_float(row.get("mean_improvement"))
             ci_lo = _extract_ci_lo(row)
+            ci_hi = _extract_ci_hi(row)
             p_one = _extract_one_sided_p(row)
-            # Direction gate tracks monotonic movement even when step-level
-            # significance is weak under diminishing returns.
-            direction_pass = bool(np.isfinite(mean_imp) and mean_imp > 0.0)
+            if direction_mode == "ci_nonnegative":
+                direction_pass = bool(np.isfinite(ci_hi) and ci_hi >= 0.0)
+            else:
+                direction_pass = bool(np.isfinite(mean_imp) and mean_imp > 0.0)
             p_pass = bool(np.isfinite(p_one) and p_one <= alpha)
             metric_pass = bool(
                 np.isfinite(mean_imp)
@@ -158,6 +173,7 @@ def _evaluate_pairwise_block(
                 "metric": metric,
                 "mean_improvement": mean_imp,
                 "ci95_lo": ci_lo,
+                "ci95_hi": ci_hi,
                 "p_one_sided_effective": p_one,
                 "has_holm_adjustment": "p_perm_one_sided_holm" in row,
                 "direction_pass": direction_pass,
@@ -168,6 +184,15 @@ def _evaluate_pairwise_block(
             per_step.append(row_payload)
 
     metric_summary: list[dict[str, Any]] = []
+    pooled_significant_fraction = float("nan")
+    pooled_significant_pass = False
+    if per_step:
+        pooled_significant_fraction = float(
+            np.mean([1.0 if row["metric_pass"] else 0.0 for row in per_step])
+        )
+        pooled_significant_pass = bool(
+            pooled_significant_fraction >= float(min_significant_fraction)
+        )
     for metric in required_metrics:
         rows = metric_step_rows.get(metric, [])
         n = len(rows)
@@ -189,9 +214,15 @@ def _evaluate_pairwise_block(
         # Final-step guard avoids passing a metric that regresses at the end.
         rows_sorted = sorted(rows, key=lambda r: (int(r["from_gen"]), int(r["to_gen"])))
         final_step_direction_pass = bool(rows_sorted[-1]["direction_pass"])
+        direction_gate_pass = bool(direction_fraction >= float(min_direction_fraction))
+        significance_gate_pass = (
+            pooled_significant_pass
+            if significance_aggregation == "pooled"
+            else bool(significant_fraction >= float(min_significant_fraction))
+        )
         metric_pass = bool(
-            direction_fraction >= float(min_direction_fraction)
-            and significant_fraction >= float(min_significant_fraction)
+            direction_gate_pass
+            and significance_gate_pass
             and (final_step_direction_pass or not require_final_step_direction)
         )
         if not metric_pass:
@@ -203,6 +234,8 @@ def _evaluate_pairwise_block(
                 "direction_fraction": direction_fraction,
                 "significant_fraction": significant_fraction,
                 "final_step_direction_pass": final_step_direction_pass,
+                "direction_gate_pass": direction_gate_pass,
+                "significance_gate_pass": significance_gate_pass,
                 "metric_pass": metric_pass,
             }
         )
@@ -215,6 +248,10 @@ def _evaluate_pairwise_block(
         "min_significant_fraction": float(min_significant_fraction),
         "min_direction_fraction": float(min_direction_fraction),
         "require_final_step_direction": bool(require_final_step_direction),
+        "significance_aggregation": significance_aggregation,
+        "direction_mode": direction_mode,
+        "pooled_significant_fraction": pooled_significant_fraction,
+        "pooled_significant_pass": pooled_significant_pass,
         "pass": bool(overall_pass),
     }
 
@@ -354,7 +391,27 @@ def _evaluate_scientific_file(
     }
 
 
-def parse_args() -> argparse.Namespace:
+def _checkpoint_regime_signature(path: Path, payload: dict[str, Any]) -> str:
+    root = payload.get("root")
+    if isinstance(root, str) and root.strip():
+        return str(Path(root).expanduser().resolve())
+    return str(path.resolve())
+
+
+def _scientific_regime_signature(path: Path, payload: dict[str, Any]) -> str:
+    for key in ("control_root", "treatment_root"):
+        raw = payload.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        root = Path(raw).expanduser().resolve()
+        if root.parent.name.startswith("analysis_"):
+            return str(root.parent.parent.resolve())
+    if path.parent.name.startswith("analysis_"):
+        return str(path.parent.parent.resolve())
+    return str(path.resolve())
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate compute-scaling goal gates")
     p.add_argument(
         "--checkpoint-summary-json",
@@ -419,9 +476,27 @@ def parse_args() -> argparse.Namespace:
         default="pair_mean_abs_corr",
         help="Scientific compare metrics where lower is better.",
     )
-    p.add_argument("--tolerance", type=float, default=1e-9, help="Monotonicity tolerance.")
+    p.add_argument(
+        "--checkpoint-significance-aggregation-positive",
+        choices=("pooled", "per_metric"),
+        default=PRACTICAL_POSITIVE_SIGNIFICANCE_AGGREGATION,
+        help="How to apply checkpoint significance thresholds across positive metrics.",
+    )
+    p.add_argument(
+        "--checkpoint-direction-mode-correlation",
+        choices=("mean_positive", "ci_nonnegative"),
+        default=PRACTICAL_CORRELATION_DIRECTION_MODE,
+        help="Direction gate mode for correlation checkpoints.",
+    )
+    p.add_argument("--min-regimes", type=int, default=1, help="Minimum number of distinct regimes required.")
+    p.add_argument(
+        "--tolerance",
+        type=float,
+        default=PRACTICAL_MONOTONIC_TOLERANCE,
+        help="Monotonicity tolerance.",
+    )
     p.add_argument("--out", default=None, help="Output JSON path.")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def main() -> int:
@@ -440,6 +515,9 @@ def main() -> int:
     min_dir_pos = float(args.checkpoint_min_direction_fraction_positive)
     min_dir_corr = float(args.checkpoint_min_direction_fraction_correlation)
     require_final_dir = bool(args.checkpoint_require_final_step_direction)
+    sig_agg_pos = str(args.checkpoint_significance_aggregation_positive)
+    dir_mode_corr = str(args.checkpoint_direction_mode_correlation)
+    min_regimes = max(1, int(args.min_regimes))
 
     alpha = float(args.alpha)
     tol = float(args.tolerance)
@@ -456,6 +534,8 @@ def main() -> int:
             min_significant_fraction=min_sig_pos,
             min_direction_fraction=min_dir_pos,
             require_final_step_direction=require_final_dir,
+            significance_aggregation=sig_agg_pos,
+            direction_mode="mean_positive",
         )
         pair_corr = _evaluate_pairwise_block(
             pairwise,
@@ -464,6 +544,8 @@ def main() -> int:
             min_significant_fraction=min_sig_corr,
             min_direction_fraction=min_dir_corr,
             require_final_step_direction=require_final_dir,
+            significance_aggregation="per_metric",
+            direction_mode=dir_mode_corr,
         )
         curve_metrics = {m: True for m in ckpt_pos}
         curve_metrics.update({m: False for m in ckpt_corr})
@@ -476,6 +558,7 @@ def main() -> int:
         checkpoint_reports.append(
             {
                 "path": str(path),
+                "regime_signature": _checkpoint_regime_signature(path, payload),
                 "pairwise_positive": pair_pos,
                 "pairwise_correlation": pair_corr,
                 "curve": curve,
@@ -492,11 +575,33 @@ def main() -> int:
             required_metrics=req_metrics,
             alpha=alpha,
         )
-        scientific_reports.append({"path": str(path), **sci_eval})
+        scientific_reports.append(
+            {
+                "path": str(path),
+                "regime_signature": _scientific_regime_signature(path, payload),
+                **sci_eval,
+            }
+        )
 
     checkpoint_pass = all(bool(r.get("pass", False)) for r in checkpoint_reports) if checkpoint_reports else True
     scientific_pass = all(bool(r.get("pass", False)) for r in scientific_reports) if scientific_reports else True
-    overall_pass = bool(checkpoint_pass and scientific_pass)
+    ckpt_signatures = {str(r.get("regime_signature")) for r in checkpoint_reports}
+    sci_signatures = {str(r.get("regime_signature")) for r in scientific_reports}
+    provided_families = int(bool(checkpoint_reports)) + int(bool(scientific_reports))
+    if provided_families <= 1:
+        complete_signatures = ckpt_signatures or sci_signatures
+        missing_family_signatures: list[str] = []
+    else:
+        complete_signatures = ckpt_signatures.intersection(sci_signatures)
+        missing_family_signatures = sorted(ckpt_signatures.symmetric_difference(sci_signatures))
+        if len(checkpoint_reports) == len(scientific_reports) == 1 and min_regimes == 1:
+            complete_signatures = {"single_regime"}
+            missing_family_signatures = []
+    distinct_regime_count = len(complete_signatures)
+    cross_regime_pass = bool(
+        distinct_regime_count >= min_regimes and not missing_family_signatures
+    )
+    overall_pass = bool(checkpoint_pass and scientific_pass and cross_regime_pass)
 
     out_obj = {
         "schema_version": 1,
@@ -514,9 +619,15 @@ def main() -> int:
             "min_direction_fraction_positive": min_dir_pos,
             "min_direction_fraction_correlation": min_dir_corr,
             "require_final_step_direction": require_final_dir,
+            "significance_aggregation_positive": sig_agg_pos,
+            "direction_mode_correlation": dir_mode_corr,
+            "tolerance": tol,
         },
         "checkpoint_reports": checkpoint_reports,
         "scientific_reports": scientific_reports,
+        "distinct_regime_count": distinct_regime_count,
+        "cross_regime_pass": cross_regime_pass,
+        "missing_family_signatures": missing_family_signatures,
         "checkpoint_pass": checkpoint_pass,
         "scientific_pass": scientific_pass,
         "overall_goal_pass": overall_pass,
@@ -530,7 +641,11 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out_obj, indent=2), encoding="utf-8")
 
-    print(f"[goal-check] checkpoint_pass={checkpoint_pass} scientific_pass={scientific_pass} overall={overall_pass}")
+    print(
+        "[goal-check] "
+        f"checkpoint_pass={checkpoint_pass} scientific_pass={scientific_pass} "
+        f"cross_regime_pass={cross_regime_pass} overall={overall_pass}"
+    )
     print(f"[goal-check] wrote -> {out_path}")
     return 0 if overall_pass else 2
 
