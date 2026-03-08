@@ -25,6 +25,10 @@ from ..pipeline_runs import (
 )
 
 
+def _summary_csv(run_dir):
+    return pipeline_backtest_summary_csv(run_dir)
+
+
 def list_runs(request: HttpRequest):
     limit_param = request.GET.get("limit", "50")
     try:
@@ -46,7 +50,7 @@ def backtest_summary(request: HttpRequest):
         p = resolve_pipeline_run_dir(run_dir)
     except ValueError as exc:
         return json_error(str(exc), 400)
-    csv_path = pipeline_backtest_summary_csv(p)
+    csv_path = _summary_csv(p)
     if csv_path is None:
         return json_response([])
     try:
@@ -66,18 +70,16 @@ def alpha_timeseries(request: HttpRequest):
         p = resolve_pipeline_run_dir(run_dir)
     except ValueError as exc:
         return json_error(str(exc), 400)
-    summary_path = pipeline_backtest_summary_csv(p)
+    summary_path = _summary_csv(p)
     summary_exists = summary_path is not None and summary_path.exists()
+    if not summary_exists:
+        return json_response(build_pending_pipeline_timeseries_payload(), status=202)
 
     try:
         ts_path = resolve_pipeline_timeseries_file(run_dir=p, file=file, alpha_id=alpha_id)
     except FileNotFoundError:
-        if not summary_exists:
-            return json_response(build_pending_pipeline_timeseries_payload(), status=202)
         return json_error("Timeseries CSV not found", 404)
     if not ts_path.exists():
-        if not summary_exists:
-            return json_response(build_pending_pipeline_timeseries_payload(), status=202)
         return json_error("Timeseries CSV not found", 404)
     try:
         payload = build_pipeline_timeseries_payload(ts_path)
