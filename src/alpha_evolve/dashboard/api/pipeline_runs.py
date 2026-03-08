@@ -106,8 +106,8 @@ class PipelineBacktestSummaryRow:
 @dataclass(frozen=True)
 class PipelineTimeseriesPayload:
     date: list[str]
-    equity: list[float]
-    ret_net: list[float]
+    equity: list[float | None]
+    ret_net: list[float | None]
     pending: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,7 +247,12 @@ def resolve_pipeline_run_dir(
             resolved.relative_to(pipeline_root)
         except ValueError:
             continue
-        if resolved.exists():
+        if (
+            resolved.exists()
+            and resolved.is_dir()
+            and resolved != pipeline_root
+            and resolved.name.startswith("run_")
+        ):
             return resolved
     raise ValueError("run_dir must resolve under pipeline_runs_cs/")
 
@@ -360,20 +365,22 @@ def build_pending_pipeline_timeseries_payload() -> dict[str, Any]:
 
 def build_pipeline_timeseries_payload(ts_path: Path) -> dict[str, Any]:
     dates: list[str] = []
-    equity: list[float] = []
-    ret_net: list[float] = []
+    equity: list[float | None] = []
+    ret_net: list[float | None] = []
     with ts_path.open(newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             dates.append(str(row.get("date")))
             try:
-                equity.append(float(row.get("equity", "nan")))
+                value = float(row.get("equity", "nan"))
+                equity.append(None if value != value else value)
             except Exception:
-                equity.append(float("nan"))
+                equity.append(None)
             try:
-                ret_net.append(float(row.get("ret_net", "nan")))
+                value = float(row.get("ret_net", "nan"))
+                ret_net.append(None if value != value else value)
             except Exception:
-                ret_net.append(float("nan"))
+                ret_net.append(None)
     return PipelineTimeseriesPayload(date=dates, equity=equity, ret_net=ret_net).to_dict()
 
 

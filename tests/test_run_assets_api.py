@@ -56,6 +56,11 @@ async def test_run_assets_rejects_traversal_prefix(dashboard):
     assert resp.status_code == 400
 
 
+async def test_run_assets_rejects_pipeline_root(dashboard):
+    resp = await dashboard.client.get("/api/run-assets", params={"run_dir": "pipeline_runs_cs"})
+    assert resp.status_code == 400
+
+
 async def test_run_assets_sorts_before_limiting(dashboard, monkeypatch: pytest.MonkeyPatch):
     (dashboard.run_dir / "meta" / "z_last.json").write_text("{}", encoding="utf-8")
     (dashboard.run_dir / "aaa_first.log").write_text("ok\n", encoding="utf-8")
@@ -81,3 +86,21 @@ async def test_run_assets_sorts_before_limiting(dashboard, monkeypatch: pytest.M
     )
     assert resp.status_code == 200
     assert resp.json()["items"] == ["aaa_first.log", "meta/ui_context.json"]
+
+
+async def test_alpha_timeseries_serializes_invalid_numeric_values_as_null(dashboard):
+    (dashboard.run_dir / "backtest_portfolio_csvs" / "backtest_summary_top1.csv").write_text(
+        "AlphaID,TS\nAlpha_01,alpha_01.csv\n",
+        encoding="utf-8",
+    )
+    (dashboard.run_dir / "backtest_portfolio_csvs" / "alpha_01.csv").write_text(
+        "date,equity,ret_net\n2024-01-01,bad,0.1\n",
+        encoding="utf-8",
+    )
+
+    resp = await dashboard.client.get(
+        "/api/alpha-timeseries", params={"run_dir": "run_demo", "alpha_id": "Alpha_01"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"date": ["2024-01-01"], "equity": [None], "ret_net": [0.1]}

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import pytest
@@ -15,6 +14,7 @@ from alpha_evolve.dashboard.api.pipeline_runs import (
     build_pipeline_timeseries_payload,
     list_pipeline_run_assets,
     resolve_pipeline_run_asset_path,
+    resolve_pipeline_run_dir,
     resolve_pipeline_timeseries_file,
     update_pipeline_run_label,
 )
@@ -93,7 +93,7 @@ def test_build_pipeline_timeseries_payload_and_pending_shape(tmp_path: Path) -> 
     assert payload["date"] == ["2024-01-01", "2024-01-02"]
     assert payload["ret_net"] == [0.1, 0.2]
     assert payload["equity"][0] == 1.0
-    assert math.isnan(payload["equity"][1])
+    assert payload["equity"][1] is None
     assert build_pending_pipeline_timeseries_payload() == {
         "date": [],
         "equity": [],
@@ -108,6 +108,18 @@ def test_list_pipeline_run_assets_rejects_prefix_escape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="prefix must stay within run_dir"):
         list_pipeline_run_assets(resolved_run_dir=run_dir, prefix="../..", limit=10)
+
+
+def test_resolve_pipeline_run_dir_rejects_pipeline_root(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pipeline_runs_cs"
+    pipeline_dir.mkdir()
+
+    with pytest.raises(ValueError, match="run_dir must resolve under pipeline_runs_cs/"):
+        resolve_pipeline_run_dir(
+            "pipeline_runs_cs",
+            pipeline_dir=pipeline_dir,
+            root_dir=tmp_path,
+        )
 
 
 def test_resolve_pipeline_run_asset_path_validates_relative_lookup(tmp_path: Path) -> None:
